@@ -110,7 +110,7 @@ def load_data_batches(batch_size=10):
         bc_df = bc_df[8:]
 
         # Drop frist 8 simulation files as 2 hours (8 timesteps are taken for initialisation of LISFLOOD simulation)
-	inun_files = inun_files[8:]
+        inun_files = inun_files[8:]
         for i in range(0, len(inun_files), batch_size):
             batch_files = inun_files[i:i + batch_size]
             if len(batch_files) == 0:
