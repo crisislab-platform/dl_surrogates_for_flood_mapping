@@ -54,9 +54,9 @@ drop_table_simulation = ''' DROP TABLE IF EXISTS simulation_data'''
 # Enable PostGIS extension
 enable_postgis_query = "CREATE EXTENSION IF NOT EXISTS postgis"
 
-elevation_file_path = '/home/91/23016891/projects/Rapid_FloodModelling_CNN/Data/Carlisle_5m.asc'
-bc_data_dir = "/home/91/23016891/projects/Rapid_FloodModelling_CNN/Data/"
-lisflood_simulation_dir = "/home/91/23016891/projects/Rapid_FloodModelling_CNN/Data/DEM5m_2D/"
+elevation_file_path = '/home/91/23016891/projects/carlisle/Data/Carlisle_5m.asc'
+bc_data_dir = "/home/91/23016891/projects/carlisle/Data/"
+lisflood_simulation_dir = "/home/91/23016891/projects/carlisle/Data/DEM5m_2D/"
 
 def load_elevation_data():
     
@@ -106,10 +106,11 @@ def load_data_batches(batch_size=10):
         bc_df = pd.read_csv(os.path.join(bc_data_dir, bc_file_name))
         bc_df['timestep'] = ["Run" + str(csv_files.index(bc_file_name) + 1) + "_" + str(idx) for idx in bc_df.index]
         bc_df = bc_df.set_index('timestep')
-        #Drop first 8 rows
+        #Drop first 8 rows as the first 8 timesteps are taken for initialisation of LISFLOOD simulation
         bc_df = bc_df[8:]
 
-        # inun_files = inun_files[8:] 
+        # Drop frist 8 simulation files as 2 hours (8 timesteps are taken for initialisation of LISFLOOD simulation)
+	inun_files = inun_files[8:]
         for i in range(0, len(inun_files), batch_size):
             batch_files = inun_files[i:i + batch_size]
             if len(batch_files) == 0:
@@ -250,15 +251,14 @@ def insert_simulation_data():
             execute_batch(query, df)
 
 if __name__ == '__main__':
-    # create_database('carlisle_flood')
-    # db_execute(enable_postgis_query)
-    # db_execute(drop_table_upstream)
-    # db_execute(drop_table_elevation)
-    # db_execute(drop_table_simulation)
-    # db_execute(create_upstream_table_query)
-    # db_execute(create_elevation_table_query)
-    # db_execute(create_simulation_table_query)
-    # insert_elevation_data()
+    #create_database('carlisle_flood')
+    db_execute(enable_postgis_query)
+    db_execute(drop_table_upstream)
+    db_execute(drop_table_elevation)
+    db_execute(drop_table_simulation)
+    db_execute(create_upstream_table_query)
+    db_execute(create_elevation_table_query)
+    db_execute(create_simulation_table_query)
+    insert_elevation_data()
     insert_upstream_data()
     insert_simulation_data()
-
