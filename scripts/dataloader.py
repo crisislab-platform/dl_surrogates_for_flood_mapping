@@ -1,6 +1,7 @@
 import numpy as np 
 import os
 import psycopg2
+from psycopg2.pool import SimpleConnectionPool
 import pandas as pd
 from dotenv import load_dotenv
 from tensorflow.keras.utils import Sequence
@@ -53,6 +54,18 @@ class FloodDataGenerator(Sequence):
     """
     Data generator for flood forecasting with temporal sequences
     """
+    _pool = None  # Class-level connection pool
+    
+    @classmethod
+    def get_pool(cls):
+        if cls._pool is None:
+            cls._pool = SimpleConnectionPool(
+                minconn=1,
+                maxconn=10,
+                **conn_params
+            )
+        return cls._pool
+    
     def __init__(self, batch_size, lag, horizon, subset):
         logger.info(f"Initializing FloodDataGenerator: batch_size={batch_size}, lag={lag}, horizon={horizon}, subset={subset}")
         self.batch_size = batch_size
@@ -62,14 +75,15 @@ class FloodDataGenerator(Sequence):
         self.data = self.stream_spatial_data()
         self.subset = subset
         self.num_features = None
+        self.pool = self.get_pool()
         total_samples = 0
         
         # Calculate total number of samples
         try:
             with psycopg2.connect(**conn_params) as conn:
                 cursor = conn.cursor()
-                if self.subset == 'test':
-                    cursor.execute(COUNT_QUERY  + f" WHERE timestep NOT LIKE '%{self.test_subset_event}%'")
+                if self.subset == VAL_SUBSET_IDENTIFIER:
+                    cursor.execute(COUNT_QUERY  + f" WHERE timestep LIKE '%{self.test_subset_event}%'")
                 else:
                     cursor.execute(COUNT_QUERY  + f" WHERE timestep NOT LIKE '%{self.test_subset_event}%'")
                 total_samples = cursor.fetchone()[0]
@@ -112,10 +126,11 @@ class FloodDataGenerator(Sequence):
         # x already has the shape (samples, timesteps, features) just need to convert to numpy array
         x = np.array(x)
         y = np.array(y)
+        logger.info(f"X shape: {x.shape}, y shape: {y.shape}")
         x = x.reshape(-1, self.lag, self.num_features)
         y = y.reshape(-1, self.horizon)
-        # Reshape X for LSTM (samples, timesteps, features)s
-        logger.info(f"Batch {idx} processed with X shape: {x.shape}, y shape: {y.shape}")
+        # Reshape X for LSTM (samples, timesteps, features)
+        logger.info(f"Batch {idx} reshaped with X shape: {x.shape}, y shape: {y.shape}")
         return x, y
 
     def on_epoch_end(self):
@@ -123,45 +138,77 @@ class FloodDataGenerator(Sequence):
         self.data = self.stream_spatial_data()
 
     def stream_spatial_data(self):
-        """
-        Stream spatial data in chunks using LIMIT/OFFSET for efficient database access
-        
-        Args:
-            subset (str): Dataset subset to stream ('train' or 'test')
-            batch_size (int): Number of rows to fetch per batch
-            
-        Yields:
-            pandas.DataFrame: Chunk of spatial data containing:
-                - cell_id: Unique identifier for spatial cell
-                - timestep: Temporal identifier
-                - elevation: Ground elevation
-                - x, y: Spatial coordinates
-                - upstream1-3: Upstream condition values
-                - depth: Water depth
-        """
-        if self.subset not in [TRAIN_SUBSET_IDENTIFIER, VAL_SUBSET_IDENTIFIER]:
-            raise ValueError("subset must be either 'train' or 'test'")
-        
+        conn = None
         try:
-            with psycopg2.connect(**conn_params) as conn:
-                query = f"""
-                SELECT cell_id, timestep, elevation, ST_X(geom) as x, ST_Y(geom) as y, 
-                    upstream1, upstream2, upstream3, depth
-                FROM simulation_data 
-                JOIN elevation_data USING (cell_id) 
-                JOIN upstream_conditions USING (timestep)
+            conn = self.pool.getconn()
+            with conn.cursor('flood_data_cursor') as cursor:
+                # Base query with window function for improved performance
+                query = """
+                WITH numbered_rows AS (
+                    SELECT 
+                        cell_id, 
+                        timestep, 
+                        elevation::float4, 
+                        ST_X(geom)::float4 as x, 
+                        ST_Y(geom)::float4 as y,
+                        upstream1::float4, 
+                        upstream2::float4, 
+                        upstream3::float4, 
+                        depth::float4,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY cell_id 
+                            ORDER BY timestep
+                        ) as row_num
+                    FROM simulation_data 
+                    JOIN elevation_data USING (cell_id) 
+                    JOIN upstream_conditions USING (timestep)
+                    WHERE timestep {condition} %s
+                )
+                SELECT *
+                FROM numbered_rows
+                ORDER BY cell_id, row_num
                 """
-                if self.subset == VAL_SUBSET_IDENTIFIER:
-                    query += f" WHERE timestep LIKE '%{self.test_subset_event}%'"
-                else:
-                    query += f" WHERE timestep NOT LIKE '%{self.test_subset_event}%'"
-                    
-                query += "ORDER BY cell_id, timestep"
                 
-                chunks = pd.read_sql(query, conn, chunksize=self.batch_size) 
-                yield from chunks
+                # Prepare condition and parameters
+                condition = "LIKE" if self.subset == VAL_SUBSET_IDENTIFIER else "NOT LIKE"
+                params = (f"%{self.test_subset_event}%",)
+                
+                # Use server-side cursor for memory efficiency
+                cursor.itersize = self.batch_size
+                cursor.execute(query.format(condition=condition), params)
+                
+                while True:
+                    records = cursor.fetchmany(self.batch_size)
+                    if not records:
+                        break
+                    
+                    # Convert to DataFrame with pre-allocated dtypes
+                    df = pd.DataFrame.from_records(
+                        records,
+                        columns=['cell_id', 'timestep', 'elevation', 'x', 'y', 
+                                'upstream1', 'upstream2', 'upstream3', 'depth', 'row_num'],
+                        dtype={
+                            'elevation': 'float32',
+                            'x': 'float32',
+                            'y': 'float32',
+                            'upstream1': 'float32',
+                            'upstream2': 'float32',
+                            'upstream3': 'float32',
+                            'depth': 'float32'
+                        }
+                    )
+                    yield df.drop('row_num', axis=1)
                     
         except Exception as e:
             logger.error(f"Error streaming data: {e}")
             raise
+        finally:
+            if conn:
+                self.pool.putconn(conn)
+                
+    def __del__(self):
+        """Cleanup connection pool when instance is destroyed"""
+        if self._pool:
+            self._pool.closeall()
+            self.__class__._pool = None
 
