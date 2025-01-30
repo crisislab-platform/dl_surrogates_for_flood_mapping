@@ -8,7 +8,7 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - /data/postgresql:/var/lib/postgresql/data  # Bind the host directory /data to the container's data directory
     ports:
       - "5432:5432"
     healthcheck:
@@ -17,5 +17,5 @@ services:
       timeout: 5s
       retries: 5
 
-volumes:
-  postgres_data:
+volumes: {}
+
