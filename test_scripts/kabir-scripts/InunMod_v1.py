@@ -17,8 +17,6 @@ def data_pre_process():
     print('Running preprocessing script...')
     ###########SORT TRAINING DATA############
 
-
-
     Target = '/home/cvssk/Carlisle_Resubmission/2005Event/Target/'  #directory of the LISFLOOD-FP outputs i.e. Run2 is the outputs of Hydrograph A scenario, and so on...
     inun_files2 = []
 
@@ -26,7 +24,7 @@ def data_pre_process():
     inun_files2 += [each for each in os.listdir(Target) if each.endswith('.wd')]
     inun_files2.sort()
     
-    # list all the files that are not considered, i.e. LISFLOOD-FP initialisation time- about 2 hrs. Therefore, 8 correponding files need to be deleted (each file 15 min output)
+    #list all the files that are not considered, i.e. LISFLOOD-FP initialisation time- about 2 hrs. Therefore, 8 correponding files need to be deleted (each file 15 min output)
 
     ls = ['Run2-0000.wd', 'Run2-0001.wd', 'Run2-0002.wd', 'Run2-0003.wd', 'Run2-0004.wd', 'Run2-0005.wd', 'Run2-0006.wd', 'Run2-0007.wd',
       'Run3-0000.wd', 'Run3-0001.wd', 'Run3-0002.wd', 'Run3-0003.wd', 'Run3-0004.wd', 'Run3-0005.wd', 'Run3-0006.wd', 'Run3-0007.wd',
@@ -247,7 +245,6 @@ print(tf.__version__)
 
 #%%
 #CNN model for 2005 event modelling
-
 def CNN_Model(x_train, Y, x_test, Y_test, steps, features, outputs):
     '''
     Two layered conv network
@@ -371,7 +368,6 @@ def MLP_Model(x_train, X_Test, Y, Y_test, features):
                 dst.write(y_pred, 1)
 
     return model 
-
 
 
 #%%
@@ -524,8 +520,6 @@ export_ref_data(locations)
 export_pred_data(locations)
 
 
-
-
 # %%
 ####Model with BatchNormalization
 model = CNN_Model_BN(x_train, Y, x_test, Y_test, steps, features, outputs)
@@ -538,8 +532,3 @@ name = '/home/cvssk/Carlisle_Resubmission/2005Event/Model/CNN_Model_2015'
 save_model(model, name)
 export_ref_data(locations)
 export_pred_data(locations)
-
-# %%
-#model = MLP_Model(x_train, X_Test, Y, features)
-
-# %%

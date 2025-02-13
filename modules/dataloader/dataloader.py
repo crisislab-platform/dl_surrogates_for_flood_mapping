@@ -94,7 +94,9 @@ class FloodDataGenerator(Sequence):
         self.n_samples = total_samples
     
     def __len__(self):
-        return int(np.ceil(self.n_samples / self.batch_size))
+        """Calculate total number of batches"""
+        total_sequences = self.n_samples - self.lag - self.horizon + 1
+        return max(1, total_sequences // self.batch_size)
 
     def __getitem__(self, idx):
         logger.info(f"Fetching batch {idx}")
@@ -182,21 +184,18 @@ class FloodDataGenerator(Sequence):
                     if not records:
                         break
                     
-                    # Convert to DataFrame with pre-allocated dtypes
+                    # Create DataFrame without dtype specification
                     df = pd.DataFrame.from_records(
                         records,
                         columns=['cell_id', 'timestep', 'elevation', 'x', 'y', 
-                                'upstream1', 'upstream2', 'upstream3', 'depth', 'row_num'],
-                        dtype={
-                            'elevation': 'float32',
-                            'x': 'float32',
-                            'y': 'float32',
-                            'upstream1': 'float32',
-                            'upstream2': 'float32',
-                            'upstream3': 'float32',
-                            'depth': 'float32'
-                        }
+                                'upstream1', 'upstream2', 'upstream3', 'depth', 'row_num']
                     )
+                    
+                    # Convert types after creation
+                    float_columns = ['elevation', 'x', 'y', 'upstream1', 
+                                   'upstream2', 'upstream3', 'depth']
+                    df[float_columns] = df[float_columns].astype('float32')
+                    
                     yield df.drop('row_num', axis=1)
                     
         except Exception as e:
