@@ -3,3 +3,8 @@
 .DS_Store
 .venv
 .vscode
+__pycache__
+logs/
+.env
+carlisle-data/DEM5m_2D/
+runs/
