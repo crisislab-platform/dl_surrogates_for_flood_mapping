@@ -87,8 +87,9 @@ ORDER BY cell_id, timestep;
 create_light_weight_table_query = '''
 CREATE TABLE IF NOT EXISTS flood_data_light (
     id SERIAL PRIMARY KEY,
-    cell_id VARCHAR(255),
-    timestep VARCHAR(255),
+    event_id int,
+    cell_id int,
+    timestep int,
     elevation FLOAT,
     x FLOAT,
     y FLOAT,
@@ -330,7 +331,7 @@ def load_inundation_data(window):
     for key, inun_files in inundation_files.items():
         if len(inun_files) == 0:
             continue
-        for i in range(0, len(inun_files), 10):
+        for i in range(0, len(inun_files)):
                 file = inun_files[i]
                 timestep = key + "_" + str(i)
                 data = rio.open(os.path.join(lisflood_simulation_dir, file))
@@ -362,11 +363,20 @@ def load_upstream_data():
         
     return final_bc_df
 
+def get_random_window(window_length=10):
+    raster = rio.open(elevation_file_path)
+    rows = raster.height
+    cols = raster.width
+    random_row = np.random.randint(0, rows)
+    random_col = np.random.randint(0, cols)
+    window=((random_row, random_row + window_length), (random_col, random_col + window_length))
+    return window
             
 def insert_light_weight_table():
     logger.info("Inserting data into light weight table")
     # Define window of raster data
-    window = ((0, 100), (0, 100)) # 100x100 window (10000 cells)
+    # use a random window from the raster data
+    window = get_random_window(window_length=50)
     
     # Load elevation data for above window
     elevation_df = load_elevation_data(window)
@@ -392,15 +402,27 @@ def insert_light_weight_table():
     merged_df['cell_id'] = merged_df['cell_id'].astype(str)
     elevation_df['cell_id'] = elevation_df['cell_id'].astype(str)
     merged_df = pd.merge(merged_df, elevation_df, on='cell_id')
+    
     logger.info(f"Merged elevation data with merged data")
     merged_df = merged_df[['cell_id', 'timestep', 'elevation', 'x_coordinate', 'y_coordinate', 'Upstream1', 'Upstream2', 'Upstream3', 'depth']]
+    
+    merged_df['event_id'] = merged_df['timestep'].apply(lambda x: int(x.split('_')[0].replace('Run','')))
+    merged_df['timestep'] = merged_df['timestep'].apply(lambda x: int(x.split('_')[1]))
+    
+    # Reorder columns to match new schema
+    merged_df = merged_df[['event_id', 'cell_id', 'timestep', 'elevation', 'x_coordinate', 'y_coordinate',
+                           'Upstream1', 'Upstream2', 'Upstream3', 'depth']]
     
     logger.info(f"Final merged data size: {merged_df.shape}")
     logger.info(merged_df.head())
     
     # Insert data into the light weight table
     query = '''
-        INSERT INTO flood_data_light (cell_id, timestep, elevation, x, y, upstream1, upstream2, upstream3, depth)
+        INSERT INTO flood_data_light (
+            event_id, cell_id, timestep,
+            elevation, x, y,
+            upstream1, upstream2, upstream3, depth
+        )
         VALUES %s
     '''
     logger.info("Inserting data into light weight table")
@@ -421,7 +443,7 @@ def drop_table(table_name):
     logger.info(f"Table {table_name} dropped successfully")
 
 
-if __name__ == '__main__':
+def init():
     #create_database('carlisle_flood')
     # db_execute(enable_postgis_query)
     # db_execute(drop_table_upstream)

@@ -1,5 +1,6 @@
 import pandas as pd
 import sklearn.preprocessing as preprocessing
+from lib.constants import TRAIN_SUBSET_IDENTIFIER, VAL_SUBSET_IDENTIFIER, TEST_EVENT_ID
 import logging
 import psycopg2
 import os
@@ -10,10 +11,8 @@ load_dotenv()
 logger = logging.getLogger("DataPreprocessor")
 feature_columns = ["upstream1", "upstream2", "upstream3", "elevation", "depth"]
 
-
 def get_num_features() -> int:
         return len(feature_columns) # exclude cell_id, timestep, and coordinate columns
-    
 
 conn_params = {
     'dbname': 'carlisle_flood',
@@ -35,10 +34,10 @@ class Preprocessor:
                 logger.info("Initialising scalers")
                 
                 # Training data scaler
-                train_query = """
+                train_query = f"""
                 SELECT upstream1, upstream2, upstream3, elevation, depth
                 FROM flood_data_light 
-                WHERE timestep NOT LIKE '%Run9%'
+                WHERE event_id != {TEST_EVENT_ID}
                 ORDER BY RANDOM()
                 LIMIT 100000
                 """
@@ -47,10 +46,10 @@ class Preprocessor:
                 logger.info(f"Train scaler mean: {self.train_scaler.mean_}")
                 
                 # Test data scaler
-                test_query = """
+                test_query = f"""
                 SELECT upstream1, upstream2, upstream3, elevation, depth
                 FROM flood_data_light
-                WHERE timestep LIKE '%Run9%'
+                WHERE event_id = {TEST_EVENT_ID}
                 ORDER BY RANDOM()
                 LIMIT 100000
                 """

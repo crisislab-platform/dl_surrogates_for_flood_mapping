@@ -3,7 +3,7 @@ import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 import logging
 import time
-from modules.dataloader.dataloader import FloodDataGenerator
+from modules.model_trainer.archived.dataloader import FloodDataGenerator
 import matplotlib.pyplot as plt
 import numpy as np
 from preprocessor import get_num_features

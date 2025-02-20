@@ -6,3 +6,5 @@
 __pycache__
 logs/
 .env
+carlisle-data/DEM5m_2D/
+runs/
