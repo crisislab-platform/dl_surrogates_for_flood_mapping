@@ -1,4 +1,5 @@
-from modules.model_trainer.model_trainer import train_model, predict_and_evaluate_only, TrainConfigLSTM, TrainConfigCNN, TrainConfigConvLSTM
+from modules.model_trainer.model_trainer import train_model, predict_and_evaluate_only
+from modules.model_trainer.model import ModelConfig
 from modules.db_initialiser.database_initialiser import init
 from modules.dataloader.sequential.file_sequence_generator import generate_grid_sequences_from_files, generate_grid_sequences_light_from_files
 import logging
@@ -27,6 +28,8 @@ def parse_args():
     parser.add_argument('--learning_rate', type=float, default=0.001, help='Learning rate for training')
     parser.add_argument('--epochs', type=int, default=10, help='Number of epochs for training')
     parser.add_argument('--patience', type=int, default=2, help='Early stopping patience')
+    parser.add_argument('--dropout_rate', type=float, default=0.2, help='Dropout rate')
+    parser.add_argument('--mixed_precision', action='store_true', help='Use mixed precision')
     parser.add_argument('--window_length', type=int, default=None, help='Window length for data extraction')
     return parser.parse_args()
 
@@ -53,44 +56,19 @@ if __name__ == "__main__":
             exit(1)
         predict_and_evaluate_only(args.run_id, args.model)
     elif args.command == TRAIN_COMMAND:
-        if args.model == "LSTM_V1":
-            config = TrainConfigLSTM(
-                model_name=args.model,
-                lag=args.lag,
-                horizon=args.horizon,
-                batch_size=args.batch_size,
-                learning_rate=args.learning_rate,
-                epochs=args.epochs,
-                patience=args.patience,
-            )
-            train_model(config)
-        elif args.model == "1DCNN_V1":
-            config = TrainConfigCNN(
-                model_name=args.model,
-                lag=args.lag,
-                horizon=args.horizon,
-                batch_size=args.batch_size,
-                learning_rate=args.learning_rate,
-                epochs=args.epochs,
-                patience=args.patience,
-            )
-            train_model(config)
-        elif args.model == "ConvLSTM_V1" or args.model == "ConvLSTM_V1_LIGHT":
-            config = TrainConfigConvLSTM(
-                model_name=args.model,
-                lag=args.lag,
-                horizon=args.horizon,
-                batch_size=args.batch_size,
-                learning_rate=args.learning_rate,
-                epochs=args.epochs,
-                patience=args.patience,
-                dropout_rate=0.2,
-                mixed_precision=True
-            )
-            # Use the standard train_model function
-            train_model(config)
-        else:
-            logger.error(f"Invalid model '{args.model}'")
+        # Use the unified ModelConfig
+        config = ModelConfig(
+            model_name=args.model,
+            lag=args.lag,
+            horizon=args.horizon,
+            batch_size=args.batch_size,
+            learning_rate=args.learning_rate,
+            epochs=args.epochs,
+            patience=args.patience,
+            dropout_rate=args.dropout_rate,
+            mixed_precision=args.mixed_precision
+        )
+        train_model(config)
     elif args.command == DB_COMMAND:
         init(window_length=args.window_length)
     logger.info("Commands executed successfully")

@@ -1,9 +1,9 @@
 import gc
 from modules.utils.path_util import OUTPUT_DIR
-from modules.model_trainer.lstm.lstm import get_simple_lstm_model
-from modules.model_trainer.lstm.convlstm import get_grid_convlstm_model, get_grid_convlstm_model_upstream_only
-from modules.model_trainer.cnn1d.cnn1d import get_1dcnn_model
-from lib.commons import ModelConfig
+from modules.model_trainer.lstm.lstm import SimpleLSTMModel
+from modules.model_trainer.lstm.convlstm import  ConvLSTMModel
+from modules.model_trainer.cnn.cnn1d import CNN1DModel
+from modules.model_trainer.model import ModelConfig
 from datetime import datetime
 import matplotlib.pyplot as plt
 import json
@@ -12,7 +12,6 @@ import pandas as pd
 import logging
 import time
 import os
-from dataclasses import dataclass
 import numpy as np
 
 # Replace the logging setup with this
@@ -83,7 +82,11 @@ def write_metrics(run_id, history, train_time, model, model_config: ModelConfig)
         'horizon': model_config.horizon,
         'batch_size': model_config.batch_size,
         'learning_rate': model_config.learning_rate,
-        'epochs': '',
+        'epochs': model_config.epochs,
+        'patience': model_config.patience,
+        'dropout_rate': model_config.dropout_rate,
+        'mixed_precision': model_config.mixed_precision,
+        'memory_limit': model_config.memory_limit,
         'loss': str(history['loss']),
         'val_loss': str(history['val_loss']),
         'mae': str(history['mae']),
@@ -101,65 +104,9 @@ def write_metrics(run_id, history, train_time, model, model_config: ModelConfig)
     }
     df = pd.DataFrame([metrics])
     df.to_csv(metrics_file, mode='a', index=False)
-
-def train(model: tf.keras.Model, 
-                train_dataset: tf.data.Dataset,
-                val_dataset: tf.data.Dataset,
-                training_steps: int = None,
-                validation_steps: int = None,
-                run_dir: str = None,
-                run_id: str = None,
-                config: ModelConfig = None,
-                epochs:int = 10,
-                patience:int = 5) -> None:
-
-    os.makedirs(run_dir, exist_ok=True)
-    try:
-        callbacks = [
-            tf.keras.callbacks.EarlyStopping(
-                monitor='val_loss',
-                patience= patience,
-                restore_best_weights=True,
-                mode='min'
-            ),
-            tf.keras.callbacks.TensorBoard(
-                log_dir=os.path.join(run_dir, 'logs'),
-                update_freq='epoch'
-            )
-        ]
-
-        # Save model configuration
-        with open(os.path.join(run_dir, 'model_config.json'), 'w') as f:
-            json.dump(vars(config), f, indent=2)
-
-        logger.info("Training model started")
-        start_time = time.time()    
-        
-        history = model.fit(
-            train_dataset,
-            validation_data=val_dataset,
-            epochs=epochs,
-            callbacks=callbacks,
-            steps_per_epoch=training_steps,
-            validation_steps=validation_steps,
-            verbose=1
-        )
-        
-        end_time = time.time()
-        train_time = end_time - start_time
-        logger.info("Training completed in %.2f minutes" % ((end_time - start_time)/60))
-        model_file_name = save_model_and_performane(history, run_id, run_dir, model, train_time, config)
-        return model_file_name
-        
-    except Exception as e:
-        logger.error(f"Training failed: {str(e)}")
-        raise
-    finally:
-        gc.collect()
-        if tf.config.list_physical_devices('GPU'):
-            tf.keras.backend.clear_session()
-
-def save_model_and_performane(history, run_id, run_dir, model, train_time,  config: ModelConfig):
+    
+def save_model_and_performance(run_id, run_dir, model, history, train_time, config):
+    """Save model, history, and metrics to disk"""
     if not history:
         logger.error("Model history not found")
         return
@@ -193,160 +140,8 @@ def save_model_and_performane(history, run_id, run_dir, model, train_time,  conf
         logger.error(f"Error saving model: {e}")
         return
 
-@dataclass
-class TrainConfig:
-    """Base configuration class for model training parameters"""
-    def __init__(self, model_name: str = None, epochs: int = 10, patience: int = 2):
-        self.model_name = model_name
-        self.epochs = epochs
-        self.patience = patience
-
-@dataclass
-class TrainConfigLSTM(TrainConfig):
-    """LSTM-specific configuration class for model training parameters"""
-    lag: int
-    horizon: int
-    batch_size: int
-    learning_rate: float
-    
-    def __init__(self, model_name: str = "LSTM_V1", lag: int = 8, horizon: int = 1, 
-                 batch_size: int = 32, learning_rate: float = 0.001, 
-                 epochs: int = 10, patience: int = 2):
-        super().__init__(model_name=model_name, epochs=epochs, patience=patience)
-        self.lag = lag
-        self.horizon = horizon
-        self.batch_size = batch_size
-        self.learning_rate = learning_rate
-
-@dataclass
-class TrainConfigCNN(TrainConfig):
-    """1DCNN-specific configuration class for model training parameters"""
-    lag: int
-    batch_size: int
-    learning_rate: float
-    
-    def __init__(self, model_name: str = "1DCNN_V1", lag:int = 8, horizon:int = 1, batch_size: int = 32, learning_rate: float = 0.001, 
-                 epochs: int = 10, patience: int = 2):
-        super().__init__(model_name=model_name, epochs=epochs, patience=patience)
-        self.batch_size = batch_size
-        self.horizon = horizon
-        self.learning_rate = learning_rate
-        self.lag = lag
-
-class TrainConfigConvLSTM:
-    """Configuration for ConvLSTM training"""
-    def __init__(self, model_name, lag, horizon, batch_size, learning_rate, epochs, 
-                 patience, dropout_rate=0.2, mixed_precision=True, memory_limit=None):
-        self.model_name = model_name
-        self.lag = lag
-        self.horizon = horizon
-        self.batch_size = batch_size
-        self.learning_rate = learning_rate
-        self.epochs = epochs
-        self.patience = patience
-        self.dropout_rate = dropout_rate
-        self.mixed_precision = mixed_precision
-        self.memory_limit = memory_limit
-
-def train_model(config: TrainConfig) -> str:
-    run_id = generate_run_id()
-    run_dir = os.path.join(OUTPUT_DIR, run_id)
-    logger.info(f"Starting training run {run_id} with config: {vars(config)}")
-    
-    try:
-        configure_gpu()
-        if config.model_name == "LSTM_V1" or config.model_name is None:
-            model, train_dataset, val_dataset, training_steps, validation_steps, model_config = get_simple_lstm_model(
-                config.lag, 
-                config.horizon, 
-                config.batch_size, 
-                config.learning_rate
-            )
-            train(
-                model, 
-                train_dataset, 
-                val_dataset, 
-                training_steps, 
-                validation_steps, 
-                run_dir,
-                run_id, 
-                model_config, 
-                config.epochs, 
-                config.patience
-            ) 
-        elif config.model_name == "1DCNN_V1": 
-            model, train_dataset, val_dataset,  x_test, Y_test , training_steps, validation_steps, model_config = get_1dcnn_model(config.batch_size, config.learning_rate, config.lag, config.horizon, config.epochs)
-            model_file_name = train(
-                model, 
-                train_dataset, 
-                val_dataset, 
-                training_steps, 
-                validation_steps, 
-                run_dir,
-                run_id, 
-                model_config, 
-                config.epochs, 
-                config.patience
-            )
-            predict_and_evaluate(model_file_name, x_test, Y_test, run_id, run_dir, config)
-            
-        elif config.model_name == "ConvLSTM_V1":
-            
-            # Get the ConvLSTM model and datasets
-            model, train_dataset, val_dataset, training_steps, validation_steps, model_config = get_grid_convlstm_model(
-                config.lag,
-                config.horizon, 
-                config.batch_size,
-                config.learning_rate
-            )
-            
-            train(
-                model, 
-                train_dataset, 
-                val_dataset, 
-                training_steps, 
-                validation_steps, 
-                run_dir,
-                run_id, 
-                model_config, 
-                config.epochs, 
-                config.patience
-            )
-        elif config.model_name == "ConvLSTM_V1_LIGHT":
-            
-            # Get the ConvLSTM model and datasets
-            model, train_dataset, val_dataset, training_steps, validation_steps, model_config = get_grid_convlstm_model_upstream_only(
-                config.lag,
-                config.horizon, 
-                config.batch_size,
-                config.learning_rate
-            )
-            
-            train(
-                model, 
-                train_dataset, 
-                val_dataset, 
-                training_steps, 
-                validation_steps, 
-                run_dir,
-                run_id, 
-                model_config, 
-                config.epochs, 
-                config.patience
-            )
-            
-        else:
-            logger.error("Invalid model name")
-        logger.info(f"Training run {run_id} completed")
-        return run_id
-    except Exception as e:
-        logger.error(f"Error training model: {e}")
-        raise
-    finally:
-        gc.collect()
-        tf.keras.backend.clear_session()
-
-def predict_and_evaluate(model_file_name, x_test, Y_test, run_id, run_dir, config):
+def predict_and_evaluate(run_id, run_dir,model_file_name, x_test, Y_test):
+    """Evaluate model predictions on test data"""
     logger.info(f"Predicting and evaluating test data for run {run_id}")
     logger.info(f"Loading model from {model_file_name}")
     
@@ -355,7 +150,7 @@ def predict_and_evaluate(model_file_name, x_test, Y_test, run_id, run_dir, confi
         configure_gpu()
         with tf.device('/GPU:0'):  # Explicitly use GPU
             # Load model with custom objects
-            model = tf.keras.models.load_model(model_file_name, 
+            loaded_model = tf.keras.models.load_model(model_file_name, 
                 custom_objects={
                     'mse': tf.keras.losses.MeanSquaredError(),
                     'mae': tf.keras.losses.MeanAbsoluteError()
@@ -381,7 +176,7 @@ def predict_and_evaluate(model_file_name, x_test, Y_test, run_id, run_dir, confi
             
             for i in range(0, num_samples, batch_size):
                 batch_x = x_test[i:min(i + batch_size, num_samples)]
-                pred = model(batch_x, training=False)  #Use model call directly instead of predict
+                pred = loaded_model(batch_x, training=False)  #Use model call directly instead of predict
                 predictions.extend(pred.numpy())
                 
                 if (i + batch_size) % 1000 == 0:
@@ -415,7 +210,6 @@ def predict_and_evaluate(model_file_name, x_test, Y_test, run_id, run_dir, confi
             df.loc[df['run_id'] == run_id, 'pred_mse'] = mse
             df.loc[df['run_id'] == run_id, 'pred_mae'] = mae
             df.loc[df['run_id'] == run_id, 'pred_rmse'] = rmse
-            df.loc[df['run_id'] == run_id, 'epochs'] = config.epochs
             
             df.to_csv(metrics_file, index=False)
             logger.info(f"Prediction results saved in {metrics_file}")
@@ -450,3 +244,37 @@ def predict_and_evaluate_only(run_id, model_name):
     except Exception as e:
         logger.error(f"Error in prediction: {e}")
         raise
+
+def train_model(config: ModelConfig) -> str:
+    run_id = generate_run_id()
+    run_dir = os.path.join(OUTPUT_DIR, run_id)
+    logger.info(f"Starting training run {run_id} with config: {vars(config)}")
+    
+    try:
+        configure_gpu()
+        model = None
+        if config.model_name == "LSTM_V1":
+            model = SimpleLSTMModel(config)
+            
+        elif config.model_name == "1DCNN_V1": 
+            model = CNN1DModel(config)
+            
+        elif config.model_name == "ConvLSTM_V1_LIGHT":
+            model = ConvLSTMModel(config)  
+        else:
+            logger.error("Invalid model name")
+            
+        if model is not None:
+            model.init_model()
+            history, train_time = model.train()
+            model_file_name = save_model_and_performance(run_id, run_dir, model, history, train_time, config)
+            predict_and_evaluate(run_id, run_dir, model_file_name, model.x_test, model.y_test)
+        logger.info(f"Training run {run_id} completed")
+        return run_id
+    
+    except Exception as e:
+        logger.error(f"Error training model: {e}")
+        raise
+    finally:
+        gc.collect()
+        tf.keras.backend.clear_session()

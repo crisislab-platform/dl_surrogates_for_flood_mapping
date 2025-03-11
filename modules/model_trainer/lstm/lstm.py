@@ -24,7 +24,7 @@ class LSTMModelConfig(ModelConfig):
 class SimpleLSTMModel(Model):
     def __init__(self, config: ModelConfig):
         super().__init__(config)
-        self.model_name = "GridLSTM_V1"
+        self.model_name = "LSTM_V1"
         
     def create_dataset(self):
         train_dataset, val_dataset, x_test, y_test, grid_height, grid_width, train_steps, val_steps = load_grid_datasets_light(
@@ -70,4 +70,8 @@ class SimpleLSTMModel(Model):
             except Exception as e:
                 logger.error(f"Grid LSTM model creation failed: {e}")
                 raise
+            
+    def predict(self, run_id = None, model_file = None):
+        return "Not implemented"
+        
         
