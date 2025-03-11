@@ -1,83 +1,73 @@
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense, Dropout, Input
+from tensorflow.keras.models import  Sequential
+from tensorflow.keras.layers import LSTM, Dense, Dropout, Input, Reshape, TimeDistributed, Flatten
 import tensorflow as tf
-from modules.dataloader.sequential.dataloader_optimised import FloodDataGenerator
-from lib.constants import TRAIN_SUBSET_IDENTIFIER, VAL_SUBSET_IDENTIFIER
-from lib.commons import ModelConfig
-from modules.preprocessor.preprocessor import get_num_features
-import logging 
+from modules.model_trainer.model import Model, ModelConfig
+from modules.dataloader.sequential.sequence_loader import load_grid_datasets
+from modules.dataloader.sequential.sequence_loader_light import load_grid_datasets_light
+import logging
 
-logger = logging.getLogger("LSTM_Trainer")
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("GridLSTM_Trainer")
+
+# Model configuration
+class LSTMModelConfig(ModelConfig):
+    lag: int
+    horizon: int
+    batch_size: int
+    learning_rate: float
+    model_name: str
+    dropout_rate: float = 0.2
+    epochs: int = 10
+    mixed_precision: bool = False
 
 
-def create_data_generators(lag, horizon, batch_size, epochs=5):
-    # Create generators
-    train_generator = FloodDataGenerator(
-        batch_size=batch_size,
-        lag=lag, 
-        horizon=horizon,
-        subset=TRAIN_SUBSET_IDENTIFIER, 
-        epochs= epochs
-    )
-    
-    val_generator = FloodDataGenerator(
-        batch_size=batch_size,
-        lag=lag,
-        horizon=horizon,
-        subset=VAL_SUBSET_IDENTIFIER, 
-        epochs=epochs
-    )
-    
-    train_dataset = train_generator.create_dataset()
-    val_dataset = val_generator.create_dataset()
-    
-    train_steps = train_generator.calculate_steps_per_epoch()
-    val_steps = val_generator.calculate_steps_per_epoch()
-    
-    return train_dataset, val_dataset, train_steps, val_steps
-
-def create_lstm_model(config: ModelConfig) -> tf.keras.Model:
-    strategy = tf.distribute.MirroredStrategy()
-    num_features = get_num_features()
-    with strategy.scope():
-        try:
-            model = Sequential([
-                Input(shape=(config.lag, num_features), dtype='float32'),
-                *[
-                    Sequential([
-                        LSTM(units, return_sequences=i < len(config.lstm_units)-1, 
-                             dtype='float32',
-                             kernel_regularizer=tf.keras.regularizers.L2(1e-4)),
-                        Dropout(config.dropout_rate)
-                    ]) for i, units in enumerate(config.lstm_units)
-                ],
-                Dense(config.horizon, dtype='float32',
-                      kernel_regularizer=tf.keras.regularizers.L2(1e-4))
-            ])
-            
-            model.compile(
-                optimizer=tf.keras.optimizers.Adam(learning_rate=config.learning_rate),
-                loss='mse',
-                metrics=['mae', 'mse']
-            )
-            
-            logger.info(model.summary())
-            return model
-            
-        except Exception as e:
-            logger.error(f"Model creation failed: {e}")
-            raise
+class SimpleLSTMModel(Model):
+    def __init__(self, config: ModelConfig):
+        super().__init__(config)
+        self.model_name = "GridLSTM_V1"
         
-        
-def get_lstm_model(lag, horizon, batch_size, learning_rate) -> None:
-    config = ModelConfig(
-        lag=lag,
-        horizon=horizon,
-        batch_size=batch_size,
-        learning_rate=learning_rate, 
-        model_name="LSTM_V1"
-    )
-    model = create_lstm_model(config)
-    train_dataset, val_dataset, training_steps, validation_steps = create_data_generators(config.lag, config.horizon, config.batch_size)
-    return model, train_dataset, val_dataset, training_steps, validation_steps, config
+    def create_dataset(self):
+        train_dataset, val_dataset, x_test, y_test, grid_height, grid_width, train_steps, val_steps = load_grid_datasets_light(
+            self.config.batch_size, 
+            self.config.epochs, 
+            self.config.lag, 
+            self.config.horizon
+        )
+        self.train_dataset = train_dataset
+        self.val_dataset = val_dataset
+        self.x_test = x_test
+        self.y_test = y_test
+        self.grid_height = grid_height
+        self.grid_width = grid_width
+        self.train_steps = train_steps
+        self.val_steps = val_steps
+    
+    def init_model(self) -> bool:
+        self.create_dataset()
+        num_cells = self.grid_height * self.grid_width
+        strategy = tf.distribute.MirroredStrategy()
+        with strategy.scope():
+            try:
+                # Input shape: (lag, features)
+                model = Sequential()
+                model.add(LSTM(128, return_sequences=True, input_shape=(self.config.lag, 5)))
+                model.add(LSTM(64))
+                model.add(Dense(256, activation='relu'))
+                model.add(Dense(512, activation='relu'))
+                model.add(Dense(num_cells * self.config.horizon))
+                model.add(Reshape((num_cells, self.config.horizon)))
+            
+                model.compile(
+                    optimizer=tf.keras.optimizers.Adam(learning_rate= self.config.learning_rate),
+                    loss='mse',
+                    metrics=['mae', 'mse']
+                )
+                
+                logger.info(f"Simple LSTM model created")
+                logger.info(model.summary())
+                self.model = model
+                return True
+            except Exception as e:
+                logger.error(f"Grid LSTM model creation failed: {e}")
+                raise
         

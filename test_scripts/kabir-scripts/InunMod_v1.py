@@ -424,7 +424,6 @@ def predict(model,X_Test):
 
 #%%
 ##### extract values at the 18 validation points (control points)
-
 def export_ref_data(locations):
   import geopandas as gpd
 

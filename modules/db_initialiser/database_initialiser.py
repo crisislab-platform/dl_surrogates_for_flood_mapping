@@ -1,5 +1,4 @@
 import os
-
 import numpy as np
 import pandas as pd
 import psycopg2
@@ -132,8 +131,8 @@ def load_elevation_data(window):
         data = src.read(1, window=window)
         transform = src.transform
         rows, cols = np.indices(data.shape)
-        rows = rows.flatten()
-        cols = cols.flatten()
+        rows = rows.flatten() + window.row_off
+        cols = cols.flatten() + window.col_off
         id = [f"{r}_{c}" for r, c in zip(rows, cols)]
         xs, ys = rio.transform.xy(transform, rows, cols, offset='center')
         xs_flat = np.array(xs).flatten()
@@ -332,19 +331,23 @@ def load_inundation_data(window):
         if len(inun_files) == 0:
             continue
         for i in range(0, len(inun_files)):
-                file = inun_files[i]
-                timestep = key + "_" + str(i)
-                data = rio.open(os.path.join(lisflood_simulation_dir, file))
-                values = data.read(1, window=window)
+            file = inun_files[i]
+            timestep = key + "_" + str(i)
+            with rio.open(os.path.join(lisflood_simulation_dir, file)) as src:
+                values = src.read(1, window=window)
+                # Create indices relative to the window
                 rows, cols = np.indices(values.shape)
-                rows = rows.flatten()
-                cols = cols.flatten()
+                rows = rows.flatten() + window.row_off
+                cols = cols.flatten() + window.col_off
                 depth = values.flatten()
                 cell_ids = [f"{r}_{c}" for r, c in zip(rows, cols)]
-                df = pd.DataFrame({'cell_id': cell_ids, 'depth': depth})
-                df['timestep'] = timestep
-                df.loc[df['depth'] < 0.3, 'depth'] = 0
+                df = pd.DataFrame({
+                    'cell_id': cell_ids,
+                    'depth': depth,
+                    'timestep': timestep
+                })
                 final_df = pd.concat([final_df, df], axis=0, ignore_index=True)
+    
     return final_df
 
 def load_upstream_data():
@@ -363,21 +366,58 @@ def load_upstream_data():
         
     return final_bc_df
 
-def get_random_window(window_length=10):
-    raster = rio.open(elevation_file_path)
-    rows = raster.height
-    cols = raster.width
-    random_row = np.random.randint(0, rows)
-    random_col = np.random.randint(0, cols)
-    window=((random_row, random_row + window_length), (random_col, random_col + window_length))
-    return window
-            
-def insert_light_weight_table():
-    logger.info("Inserting data into light weight table")
-    # Define window of raster data
-    # use a random window from the raster data
-    window = get_random_window(window_length=50)
+def get_random_window(window_length = None):
+    with rio.open(elevation_file_path) as raster:
+        rows = raster.height
+        cols = raster.width
+        
+        max_row = rows - window_length
+        max_col = cols - window_length
     
+        # Generate valid random coordinates
+        random_row = np.random.randint(0, max_row) if max_row > 0 else 0
+        random_col = np.random.randint(0, max_col) if max_col > 0 else 0
+    
+        window = rio.windows.Window(
+            col_off=random_col,
+            row_off=random_row,
+            width=min(window_length, cols - random_col),
+            height=min(window_length, rows - random_row)
+        )
+        return window
+    
+def get_window_batches(batch_size=50):
+    """Generate windows to cover the entire raster without missing any cells"""
+    with rio.open(elevation_file_path) as raster:
+        total_rows = raster.height
+        total_cols = raster.width
+        
+        # Calculate number of full windows needed
+        n_rows = (total_rows + batch_size - 1) // batch_size
+        n_cols = (total_cols + batch_size - 1) // batch_size
+        
+        logger.info(f"Processing raster of size {total_rows}x{total_cols} in {n_rows}x{n_cols} windows")
+        
+        for row in range(n_rows):
+            for col in range(n_cols):
+                # Calculate actual window dimensions
+                row_start = row * batch_size
+                col_start = col * batch_size
+                row_end = min(row_start + batch_size, total_rows)
+                col_end = min(col_start + batch_size, total_cols)
+                
+                window = rio.windows.Window(
+                    col_off=col_start,
+                    row_off=row_start,
+                    width=col_end - col_start,
+                    height=row_end - row_start
+                )
+                
+                logger.info(f"Generated window: rows {row_start}:{row_end}, cols {col_start}:{col_end}")
+                yield window
+    
+    
+def insert_data(window):
     # Load elevation data for above window
     elevation_df = load_elevation_data(window)
     logger.info(f"Elevation data loaded successfully, size: {elevation_df.shape}")
@@ -428,7 +468,21 @@ def insert_light_weight_table():
     logger.info("Inserting data into light weight table")
     execute_batch(query, merged_df.values)
     logger.info("Data inserted successfully")
+            
+def insert_light_weight_table(window_length = None):
+    logger.info("Inserting data into light weight table")
 
+    #If window length is not provided, use the entire raster, but have to do it in batches
+    if window_length is None or window_length <= 0:
+        # Process windows of size 50 x 50 for the entire raster
+        for window in get_window_batches(50):  # Remove enumerate() as we don't need the counter
+            logger.info(f"Processing window: {window}")
+            insert_data(window)
+    
+    else:
+        window = get_random_window(window_length)
+        logger.info(f"Random window created of size: {window}")
+        insert_data(window)
         
 def create_materialised_view():
     db_execute(create_materialised_view_query)
@@ -443,7 +497,7 @@ def drop_table(table_name):
     logger.info(f"Table {table_name} dropped successfully")
 
 
-def init():
+def init(window_length = None):
     #create_database('carlisle_flood')
     # db_execute(enable_postgis_query)
     # db_execute(drop_table_upstream)
@@ -464,4 +518,4 @@ def init():
     # create_light_weight_table()
     drop_table("flood_data_light")
     create_light_weight_table()
-    insert_light_weight_table()
+    insert_light_weight_table(window_length)
