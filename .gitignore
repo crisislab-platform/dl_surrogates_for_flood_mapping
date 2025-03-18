@@ -8,3 +8,9 @@ logs/
 .env
 carlisle-data/DEM5m_2D/
 runs/
+out
+miniconda.sh
+carlisle-data/DEM5m_2D
+carlisle-data/grid_sequential_light/
+carlisle-data/rls
+carlisle-data/sequential

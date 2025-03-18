@@ -301,5 +301,7 @@ def load_grid_datasets_light(batch_size, epochs, lag, horizon):
     val_dataset = val_dataset.batch(batch_size).repeat(epochs).prefetch(tf.data.AUTOTUNE)
     
     logger.info(f"Loaded upstream-only datasets: Train={train_size} samples, Val={val_size} samples, Test={X_test.shape[0]} samples")
+    logger.info(f"Grid dimensions: {grid_height}x{grid_width}, Lag={lag}, Horizon={horizon}")
+    logger.info(f"Train steps: {train_steps}, Val steps: {val_steps}")
     
     return train_dataset, val_dataset, X_test, y_test, grid_height, grid_width, train_steps, val_steps

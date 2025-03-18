@@ -71,6 +71,9 @@ class SimpleLSTMModel(Model):
                 logger.error(f"Grid LSTM model creation failed: {e}")
                 raise
             
+    def train(self, run_dir):
+        return "Not implemented"
+            
     def predict(self, run_id = None, model_file = None):
         return "Not implemented"
         

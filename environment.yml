@@ -1,0 +1,30 @@
+name: carlisle-env
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - pip
+  - gdal
+  - rasterio
+  - geopandas
+  - numpy
+  - tensorflow>=2.10.0
+  - matplotlib
+  - pandas
+  - scipy
+  - tqdm 
+  - netCDF4
+  - psycopg2
+  - scikit-learn
+  - python-dotenv
+  - pytorch
+  - torchvision
+  - pip:
+    - tensorflow-addons
+    - tensorflow-probability
+    # Add any other pip-specific packages here
+variables:
+  GDAL_DISABLE_READDIR_ON_OPEN: "EMPTY_DIR"
+  CPL_VSIL_CURL_ALLOWED_EXTENSIONS: ".shp,.wd"
+  GDAL_CACHEMAX: "512"

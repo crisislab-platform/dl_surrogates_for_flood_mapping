@@ -1,4 +1,3 @@
-from tensorflow.keras.models import Sequential
 from dataclasses import dataclass
 import tensorflow as tf
 import os
@@ -23,6 +22,9 @@ class ModelConfig:
     dropout_rate: float = 0.2
     mixed_precision: bool = False
     memory_limit: int = None
+    run_id: str = None
+    run_dir: str = None
+    args: dict = None
 
 class Model:
     def __init__(self, model_config: ModelConfig):
@@ -63,8 +65,8 @@ class Model:
             with open(os.path.join(run_dir, 'model_config.json'), 'w') as f:
                 json.dump(vars(self.config), f, indent=2)
 
-            logger.info("Training model started")
-            start_time = time.time()    
+            logger.info(f"Training model {self.config.model_name} started")
+            start_time = time.time()
             
             history = self.model.fit(
                 self.train_dataset,

@@ -1,9 +1,9 @@
 from modules.model_trainer.model import ModelConfig, Model
-from modules.utils.path_util import OUTPUT_DIR
+from modules.utils.path_util import RUN_DIR
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Conv1D, Flatten, Dense
 from tensorflow.keras.optimizers import Adam
-from modules.dataloader.raster.raster_loader import create_raster_dataset
+from modules.dataloader.raster.raster_loader_1dcnn import create_raster_dataset
 import tensorflow as tf
 import numpy as np
 import os

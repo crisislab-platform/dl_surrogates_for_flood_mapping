@@ -2,6 +2,7 @@ from modules.model_trainer.model_trainer import train_model, predict_and_evaluat
 from modules.model_trainer.model import ModelConfig
 from modules.db_initialiser.database_initialiser import init
 from modules.dataloader.sequential.file_sequence_generator import generate_grid_sequences_from_files, generate_grid_sequences_light_from_files
+from modules.visualiser.visualiser import plot
 import logging
 import argparse
 import os
@@ -16,6 +17,7 @@ PREDICT_COMMAND = "predict"
 GENERATE_SEQUENCES_COMMAND = "generate_sequences"
 GENERATE_GRID_SEQUENCES_COMMAND = "generate_grid_sequences"
 GENERATE_GRID_SEQUENCES__LIGHT_COMMAND = "generate_grid_sequences_light"
+PLOT_COMMAND = "plot"
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -31,13 +33,19 @@ def parse_args():
     parser.add_argument('--dropout_rate', type=float, default=0.2, help='Dropout rate')
     parser.add_argument('--mixed_precision', action='store_true', help='Use mixed precision')
     parser.add_argument('--window_length', type=int, default=None, help='Window length for data extraction')
+    parser.add_argument('--plot_type', type=str, help='Type of plot to generate')
+    parser.add_argument('--file', type=str, help='Path to file for plotting')
+    parser.add_argument('--rep_loc_file', type=str, help='Path to file containing representative locations')
+    parser.add_argument('--sampling_dist', type=int, help='Sampling distance for representative locations')
+
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
     valid_commands = [TRAIN_COMMAND, DB_COMMAND, PREDICT_COMMAND, 
-                     GENERATE_SEQUENCES_COMMAND, GENERATE_GRID_SEQUENCES_COMMAND, GENERATE_GRID_SEQUENCES__LIGHT_COMMAND]
+                     GENERATE_SEQUENCES_COMMAND, GENERATE_GRID_SEQUENCES_COMMAND, 
+                     GENERATE_GRID_SEQUENCES__LIGHT_COMMAND, PLOT_COMMAND]
     
     if args.command not in valid_commands:
         logger.error(f"Invalid command '{args.command}'")
@@ -50,6 +58,12 @@ if __name__ == "__main__":
         generate_grid_sequences_from_files(args.lag, args.horizon)
     elif args.command == GENERATE_GRID_SEQUENCES__LIGHT_COMMAND:
         generate_grid_sequences_from_files(args.lag, args.horizon, light=True)
+    elif args.command == PLOT_COMMAND:
+        if not args.file or not args.plot_type or not args.run_id:
+            logger.error("Missing required arguments for plotting")
+            exit(1)
+        logger.info(f"Plotting data from {args.file}")
+        plot(args.plot_type, args.file, args.run_id)
     elif args.command == PREDICT_COMMAND:
         if not args.run_id:
             logger.error("Run ID is required for prediction")
@@ -68,7 +82,7 @@ if __name__ == "__main__":
             dropout_rate=args.dropout_rate,
             mixed_precision=args.mixed_precision
         )
-        train_model(config)
+        train_model(config, args)
     elif args.command == DB_COMMAND:
         init(window_length=args.window_length)
     logger.info("Commands executed successfully")

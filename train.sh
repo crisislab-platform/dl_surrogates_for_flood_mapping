@@ -1,6 +1,6 @@
 # 1DCNN_V1 training without lag and horizon
-parallel --line-buffer CUDA_VISIBLE_DEVICES={1} python3.11 main.py train \
-  --model 1DCNN_V1 \
+parallel --line-buffer CUDA_VISIBLE_DEVICES={1} python main.py train \
+  --model LSTM_V1 \
   --lag {2} \
   --horizon {3} \
   --batch_size {4} \
@@ -11,6 +11,6 @@ parallel --line-buffer CUDA_VISIBLE_DEVICES={1} python3.11 main.py train \
   ::: 8 \
   ::: 1 \
   ::: 32 \
-  ::: 0.01 \
+  ::: 0.001 \
   ::: 100 \
   ::: 20
