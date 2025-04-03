@@ -1,0 +1,16 @@
+# Model names
+LSTM_V1 = "LSTM_V1"
+CNN1D_V1 = "1DCNN_V1"
+LSTM_SRR_V1 = "LSTM_SRR_V1"
+USRR_1DCNN_V1 = "USSR_1DCNN_V1"
+USRR_UNET_V1 = "USSR_UNET_V1"
+USRR_CNN1D_COMBINED = "USSR_CNN1D_COMBINED"
+
+#Paths
+PROJECT_ROOT = "/home/91/23016891/projects/carlisle"
+CARLISLE_DATA_DIR = f"{PROJECT_ROOT}/data/carlisle"
+SIMULATION_DATA_DIR = f"/data/carlisle/DEM5m_2D"
+OUTPUT_DIR = f"/data/carlisle/out"
+GRAPH_OUTPUT_DIR = f"{PROJECT_ROOT}/out"
+RUN_DIR = f"{OUTPUT_DIR}/runs"
+SIMULATION_OUTPUT_DIR =  f"/data/carlisle/simulation_output"

@@ -9,7 +9,6 @@ dependencies:
   - rasterio
   - geopandas
   - numpy
-  - tensorflow>=2.10.0
   - matplotlib
   - pandas
   - scipy
@@ -20,9 +19,9 @@ dependencies:
   - python-dotenv
   - pytorch
   - torchvision
-  - pip:
-    - tensorflow-addons
-    - tensorflow-probability
+  - imageio
+  - tabulate
+  - psutil
     # Add any other pip-specific packages here
 variables:
   GDAL_DISABLE_READDIR_ON_OPEN: "EMPTY_DIR"

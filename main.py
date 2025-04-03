@@ -1,22 +1,23 @@
-from modules.model_trainer.model_trainer import train_model, predict_and_evaluate_only
-from modules.model_trainer.model import ModelConfig
-from modules.db_initialiser.database_initialiser import init
-from modules.dataloader.sequential.file_sequence_generator import generate_grid_sequences_from_files, generate_grid_sequences_light_from_files
-from modules.visualiser.visualiser import plot
+from modules.model_runner.model_trainer import train_model
+from modules.models.model_wrapper import ModelConfig
+from modules.models.usrr_1dcnn.spatial_reduction_module.rep_location_finder import find_representative_locations_and_clusters
+from modules.models.usrr_1dcnn.spatial_reduction_module.reconstruction import validate_reconstruction
 import logging
 import argparse
-import os
-import tensorflow as tf
+from datetime import datetime
+from modules.visualiser.visualiser import plot_upstream_conditions, visualise_rep_locations, plot_boundary_information, create_flood_animation, plot_extent_reference, plot_extent_prediction
+
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("Main")
 
 TRAIN_COMMAND = "train"
-DB_COMMAND = "db_init"
 PREDICT_COMMAND = "predict"
 GENERATE_SEQUENCES_COMMAND = "generate_sequences"
 GENERATE_GRID_SEQUENCES_COMMAND = "generate_grid_sequences"
-GENERATE_GRID_SEQUENCES__LIGHT_COMMAND = "generate_grid_sequences_light"
+GENERATE_GRID_SEQUENCES_LIGHT_COMMAND = "generate_grid_sequences_light"
+SRR_CLUSTER_COMMAND = "srr_cluster"
+SRR_RECONSTRUCTION_COMMAND = "srr_reconstruction"
 PLOT_COMMAND = "plot"
 
 def parse_args():
@@ -30,47 +31,30 @@ def parse_args():
     parser.add_argument('--learning_rate', type=float, default=0.001, help='Learning rate for training')
     parser.add_argument('--epochs', type=int, default=10, help='Number of epochs for training')
     parser.add_argument('--patience', type=int, default=2, help='Early stopping patience')
-    parser.add_argument('--dropout_rate', type=float, default=0.2, help='Dropout rate')
-    parser.add_argument('--mixed_precision', action='store_true', help='Use mixed precision')
     parser.add_argument('--window_length', type=int, default=None, help='Window length for data extraction')
     parser.add_argument('--plot_type', type=str, help='Type of plot to generate')
     parser.add_argument('--file', type=str, help='Path to file for plotting')
+    parser.add_argument('--event', type=str, help='Event ID for plotting')
     parser.add_argument('--rep_loc_file', type=str, help='Path to file containing representative locations')
     parser.add_argument('--sampling_dist', type=int, help='Sampling distance for representative locations')
-
+    parser.add_argument('--n_clusters', type=int, help='Number of clusters for SRR clustering')
+    parser.add_argument('--random_state', type=int, help='Random state for SRR clustering')
+    parser.add_argument('--n_init', type=int, help='Number of initializations for SRR clustering')
+    parser.add_argument('--rl_group', type=str, help='RL group for clustering')
+    parser.add_argument('--input_time_len_h', type=int, help='Input time length in hours for clustering')
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
-    valid_commands = [TRAIN_COMMAND, DB_COMMAND, PREDICT_COMMAND, 
-                     GENERATE_SEQUENCES_COMMAND, GENERATE_GRID_SEQUENCES_COMMAND, 
-                     GENERATE_GRID_SEQUENCES__LIGHT_COMMAND, PLOT_COMMAND]
+    valid_commands = [TRAIN_COMMAND, PREDICT_COMMAND,  SRR_CLUSTER_COMMAND,
+                     SRR_RECONSTRUCTION_COMMAND, PLOT_COMMAND]
     
     if args.command not in valid_commands:
         logger.error(f"Invalid command '{args.command}'")
         exit(1)
-    
-    logger.info(f"Executing command {args.command}")
-    if args.command == GENERATE_GRID_SEQUENCES_COMMAND:
-        generate_grid_sequences_from_files(args.lag, args.horizon)
-    elif args.command == GENERATE_SEQUENCES_COMMAND:
-        generate_grid_sequences_from_files(args.lag, args.horizon)
-    elif args.command == GENERATE_GRID_SEQUENCES__LIGHT_COMMAND:
-        generate_grid_sequences_from_files(args.lag, args.horizon, light=True)
-    elif args.command == PLOT_COMMAND:
-        if not args.file or not args.plot_type or not args.run_id:
-            logger.error("Missing required arguments for plotting")
-            exit(1)
-        logger.info(f"Plotting data from {args.file}")
-        plot(args.plot_type, args.file, args.run_id)
-    elif args.command == PREDICT_COMMAND:
-        if not args.run_id:
-            logger.error("Run ID is required for prediction")
-            exit(1)
-        predict_and_evaluate_only(args.run_id, args.model)
+
     elif args.command == TRAIN_COMMAND:
-        # Use the unified ModelConfig
         config = ModelConfig(
             model_name=args.model,
             lag=args.lag,
@@ -78,11 +62,50 @@ if __name__ == "__main__":
             batch_size=args.batch_size,
             learning_rate=args.learning_rate,
             epochs=args.epochs,
-            patience=args.patience,
-            dropout_rate=args.dropout_rate,
-            mixed_precision=args.mixed_precision
+            patience=args.patience
         )
         train_model(config, args)
-    elif args.command == DB_COMMAND:
-        init(window_length=args.window_length)
+        
+    elif args.command == SRR_CLUSTER_COMMAND:
+        if not args.sampling_dist or not args.n_clusters or not args.random_state or not args.n_init:
+            logger.error("Missing required arguments for representative location clustering")
+            exit(1)
+        # Create a run_id for the run
+        run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        find_representative_locations_and_clusters(run_id, args.sampling_dist, args.n_clusters, args.random_state, args.n_init)
+        
+    elif args.command == SRR_RECONSTRUCTION_COMMAND:
+        if not args.sampling_dist or not args.n_clusters:
+            logger.error("Missing required arguments for SRR reconstruction")
+            exit(1)
+        validate_reconstruction(args.run_id, args.sampling_dist, args.n_clusters)
+        
+    elif args.command == PLOT_COMMAND:
+        if not args.plot_type:
+            logger.error("Plot type is required for plotting")
+            exit(1)
+            
+        if args.plot_type == "up_conditions":
+            if not args.event:
+                logger.error("Event ID is required for upstream conditions plotting")
+                exit(1)
+            plot_upstream_conditions(args.event)
+        elif args.plot_type == "rep_locations":
+            if not args.run_id or not args.file:
+                logger.error("Run ID and file are required for representative locations plotting")
+                exit(1)
+            visualise_rep_locations(args.run_id, args.file)
+        elif args.plot_type == "boundary_information":
+            plot_boundary_information()
+        elif args.plot_type == "animation":
+            create_flood_animation()
+            
+        elif args.plot_type == "extent":
+            plot_extent_reference()
+        elif args.plot_type == "1dcnn_extent":
+            plot_extent_prediction()
+        else:
+            logger.error(f"Unknown plot type: {args.plot_type}")
+            exit(1)
+        
     logger.info("Commands executed successfully")

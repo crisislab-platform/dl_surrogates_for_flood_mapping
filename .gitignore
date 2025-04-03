@@ -6,11 +6,10 @@
 __pycache__
 logs/
 .env
-carlisle-data/DEM5m_2D/
-runs/
-out
+data/carlisle/DEM5m_2D/
+data/carlisle/grid_sequential_light/
+data/carlisle/rls
+data/carlisle/sequential
+out/rls
 miniconda.sh
-carlisle-data/DEM5m_2D
-carlisle-data/grid_sequential_light/
-carlisle-data/rls
-carlisle-data/sequential
+out/area_check.tif
