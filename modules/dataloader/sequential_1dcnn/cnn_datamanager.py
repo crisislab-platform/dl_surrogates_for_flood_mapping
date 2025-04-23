@@ -6,23 +6,23 @@ from modules.models.usrr_1dcnn.spatial_reduction_module.gdal_lib import gdal_asa
 import torch
 import logging
 import glob
+from modules.utils.run_util import check_device
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("CNNDataManager")
 
 class CNNDataManager():
-    def __init__(self, batch_size, input_time_len_h, time_lag_h, rl_group, timestep=1, sampling_dist=20, num_of_clusters=100,test_mode=False):
+    def __init__(self, batch_size=32, input_time_len_h=1, time_lag_h=0, rl_group=1, timestep=1, sampling_dist=20, num_of_clusters=100,test_mode=False):
         
         self.test_mode = test_mode
         
         # Squence variables
         self.batch_size = batch_size
         self.timestep = timestep # Time step multipler against the original data (15 min * multipler)
-        self.time_lag_h = 0
+        self.time_lag_h = 0 # Time lag in hours
         self.event_seq_data = {}
-        
         self.input_seq_length = int(input_time_len_h * 4 / timestep) 
-        self.input_seq_start = int((self.time_lag_h * 4) / timestep) + self.input_seq_length
+        self.input_seq_start = self.input_seq_length
     
         self.time_slicing = lambda x: x[self.timestep//2::self.timestep] #start:stop:step
         
@@ -41,184 +41,168 @@ class CNNDataManager():
         
         if self.test_mode:
             self.all_event_ids = self.test_event_ids
+            self.validation_event_ids = []
 
-        # Baseline flow rates for upstream1, upstream2, and upstream3
-        self.up1_baseline_fr = 69.2354
-        self.up2_baseline_fr = 6.2953
-        self.up3_baseline_fr = 14.7835
-        
         #directories
         self.simulation_dir = SIMULATION_DATA_DIR
-        self.dem_asc_file = os.path.join(CARLISLE_DATA_DIR, "Carlisle_5m.asc")
+        self.dem_asc_file = os.path.join(self.simulation_dir, "Carlisle_5m.asc")
         
         self.rl_filter_prepare(self.rl_group)
-        if not self.test_mode:
-            self.train_loader, self.val_loader = self.get_batch_rl_loaders()
-        else:
-            self.test_inputs = self.input_tensor_prep()
-            
+        
+        self.idx_per_event = lambda x: np.ceil((self.get_no_time_steps(x) - self.timestep//2) / self.timestep).astype(int)
+        even_start_id_map = {}
+        for index, event_id in enumerate(self.all_event_ids):
+            if index == 0:
+                start_idx = 0
+            else:
+                start_idx = even_start_id_map[self.all_event_ids[index-1]] + self.idx_per_event(self.all_event_ids[index-1])
+            even_start_id_map[event_id] = start_idx
+        self.event_start_id_map = even_start_id_map
+        self.train_loader, self.val_loader, self.test_inputs = self.get_batch_rl_loaders()
 
     def input_tensor_prep(self):
         event_input = []
         for event_id in self.all_event_ids:
             inflow_file = os.path.join(CARLISLE_DATA_DIR, f"Upstream_Flows_Run{event_id}.csv")
             inflow_data = pd.read_csv(inflow_file)
-            # Exclude first 8 rows
-            inflow_data = inflow_data.iloc[8:]
-            inflow_data = inflow_data.reset_index(drop=True)
-            
-            upstream1_idx = inflow_data.columns.to_list().index("Upstream1")
-            upstream2_idx = inflow_data.columns.to_list().index("Upstream2")
-            upstream3_idx = inflow_data.columns.to_list().index("Upstream3")
-            
+            inflow_data = inflow_data.iloc[8:,:] # Skip the first 8 rows
+            inflow_data = inflow_data.values
+            inflow_data = inflow_data[:, 1:] # Skip the first column
+            inflow_data = inflow_data.astype(float)
             input_arr = np.array(inflow_data)
-            input_arr = self.time_slicing(input_arr[:,1:]) #remove time column and slice the data
-
-            zero_padding = np.zeros((self.input_seq_start-1, input_arr.shape[1]))
-            input_arr = np.r_['0,2', zero_padding, input_arr]
-            
-            # Set a baseline flow rate for padded values to complete the first sequence
-            input_arr[:self.input_seq_start-1, upstream1_idx-1] = self.up1_baseline_fr
-            input_arr[:self.input_seq_start-1, upstream2_idx-1] = self.up2_baseline_fr
-            input_arr[:self.input_seq_start-1, upstream3_idx-1] = self.up3_baseline_fr
-        
-            #create sequences of length seq_len
-            event_input.append([input_arr[i:i+self.input_seq_length, :] for i in range(len(self.time_slicing(inflow_data)))])
-             
-        # current shape = (event_num, evt_data_points, seq_len, var_num) and inhomogeneous
-        event_input = np.concatenate(event_input, axis=0) #shape = (event_num * evt_data_points, seq_len, var_num)
-        logger.info(f"Event input shape after conversion: {event_input.shape}")
-        event_input = event_input.reshape((-1, *event_input.shape[-2:]))
-        logger.info(f"Input data shape after reshaping: {event_input.shape}")
-        
-        # Scale the data to the range [0, 1], skip scaling for the moment
-        #event_input = event_input/ 1726.462853 #max value of inflow data
-        return torch.from_numpy(event_input).float()   
+            input_arr = self.time_slicing(input_arr)
+            event_sequences = [input_arr[i:i+self.input_seq_length, :] for i in range(len(self.time_slicing(inflow_data))-self.input_seq_length)]
+            event_sequences = np.array(event_sequences)
+            event_sequences = event_sequences.reshape((-1, self.input_seq_length, event_sequences.shape[-1]))
+            event_input.append(event_sequences)
+        event_input = np.concatenate(event_input, axis=0)
+        event_input = event_input.reshape((-1, self.input_seq_length, event_input.shape[-1]))
+        event_input  = event_input
+        result = torch.from_numpy(event_input).float()
+        return result   
     
     def get_batch_rl_loaders(self, shuffle=True, random_seed=321):
-        train_loader, validation_loader = self.idx_prep(self.batch_size,  shuffle, random_seed)
-        logger.info(f"Train loader shape: {len(train_loader)}")
-        logger.info(f"Validation loader shape: {len(validation_loader)}")
-        return train_loader, validation_loader
+        train_loader, validation_loader, test_inputs = self.data_prep(self.batch_size,  shuffle, random_seed)
+        return train_loader, validation_loader, test_inputs
         
     def get_no_time_steps(self, event_id):
         inundation_files = glob.glob(f"{self.simulation_dir}/Run{event_id}-*.wd")
-        return len(inundation_files) - 8
+        return len(inundation_files) - 8 - self.input_seq_start
     
-    def index_expander_func(self, x):
-        idx_per_event = lambda x: np.ceil((self.get_no_time_steps(x) - self.timestep//2) / self.timestep).astype(int)
+    def index_expander_func(self, event_ids):
         idx_list = []
-        
-        even_start_id_map = {}
-        for index, event_id in enumerate(self.all_event_ids):
-            if index == 0:
-                start_idx = 0
-            else:
-                start_idx = even_start_id_map[self.all_event_ids[index-1]] + idx_per_event(self.all_event_ids[index-1])
-            even_start_id_map[event_id] = start_idx
-                
-        # Should also consider event_id
-        for event_id in x:
-            #Find start_idx
-            start_idx = even_start_id_map[event_id]
-            num_idx = idx_per_event(event_id)
-            # Generate sequential indices starting from start_idx
+        if len(event_ids) == 0:
+            return np.array([])
+        for event_id in event_ids:
+            start_idx = self.event_start_id_map[event_id]
+            num_idx = self.idx_per_event(event_id)
             idx = start_idx + np.arange(num_idx)
             idx_list.append(idx)
-            # Update start_idx for the next event
-            start_idx += num_idx
         idx_list = np.concatenate(idx_list)
         logger.info(f"Index list shape: {idx_list.shape}")
         return idx_list
     
-    def idx_prep(self,batch_size, shuffle=True, random_seed=341):
-        logger.info(f"Preparing index for batch size: {batch_size}")
+    def data_prep(self, batch_size, shuffle=True, random_seed=341):
+        logger.info(f"Preparing index")
+        idx_expander = lambda x: self.index_expander_func(x)
+        train_map_idxs = idx_expander([i for i in self.all_event_ids if i not in self.test_event_ids and i not in self.validation_event_ids])
+        validation_map_idxs = idx_expander(self.validation_event_ids)
+        test_map_idxs = idx_expander(self.test_event_ids)
         inputs_tensor = self.input_tensor_prep()
         rls_ts = self.rl_dataset_prep()
         tensor_ls = [inputs_tensor, rls_ts]
         
-        # given a set of event_ids(x), create a sequence of samples
-        # for each event_id, create a sequence of samples
-        # each event has a different number of steps therefore need to calculate the number of steps
 
-        idx_expander = lambda x: self.index_expander_func(x)
-        train_map_idxs = idx_expander([i for i in self.all_event_ids if i not in self.test_event_ids and i not in self.validation_event_ids])
-        validation_map_idxs = idx_expander(self.validation_event_ids)
-        
-        logger.info(f"Train map indices shape: {train_map_idxs.shape} Max: {train_map_idxs.max()}")
-        logger.info(f"Validation map indices shape: {validation_map_idxs.shape} Max: {validation_map_idxs.max()}")
         logger.info(f"Input tensor shape: {inputs_tensor.shape}")
         logger.info(f"RL tensor shape: {rls_ts.shape}")
         
-        rng = np.random.default_rng(random_seed)
-        if shuffle:
-            rng.shuffle(train_map_idxs)
-            rng.shuffle(validation_map_idxs)
-            
-        train_data_ls  = [torch.split(tensor_i[train_map_idxs.astype(int)], batch_size) for tensor_i in tensor_ls]
-        validation_data_ls = [torch.split(tensor_i[validation_map_idxs.astype(int)], batch_size) for tensor_i in tensor_ls]
+        if not self.test_mode:
+            logger.info(f"Train map indices shape: {train_map_idxs.shape} Max: {train_map_idxs.max()}")
+            logger.info(f"Validation map indices shape: {validation_map_idxs.shape} Max: {validation_map_idxs.max()}")
+            rng = np.random.default_rng(random_seed)
+            if shuffle:
+                rng.shuffle(train_map_idxs)
+                rng.shuffle(validation_map_idxs)
         
-        if len(tensor_ls) > 1:
-            train_loader = list(zip(*train_data_ls))
-            test_loader = list(zip(*validation_data_ls))
-        else:
-            train_loader = train_data_ls[0]
-            test_loader = validation_data_ls[0]
-        logger.info("Train and validation loaders prepared.")
-        return train_loader, test_loader
+        # Convert indices to tensors
+        if not self.test_mode:
+            train_indices = torch.tensor(train_map_idxs.astype(int))
+            validation_indices = torch.tensor(validation_map_idxs.astype(int))
+        test_indices = torch.tensor(test_map_idxs.astype(int))
+        
+        train_data_ls = []
+        validation_data_ls = []
+        test_data_ls = []
+        for tensor_i in tensor_ls:
+            if self.test_mode:
+                test_tensor = tensor_i[test_indices]
+                test_data_ls.append(test_tensor)
+                continue
+            train_tensor = tensor_i[train_indices]
+            validation_tensor = tensor_i[validation_indices]
+            train_batches = list(torch.split(train_tensor, batch_size))
+            validation_batches = list(torch.split(validation_tensor, batch_size))
+            train_data_ls.append(train_batches)
+            validation_data_ls.append(validation_batches)
+ 
+        if self.test_mode:
+            return None, None, test_data_ls
+        train_loader = list(zip(*train_data_ls))
+        valdiation_loader = list(zip(*validation_data_ls))
+        logger.info("Train and validation loaders prepared and moved to GPU.")
+        return train_loader,valdiation_loader, test_data_ls
         
     def read_event_inundation_data(self, event_id):
         inundation_files = glob.glob(f"{self.simulation_dir}/Run{event_id}-*.wd")
         inundation_files.sort()
-        inundation_files = inundation_files[8:]  # Skip the first 8 rows
+        inundation_files = inundation_files[8:]  #Skip the first 8 rows
         inundation_data_arr = []
-    
+        
         for t_idx, inundation_file in enumerate(inundation_files):
+            if t_idx < self.input_seq_start:
+                continue
             inundation_data = gdal_asarray(inundation_file)
-            logger.info(f"Inundation data shape before filtering: {inundation_data.shape}")
             timestep_rl_inundation = self.rl_filter(inundation_data)
-            logger.info(f"Inundation data shape after filtering: {timestep_rl_inundation.shape}")
-            logger.info(f"sample inundation data: {timestep_rl_inundation[0]}")
             inundation_data_arr.append(timestep_rl_inundation)
         
-        logger.info(f"Inundation data shape: {np.array(inundation_data_arr).shape}")
         inundation_data_arr = np.array(inundation_data_arr) 
-        # Now the shape is (time_steps, num_points)
         inundation_data_arr = self.time_slicing(inundation_data_arr)
-        logger.info(f"Inundation data shape after slicing: {inundation_data_arr.shape}")
         return inundation_data_arr
         
     def rl_dataset_prep(self):
-        # initialise the array with first event
         rl_curr = self.read_event_inundation_data(self.all_event_ids[0])
         dataset_arr = rl_curr
-        logger.info(f"RL curr data shape: {rl_curr.shape}")
-        logger.info(f"Dataset shape after initialisation: {dataset_arr.shape}")
         if len(self.all_event_ids) > 1:
             for i in range(1, len(self.all_event_ids)):
                 rl_curr = self.read_event_inundation_data(self.all_event_ids[i])
-                logger.info(f"RL curr data shape: {rl_curr.shape}")
                 dataset_arr = np.append(dataset_arr, rl_curr, axis=0)
-                logger.info(f"Dataset shape after appending: {dataset_arr.shape}")
-           
         logger.info(f"RL dataset shape: {np.array(dataset_arr).shape}")
-        return torch.from_numpy(dataset_arr)
+        result = torch.from_numpy(dataset_arr)
+        return result
         
     def find_cluster_file(self, rl_group, sampling_dist, num_of_clusters):
         if rl_group is None:
             return None, None
-        cluster_file = f"{OUTPUT_DIR}/rls/clusters/cluster_{rl_group}_ss_{sampling_dist}_{num_of_clusters}.shp"
+        cluster_file = f"{OUTPUT_DIR}/rls/clusters/clusters_ss_{sampling_dist}_{num_of_clusters}.csv"
         if not os.path.exists(cluster_file):
             logger.error(f"Cluster file {cluster_file} does not exist.")
             raise ValueError(f"Cluster file {cluster_file} does not exist.")
         return cluster_file
+    
+    def find_cluster_rls(self, cluster_file, rl_group):
+        cluster_df = pd.read_csv(cluster_file)
+        filtered_df = cluster_df[cluster_df['cluster'] == int(rl_group)]
+
+        coords_list = list(zip(filtered_df['x'], filtered_df['y']))
+        logger.info(f"Found {len(coords_list)} representative locations for cluster {rl_group}")
+        return coords_list
         
     def rl_filter_prepare(self, rl_group):
         logger.info(f"Preparing RL filter for group {rl_group}")
         if rl_group is None:
             self.rl_filter = lambda x: x
             return 0
-        self.cluster_rls= read_shp_point(self.rl_cluster_file)
+        self.cluster_rls = self.find_cluster_rls(self.rl_cluster_file, rl_group)
         self.rl_group_size = len(self.cluster_rls)
         transform  = gdal_transform(self.dem_asc_file)
         self.dem_map = gdal_asarray(self.dem_asc_file)
@@ -231,5 +215,3 @@ class CNNDataManager():
         filter_mask  = self.cluster_rl_map == 1
         self.rl_filter = lambda x: x[filter_mask]
         logger.info(f"RL filter prepared.")
-
-

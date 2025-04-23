@@ -18,12 +18,14 @@ import numpy as np
 logger = logging.getLogger("ModelTrainer")
 logger.setLevel(logging.INFO)
 
-
 def save_model_training_history(run_id, run_dir, model_wrapper:ModelWrapper, history, train_time, config, model_file):
     try:
         logger.info(f"history: {history}")
         logger.info("Writing training history to JSON")
         serializable_history = {}
+        if history is None:
+            logger.error("No training history available")
+            return False
         for key, value in history.items():
             if isinstance(value, list):
                 serializable_history[key] = [float(item) if isinstance(item, (np.number, np.ndarray)) 
@@ -70,9 +72,10 @@ def train_model(config: ModelConfig, args) -> str:
             logger.error("Model initialization failed")
             return None
         logger.info(f"Training model {config.model_name}")
+        
+        
         history, train_time, model_file = model.train(run_dir)
         logger.info(f"Training completed in {train_time:.2f} seconds")
-        
         logger.info("Training history: {history}")
         logger.info("Saving training history")
         
@@ -81,18 +84,32 @@ def train_model(config: ModelConfig, args) -> str:
         )
         if not state:
             logger.error("Model saving failed")
-            return None
-        logger.info("Model saved successfully")
+        else:
+            logger.info("Model training history saved successfully")
+
         logger.info("Validating model")
-        pred_mse, pred_rmse, pred_nse, pred_time, flops, rmse_wet = model.validate_model()
+        metrics = model.validate_model()
+        
+        # Extract metrics from the dictionary
+        pred_mse = metrics.get("mse", 0)
+        pred_rmse = metrics.get("rmse", 0)
+        pred_nse = metrics.get("nse", 0)
+        pred_time = metrics.get("pred_time", 0)
+        flops = metrics.get("flops", 0)
+        rmse_wet = metrics.get("wet_rmse", 0)
+        wet_acc = metrics.get("wet_acc", 0)
+    
+
         logger.info(f"Prediction completed in {pred_time:.2f} seconds")
         logger.info(f"Prediction MSE: {pred_mse}")
         logger.info(f"Prediction RMSE: {pred_rmse}")
         logger.info(f"Prediction NSE: {pred_nse}")
         logger.info(f"Model FLOPS: {flops}")
-        logger.info(f"Model RMSE Wet: {rmse_wet}")
+        logger.info(f"Wet cells RMSE: {rmse_wet}")
+        logger.info(f"Wet cells classification accuracy: {wet_acc}")
+        
         save_prediction_metrics(
-            run_id, pred_mse, pred_rmse, pred_nse, pred_time, flops, rmse_wet
+            run_id, metrics
         )
         logger.info(f"Training run {run_id} completed")
         return run_id

@@ -27,7 +27,7 @@ class GNNModelWrapper(ModelWrapper):
             pass
         return history
     
-    def predict(self):
+    def validate_model(self):
         pass
 
     def validate_model(self):

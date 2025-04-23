@@ -2,7 +2,7 @@ import logging
 # from modules.models.lstm.lstm import SimpleLSTMModel
 from modules.models.cnn1d.cnn1d import CNN1DSAModelWrapper
 from modules.models.lstm_srr.lstm_srr import LSTMSRRModel
-from modules.models.usrr_1dcnn.ussr1dcnn import USSR1DCNNModel
+from modules.models.usrr_1dcnn.ussr1dcnn import USSR1DCNNModelWrapper
 from modules.models.usrr_1dcnn.unet import UNetModelWrapper
 from modules.models.usrr_1dcnn.cnn1d import CNN1DModelWrapper
 from modules.models.model_wrapper import ModelConfig, ModelWrapper
@@ -27,7 +27,6 @@ def create_model(config: ModelConfig, args)-> ModelWrapper:
         # Get the factory function for the requested model
         logger.info("Initializing factory")
         factory = model_factories.get(config.model_name)
-        logger.info(f"Creating model: {config.model_name}")
         if factory:
             logger.info(f"Creating model: {config.model_name}")
             return factory()
@@ -68,15 +67,10 @@ def create_rl1dcnn_model(config, args):
     return CNN1DModelWrapper(config)
 
 def create_combined_model(config, args):
-    if not hasattr(args, 'cluster_id'):
-        logger.error("Missing cluster_id for combined model")
-        return None
-        
     config.args = {
-        'rep_loc_file_path': args.rep_loc_file, 
         'sampling_dist': args.sampling_dist,
-        'component_only': False,
-        'cluster_id': args.cluster_id
+        'n_clusters': args.n_clusters
     }
+    
     # Create USSR1DCNNModel with combined configuration
-    return USSR1DCNNModel(config)
+    return USSR1DCNNModelWrapper(config)

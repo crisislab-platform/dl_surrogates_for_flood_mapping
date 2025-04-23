@@ -5,7 +5,8 @@ from modules.models.usrr_1dcnn.spatial_reduction_module.reconstruction import va
 import logging
 import argparse
 from datetime import datetime
-from modules.visualiser.visualiser import plot_upstream_conditions, visualise_rep_locations, plot_boundary_information, create_flood_animation, plot_extent_reference, plot_extent_prediction
+from modules.visualiser.visualiser import plot_upstream_conditions, visualise_rep_locations, plot_boundary_information, create_flood_animation, plot_extent_reference, plot_extent_prediction, plot_extents_on_same_image, visualise_area_check_map, draw_metrics
+from modules.metrics_reader.metrics_reader import read_metrics
 
 
 logging.basicConfig(level=logging.INFO)
@@ -19,6 +20,7 @@ GENERATE_GRID_SEQUENCES_LIGHT_COMMAND = "generate_grid_sequences_light"
 SRR_CLUSTER_COMMAND = "srr_cluster"
 SRR_RECONSTRUCTION_COMMAND = "srr_reconstruction"
 PLOT_COMMAND = "plot"
+METRICS_COMMAND = "metrics"
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -48,7 +50,7 @@ def parse_args():
 if __name__ == "__main__":
     args = parse_args()
     valid_commands = [TRAIN_COMMAND, PREDICT_COMMAND,  SRR_CLUSTER_COMMAND,
-                     SRR_RECONSTRUCTION_COMMAND, PLOT_COMMAND]
+                     SRR_RECONSTRUCTION_COMMAND, PLOT_COMMAND, METRICS_COMMAND]
     
     if args.command not in valid_commands:
         logger.error(f"Invalid command '{args.command}'")
@@ -98,14 +100,20 @@ if __name__ == "__main__":
         elif args.plot_type == "boundary_information":
             plot_boundary_information()
         elif args.plot_type == "animation":
-            create_flood_animation()
-            
+            create_flood_animation() 
         elif args.plot_type == "extent":
-            plot_extent_reference()
+            plot_extents_on_same_image()
         elif args.plot_type == "1dcnn_extent":
             plot_extent_prediction()
+        elif args.plot_type == "area_check":
+            visualise_area_check_map()  
+        elif args.plot_type == "draw_metrics":
+            draw_metrics()
         else:
             logger.error(f"Unknown plot type: {args.plot_type}")
             exit(1)
+            
+    elif args.command == METRICS_COMMAND:
+        read_metrics()
         
     logger.info("Commands executed successfully")

@@ -9,7 +9,7 @@ import psutil
 import os
 import gc
 from typing import Dict, Tuple
-
+from torch.profiler import profile, ProfilerActivity
 
 logger = logging.getLogger("Model")
 
@@ -48,9 +48,6 @@ class ModelWrapper:
         pass
     
     def train(self, run_dir: str):
-        pass
-    
-    def predict(self, run_id: str = None, model_file: str = None):
         pass
     
     def validate_model(self):
@@ -95,3 +92,77 @@ class ModelWrapper:
         
         logger.info(mem_msg)
         return stats
+    
+    def nse_fn(self, observed, predicted):
+        observed_mean = torch.mean(observed)
+        numerator = torch.sum((observed - predicted) ** 2)
+        denominator = torch.sum((observed - observed_mean) ** 2)
+        nse = 1 - (numerator / denominator)
+        nse = nse.item()
+        return nse 
+    
+    def format_flops(self, flops):
+        """Convert FLOPS to a human-readable string."""
+        if (flops < 1e9):
+            return f"{flops / 1e6:.2f} MFLOPS"
+        else:
+            return f"{flops / 1e9:.2f} GFLOPS"
+    
+    def profiler_analysis(self, key_averages):
+        """
+        Analyze profiling results from PyTorch profiler.
+        
+        Args:
+            key_averages: The key_averages object from PyTorch profiler
+            
+        Returns:
+            Dictionary containing memory and time metrics
+        """
+        try:
+            # Get the correct attribute names
+            cuda_memory_values = [getattr(item, 'self_device_memory_usage', 0) for item in key_averages]
+            cpu_memory_values = [getattr(item, 'self_cpu_memory_usage', 0) for item in key_averages]
+            
+            # Extract maximum memory usage
+            max_cuda_memory = max(cuda_memory_values) if cuda_memory_values else 0
+            max_cpu_memory = max(cpu_memory_values) if cpu_memory_values else 0
+            
+            # Extract total memory usage
+            total_cuda_memory = sum(cuda_memory_values) if cuda_memory_values else 0
+            total_cpu_memory = sum(cpu_memory_values) if cpu_memory_values else 0
+            
+            # Extract total CPU and GPU time
+            cpu_time_values = [getattr(item, 'cpu_time_total', 0) for item in key_averages]
+            gpu_time_values = [getattr(item, 'device_time_total', 0) for item in key_averages]
+            
+            total_cpu_time = sum(cpu_time_values) if cpu_time_values else 0
+            total_gpu_time = sum(gpu_time_values) if gpu_time_values else 0
+            
+            # Log the results
+            # Memory usage is in bytes
+            logging.info(f"Maximum CUDA memory usage: {max_cuda_memory / (1024 ** 2):.2f} MB")
+            logging.info(f"Maximum CPU memory usage: {max_cpu_memory / (1024 ** 2):.2f} MB")
+            logging.info(f"Total CUDA memory usage: {total_cuda_memory / (1024 ** 2):.2f} MB")
+            logging.info(f"Total CPU memory usage: {total_cpu_memory / (1024 ** 2):.2f} MB")
+            logging.info(f"Total CPU time: {total_cpu_time / 1e6:.2f} ms")
+            logging.info(f"Total GPU time: {total_gpu_time / 1e6:.2f} ms")
+            
+            return {
+                "max_cuda_memory": max_cuda_memory,
+                "max_cpu_memory": max_cpu_memory,
+                "total_cuda_memory": total_cuda_memory,
+                "total_cpu_memory": total_cpu_memory,
+                "total_cpu_time": total_cpu_time,
+                "total_gpu_time": total_gpu_time
+            }
+        except Exception as e:
+            logging.error(f"Error in profiler analysis: {e}")
+            return {
+                "max_cuda_memory": 0,
+                "max_cpu_memory": 0,
+                "total_cuda_memory": 0,
+                "total_cpu_memory": 0,
+                "total_cpu_time": 0,
+                "total_gpu_time": 0,
+                "error": str(e)
+            }

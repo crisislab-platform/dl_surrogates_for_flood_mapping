@@ -17,12 +17,12 @@ dependencies:
   - psycopg2
   - scikit-learn
   - python-dotenv
-  - pytorch
+  - pytorch=2.6.0
   - torchvision
   - imageio
   - tabulate
   - psutil
-    # Add any other pip-specific packages here
+  # Add any other pip-specific packages here
 variables:
   GDAL_DISABLE_READDIR_ON_OPEN: "EMPTY_DIR"
   CPL_VSIL_CURL_ALLOWED_EXTENSIONS: ".shp,.wd"

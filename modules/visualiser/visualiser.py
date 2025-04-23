@@ -617,3 +617,387 @@ def plot_extent_prediction(run_id=None, idx="0145"):
     # Create and save the visualization
     output_file = os.path.join(GRAPH_OUTPUT_DIR, "maximum_flood_extent_cnn1d.png")
     return plot_extent_map(max_extent_file, output_file, title)
+
+def plot_extents_on_same_image():
+    
+    #CNN model run
+    runs = sorted(glob.glob(os.path.join(RUN_DIR, "1DCNN_V1", "*")))
+    run_id = os.path.basename(runs[-1])
+    idx = "0145"
+    cnn_extent_file = os.path.join(RUN_DIR, "1DCNN_V1", run_id, "output_maps", f"map_{idx}.wd")
+    
+    #USRR model run
+    usrr_runs = sorted(glob.glob(os.path.join(RUN_DIR, "USSR_CNN1D_COMBINED", "*")))
+    usrr_run_id = os.path.basename(usrr_runs[-1])
+    usrr_extent_file = os.path.join(RUN_DIR, "USSR_CNN1D_COMBINED", usrr_run_id, f"map_{idx}.wd")
+    
+    #LISFLOOD run
+    lf_extent_file = os.path.join(SIMULATION_DATA_DIR, f"Run1-{idx}.wd")
+    
+    # Check if files exist
+    if not os.path.exists(cnn_extent_file) or not os.path.exists(lf_extent_file) or not os.path.exists(usrr_extent_file):
+        logger.error(f"One or more extent files don't exist:\nCNN: {cnn_extent_file}\nLISFLOOD: {lf_extent_file}\nUSSR: {usrr_extent_file}")
+        return None
+    
+    logger.info(f"Creating collage of models at timestep {idx}")
+    dem_file = os.path.join(SIMULATION_DATA_DIR, "Carlisle_5m.asc")
+    output_file = os.path.join(GRAPH_OUTPUT_DIR, f"model_comparison_{idx}.png")
+    
+    try:
+        # Create figure with a better title and layout
+        fig = plt.figure(figsize=(20, 14))  # Increased height for two rows
+        fig.suptitle('Flood Extent Comparison - Multiple Models', fontsize=20, fontweight='bold', y=0.98)
+        
+        # Create a 2×2 grid layout with the third subplot centered in the second row
+        gs = fig.add_gridspec(2, 2, width_ratios=[1, 1], height_ratios=[1, 1], wspace=0.15, hspace=0.2)
+        
+        # Create three subplots with new arrangement
+        ax1 = fig.add_subplot(gs[0, 0])  # LISFLOOD (top left)
+        ax2 = fig.add_subplot(gs[0, 1])  # CNN (top right)
+        ax3 = fig.add_subplot(gs[1, :])  # USRR (bottom center, spanning both columns)
+        
+        # Process DEM data
+        with rasterio.open(dem_file) as src:
+            dem_data = src.read(1)
+            extent = [src.bounds.left, src.bounds.right, src.bounds.bottom, src.bounds.top]
+            dem_nodata = src.nodata
+            
+        # Process LISFLOOD map
+        with rasterio.open(lf_extent_file) as src:
+            lf_data = src.read(1)
+            lf_nodata = src.nodata
+            
+        # Process CNN map
+        with rasterio.open(cnn_extent_file) as src:
+            cnn_data = src.read(1)
+            cnn_nodata = src.nodata
+            
+        # Process USRR map
+        with rasterio.open(usrr_extent_file) as src:
+            usrr_data = src.read(1)
+            usrr_nodata = src.nodata
+        
+        # Create masked arrays for all flood extents
+        cnn_data[cnn_data < 0.03] = 0
+        usrr_data[usrr_data < 0.03] = 0
+        masked_lf = np.ma.masked_where((lf_data == lf_nodata) | (lf_data==0), lf_data)
+        masked_cnn = np.ma.masked_where((cnn_data == cnn_nodata)| (cnn_data==0), cnn_data)
+        masked_usrr = np.ma.masked_where((usrr_data == usrr_nodata) | (usrr_data==0),  usrr_data)
+        
+        # Set a fixed scale for water depth (0-3 meters)
+        max_depth = 3.0  # Fixed scale for water depth
+        
+        # Create high-contrast water colormap with stronger blues
+        water_colors = plt.cm.Blues(np.linspace(0, 1, 256))
+        # Make the blues more saturated and darker
+        for i in range(len(water_colors)):
+            # Increase saturation and value for more vibrant blues
+            water_colors[i, 0:3] = np.clip(water_colors[i, 0:3] * 1.3, 0, 1)  # Boost color intensity
+        
+        water_cmap = plt.matplotlib.colors.LinearSegmentedColormap.from_list('enhanced_blues', water_colors)
+        
+        # Use terrain colormap for DEM
+        dem_cmap = plt.cm.Greys_r
+        
+        # Enhanced background styling with clearer DEM visualization
+        # Create a normalized and enhanced DEM for better visibility
+        dem_min, dem_max = np.percentile(dem_data, [5, 95])  # Use percentiles to avoid outliers
+        normalized_dem = dem_data
+        
+        # Adjust alpha values for higher contrast
+        dem_alpha = 0.7  # Slightly reduced to make water stand out
+        water_alpha = 1.0  # Full opacity for water
+        
+        # Create binary masks for water extent borders
+        binary_lf = np.where(~masked_lf.mask, 1, 0)
+        binary_cnn = np.where(~masked_cnn.mask, 1, 0)
+        binary_usrr = np.where(~masked_usrr.mask, 1, 0)
+        
+        # Draw LISFLOOD map with enhanced styling
+        ax1.imshow(normalized_dem, extent=extent, cmap=dem_cmap, alpha=dem_alpha, origin='upper')
+        im1 = ax1.imshow(masked_lf, extent=extent, cmap=water_cmap, alpha=water_alpha, 
+                        vmin=0, vmax=3.0, origin='upper')  # Fixed range 0-3
+        
+        
+        
+        # Add subplot label and title
+        ax1.text(0.05, 0.95, 'A', transform=ax1.transAxes, fontsize=16, 
+                fontweight='bold', bbox=dict(facecolor='white', alpha=0.8))
+        ax1.set_title('LISFLOOD Simulation', fontsize=14, fontweight='bold', pad=10)
+        
+        # Draw CNN map with same enhanced styling
+        ax2.imshow(normalized_dem, extent=extent,cmap=dem_cmap, alpha=dem_alpha, origin='upper')
+        im2 = ax2.imshow(masked_cnn, extent=extent, cmap=water_cmap, alpha=water_alpha, 
+                        vmin=0, vmax=3.0, origin='upper')  # Fixed range 0-3
+        
+        
+        
+        # Add subplot label and title
+        ax2.text(0.05, 0.95, 'B', transform=ax2.transAxes, fontsize=16, 
+                fontweight='bold', bbox=dict(facecolor='white', alpha=0.8))
+        ax2.set_title('1DCNN Model Prediction', fontsize=14, fontweight='bold', pad=10)
+        
+        # Draw USRR map with same enhanced styling
+        ax3.imshow(normalized_dem, extent=extent, cmap=dem_cmap, alpha=dem_alpha, origin='upper')
+        im3 = ax3.imshow(masked_usrr, extent=extent, cmap=water_cmap, alpha=water_alpha, 
+                        vmin=0, vmax=3.0, origin='upper')  # Fixed range 0-3
+        
+        
+        # Add subplot label and title
+        ax3.text(0.05, 0.95, 'C', transform = ax3.transAxes, fontsize=16, 
+                fontweight='bold', bbox=dict(facecolor='white', alpha=0.8))
+        ax3.set_title('USRR-1DCNN Model Prediction', fontsize=14, fontweight='bold', pad=10)
+        
+        # Improve grid styling for all subplots
+        for ax in [ax1, ax2, ax3]:
+            ax.grid(True, alpha=0.3, linestyle='--', color='black')
+            ax.set_xticklabels([])
+            ax.set_yticklabels([])
+            # Add border to each subplot
+            for spine in ax.spines.values():
+                spine.set_visible(True)
+                spine.set_linewidth(1.0)
+        
+        # Add a north arrow to all subplots
+        for ax in [ax1, ax2, ax3]:
+            ax.text(0.95, 0.05, '↑N', transform=ax.transAxes, fontsize=14, 
+                    fontweight='bold', ha='center', bbox=dict(facecolor='white', alpha=0.8))
+            
+            # Add scale bar to each subplot
+            scalebar_length_m = 500  # Length in meters
+            scale_x = extent[0] + (extent[1] - extent[0]) * 0.05
+            scale_y = extent[2] + (extent[3] - extent[2]) * 0.05
+            ax.plot([scale_x, scale_x + scalebar_length_m], [scale_y, scale_y], 'k-', linewidth=2)
+            ax.text(scale_x + scalebar_length_m/2, scale_y + (extent[3] - extent[2]) * 0.01, 
+                    f'{scalebar_length_m}m', ha='center', va='bottom', 
+                    bbox=dict(facecolor='white', alpha=0.8))
+        
+        # Add a single colorbar for water depth with improved styling
+        cbar_ax = fig.add_axes([0.92, 0.15, 0.01, 0.7])  # [left, bottom, width, height]
+        cbar = fig.colorbar(im1, cax=cbar_ax)
+        cbar.set_label('Water Depth (m) [0-3m]', fontsize=12, fontweight='bold')
+        
+        # Adjust layout and save figure
+        plt.tight_layout()
+        fig.subplots_adjust(top=0.9, right=0.9, wspace=0.1)
+        
+        # Save the figure
+        os.makedirs(os.path.dirname(output_file), exist_ok=True)
+        plt.savefig(output_file, dpi=300, bbox_inches='tight')
+        logger.info(f"Comparison map saved to {output_file}")
+        plt.close()
+        
+        return output_file
+        
+    except Exception as e:
+        logger.error(f"Error creating comparison map: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return None
+
+
+def visualise_area_check_map():
+    file = os.path.join(GRAPH_OUTPUT_DIR, "area_check.tif")
+    output_file = os.path.join(GRAPH_OUTPUT_DIR, "area_check_visualization.png")
+    dem_file = os.path.join(SIMULATION_DATA_DIR, "Carlisle_5m.asc")
+    
+    try:
+        # Check if file exists
+        if not os.path.exists(file):
+            logger.error(f"Area check file not found: {file}")
+            return None
+            
+        # Open and read the file
+        logger.info(f"Visualizing area check map from: {file}")
+        
+        # Load DEM data for background
+        with rasterio.open(dem_file) as src:
+            dem_data = src.read(1)
+            extent = [src.bounds.left, src.bounds.right, src.bounds.bottom, src.bounds.top]
+            dem_nodata = src.nodata
+        
+        # Load area check data
+        with rasterio.open(file) as src:
+            data = src.read(1)
+            nodata = src.nodata
+            
+        # Create masked array to handle NoData values
+        masked_data = np.ma.masked_where((data == nodata) | (data == 0), data) if nodata else data
+            
+        # Create figure and axis
+        fig, ax = plt.subplots(figsize=(12, 10))
+        
+        # Display DEM as background with terrain colormap - increased opacity to 0.9
+        ax.imshow(dem_data, extent=extent, cmap='terrain', alpha=0.9, origin='upper')
+        
+        # Create custom colormap with white and grey colors - with higher opacity
+        colors = [(1, 1, 1, 0), (0.8, 0.8, 0.8, 0.7), (0.4, 0.4, 0.4, 0.8)]  # Transparent, Light Grey, Dark Grey
+        cmap_name = 'area_check_cmap'
+        cm = plt.matplotlib.colors.LinearSegmentedColormap.from_list(cmap_name, colors, N=3)
+        
+        # Display the area check data with the custom colormap
+        im = ax.imshow(masked_data, extent=extent, cmap=cm, vmin=0, vmax=2, origin='upper')
+        
+        # Create binary masks for values 1 and 2
+        level1_mask = np.where(data == 1, 1, 0)
+        level2_mask = np.where(data == 2, 1, 0)
+        
+        # Add contour lines around the areas with values 1 and 2
+        ax.contour(level1_mask, levels=[0.5], colors=['red'], linewidths=0.8,
+                  extent=extent, origin='upper')
+        ax.contour(level2_mask, levels=[0.5], colors=['darkred'], linewidths=1.2,
+                  extent=extent, origin='upper')
+                  
+        # Find and add grid to each contiguous region of stacked values
+        from scipy import ndimage
+        
+        # Find all connected regions with value 1
+        labeled_array1, num_features1 = ndimage.label(level1_mask)
+        # Find all connected regions with value 2
+        labeled_array2, num_features2 = ndimage.label(level2_mask)
+        
+        # Function to add grid to a region
+        def add_grid_to_region(region_mask, color, linewidth):
+            for region_id in range(1, np.max(region_mask) + 1):
+                # Get region pixels
+                region = (region_mask == region_id)
+                if np.sum(region) < 10:  # Skip very small regions
+                    continue
+                    
+                # Find region bounds
+                rows, cols = np.where(region)
+                min_row, max_row = np.min(rows), np.max(rows)
+                min_col, max_col = np.min(cols), np.max(cols)
+                
+                # Calculate grid cell size
+                height = max_row - min_row
+                width = max_col - min_col
+                
+                # Create 9×14 grid within the region
+                row_steps = np.linspace(min_row, max_row, 10)  # 9 cells = 10 lines
+                col_steps = np.linspace(min_col, max_col, 15)  # 14 cells = 15 lines
+                
+                # Convert grid to data coordinates
+                pixel_height = (extent[3] - extent[2]) / data.shape[0]
+                pixel_width = (extent[1] - extent[0]) / data.shape[1]
+                
+                y_grid = [extent[3] - r * pixel_height for r in row_steps]  # Top to bottom
+                x_grid = [extent[0] + c * pixel_width for c in col_steps]  # Left to right
+                
+                # Draw horizontal grid lines
+                for y in y_grid:
+                    ax.axhline(y=y, color=color, linestyle='-', alpha=0.4, linewidth=linewidth)
+                
+                # Draw vertical grid lines
+                for x in x_grid:
+                    ax.axvline(x=x, color=color, linestyle='-', alpha=0.4, linewidth=linewidth)
+        
+        # Add grids to level 1 regions (orange)
+        add_grid_to_region(labeled_array1, 'orange', 0.5)
+        
+        # Add grids to level 2 regions (red)
+        add_grid_to_region(labeled_array2, 'red', 0.7)
+        
+        # Add colorbar with custom ticks and labels
+        cbar = fig.colorbar(im, ax=ax, shrink=0.6, ticks=[0, 1, 2])
+        cbar.set_label('Stacked Value')
+        cbar.ax.set_yticklabels(['0', '1', '2'])
+        
+        # Set title and remove axis labels for cleaner visualization
+        ax.set_title('Area Verification Map', fontsize=16, fontweight='bold')
+        ax.grid(True, color='gray', alpha=0.3, linestyle='--')
+        ax.set_xticklabels([])
+        ax.set_yticklabels([])
+        
+        # Save the figure
+        os.makedirs(os.path.dirname(output_file), exist_ok=True)
+        plt.savefig(output_file, dpi=300, bbox_inches='tight')
+        logger.info(f"Area check map visualization saved to {output_file}")
+        plt.close()
+        
+        return output_file
+        
+    except Exception as e:
+        logger.error(f"Error visualizing area check map: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return None
+
+def draw_metrics():
+    """Generate and save comparative performance visualizations of different models."""
+    metric_file = os.path.join(RUN_DIR, "training_metrics.csv")
+    
+    try:
+        metrics = pd.read_csv(metric_file)
+        # Keep only the last row for each model (final performance)
+        metrics = metrics.groupby('model').last().reset_index()
+        
+        # Extract relevant metrics
+        model_names = metrics['model'].values
+        rmse = metrics['pred_rmse'].values
+        inference_times = metrics['pred_time'].values
+        params = metrics['trainable_params'].values
+        flops = metrics['flops'].values
+        neurons = metrics['total_neurons'].values
+        logger.info(f"Generating performance comparisons for {len(model_names)} models")
+        
+        create_performance_plot(inference_times, rmse, model_names, 
+                                  'Inference Time (seconds)', 'RMSE (m)', 
+                                  'Model Performance Comparison',
+                                  'model_performance_comparison.png')
+        
+        create_performance_plot(params, inference_times, model_names,
+                                  'Parameters (Million)', 'Inference Time (seconds)',
+                                  'Model Complexity vs Inference Time',
+                                  'model_complexity_vs_inference_time.png')
+        
+        create_performance_plot(flops, params, model_names,
+                                  'FLOPs (Billion)', 'Parameters (Million)',
+                                  'Model Complexity Comparison',
+                                  'model_complexity_comparison.png')
+        
+        create_performance_plot(neurons, rmse, model_names,
+                                  'Total Neurons (Million)', 'RMSE (m)',
+                                  'Model Size vs RMSE',
+                                  'model_size_vs_rmse.png')
+        
+        
+    except Exception as e:
+        logger.error(f"Error generating metrics visualizations: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return None
+
+def create_performance_plot(x_values, y_values, model_names, x_label, y_label, title, filename):
+    fig, ax = plt.subplots(figsize=(10, 6))
+    
+    # Create scatter plot with color gradient
+    scatter = ax.scatter(x_values, y_values, s=100, c=range(len(model_names)), 
+                        cmap='viridis', alpha=0.8, edgecolors='black')
+    
+    # Add model name annotations
+    for i, model in enumerate(model_names):
+        ax.annotate(model, 
+                   (x_values[i], y_values[i]),
+                   xytext=(10, 5),
+                   textcoords='offset points',
+                   fontsize=10,
+                   bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="gray", alpha=0.8))
+    
+    # Configure plot
+    ax.set_xlabel(x_label, fontsize=12, fontweight='bold')
+    ax.set_ylabel(y_label, fontsize=12, fontweight='bold')
+    ax.set_title(title, fontsize=14, fontweight='bold')
+    
+    # Add grid and improve aesthetics
+    ax.grid(True, linestyle='--', alpha=0.7)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    
+    # Save the figure
+    output_file = os.path.join(GRAPH_OUTPUT_DIR, filename)
+    os.makedirs(os.path.dirname(output_file), exist_ok=True)
+    plt.savefig(output_file, dpi=300, bbox_inches='tight')
+    logger.info(f"Saved visualization to {output_file}")
+    
+    plt.close()

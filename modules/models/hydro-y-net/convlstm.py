@@ -74,5 +74,5 @@ class ConvLSTMModel(BaseModel):
                 logger.error(f"Upstream-only model creation failed: {e}")
                 raise
             
-    def predict(self, run_id = None, model_file = None):
+    def validate_model(self, run_id = None, model_file = None):
         return "Not implemented"

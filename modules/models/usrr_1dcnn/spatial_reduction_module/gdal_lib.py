@@ -27,13 +27,9 @@ def rc2coords(transform_data, rc):
     xOrigin = transform_data[0]
     yOrigin = transform_data[3]
     logger.info(f"rc {rc}")
-
-    
     pixelWidth = transform_data[1]
     pixelHeight = transform_data[4]
-    
     logger.info(f"transform_data {xOrigin, yOrigin, pixelWidth, pixelHeight}")
-    
     coordX = xOrigin + pixelWidth * (rc[1] + 0.5)
     coordY = yOrigin + pixelHeight * (rc[0] + 0.5)
     return coordX, coordY
@@ -78,9 +74,6 @@ def gdal_shpprojection(shpfile):
 def gdal_asarray(rasterfile):
     """Read raster as numpy array"""
     with rasterio.open(rasterfile) as src:
-        logger.info(f"Reading raster file: {rasterfile}")
-        logger.info(f"Raster shape: {src.shape}")
-        logger.info(f"Rows x Columns: {src.height} x {src.width}")
         return src.read(1)
 
 

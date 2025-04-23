@@ -2,6 +2,7 @@ from modules.lib.constants import CARLISLE_DATA_DIR, OUTPUT_DIR, SIMULATION_DATA
 from modules.models.usrr_1dcnn.spatial_reduction_module.base_functions import *
 from modules.models.usrr_1dcnn.spatial_reduction_module.gdal_lib import gdal_asarray, gdal_transform, rc2coords
 from modules.models.usrr_1dcnn.spatial_reduction_module.rl_culster_finder import RLClusterFinder
+from modules.utils.path_util import ensure_dir
 
 import logging
 import numpy as np
@@ -14,6 +15,7 @@ logger = logging.getLogger("Representaitve_Location_Finder")
 class RepLocation:
     def __init__(self, results_dir):
         self.work_dir = results_dir
+        ensure_dir(self.work_dir)
         logger.info(f"Representative Location Finder initialized with work directory: {self.work_dir}")
         
     def spatial_sampling(self, run_id, dem_asc_file, max_inun_file, sampling_dist):
@@ -82,7 +84,7 @@ class RepLocation:
                 # Column index = flattened index % width
                 ri = argmin_dem // block_width
                 ci = argmin_dem % block_width
-                
+                 
                 logger.info(f"Row index: {ri}, Column index: {ci}")
                 logger.info(f"row-> {start_0 + ri}, col-> {start_1 + ci}")
                 
@@ -92,26 +94,34 @@ class RepLocation:
                     continue
                     
                 coords = rc2coords((xOrigin, pw, xRot, yOrigin, ph, yRot), (start_0 + ri, start_1 + ci))
-                rl_coords_ls.append(coords)
+                rl_coords_ls.append((coords, ri, ci))
                     
         logger.info(f"Found {len(rl_coords_ls)} representative locations in inundated areas")
-        shp_output_file=f'ss_{sampling_dist}.shp'
-        file_path = f'{self.work_dir}/{shp_output_file}'
-        # Get bounds from the dem file and use that as the bounds for the shapefile
-        save_pts_to_shp(rl_coords_ls, file_path)
+        output_csv=f'ss_{sampling_dist}.csv'
+        file_path = f'{self.work_dir}/{output_csv}'
+        
+        # Save points to CSV instead of shapefile
+        df = pd.DataFrame(rl_coords_ls, columns=['coordinates', 'row_index', 'col_index'])
+        # Extract X and Y from the coordinates tuple
+        df['x'] = df['coordinates'].apply(lambda coord: coord[0])
+        df['y'] = df['coordinates'].apply(lambda coord: coord[1])
+        # Save to CSV, keep only necessary columns
+        df[['x', 'y', 'row_index', 'col_index']].to_csv(file_path, index=False)
+        logger.info(f"Saved representative locations to CSV: {file_path}")
         return file_path
     
 def find_representative_locations_and_clusters(run_id, sampling_dist, n_clusters=10, random_state=42, n_init=10):
     work_dir = f"{OUTPUT_DIR}/rls"
-    dem_asc_file = f"{CARLISLE_DATA_DIR}/Carlisle_5m.asc"
+    dem_asc_file = f"{SIMULATION_DATA_DIR}/Carlisle_5m.asc"
     simulation_dir = SIMULATION_DATA_DIR
-    possible_inun_file = f"{simulation_dir}/Run1-0175.wd"
+    possible_inun_file = f"{simulation_dir}/Run1-0145.wd"
     run_meta_data_file = f"{work_dir}/run_meta_data.csv"
     
     rep_loc = RepLocation(work_dir)
     rl_file_path = rep_loc.spatial_sampling(run_id, dem_asc_file, possible_inun_file, sampling_dist=sampling_dist)
     
     # Create the cluster finder with GPU awareness
+    
     cluster_finder = RLClusterFinder(work_dir, run_id, rl_file_path, sampling_dist, n_clusters=n_clusters,
                                     random_state=random_state, n_init=n_init)
 

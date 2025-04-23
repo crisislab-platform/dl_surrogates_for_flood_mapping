@@ -14,5 +14,5 @@ parallel --line-buffer CUDA_VISIBLE_DEVICES={1} python3.11 "${PROJECT_DIR}/main.
   ::: 2 \
   ::: 0.001 \
   ::: 1 \
-  ::: 5 \
+  ::: 10 \
   ::: 20 \

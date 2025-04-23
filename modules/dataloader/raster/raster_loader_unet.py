@@ -1,15 +1,16 @@
 # Description: Data loader for U-Net model (PyTorch version)
-import numpy as np
-import os
-import glob
-import logging
-import torch
-
 from modules.lib.constants import CARLISLE_DATA_DIR, OUTPUT_DIR, SIMULATION_DATA_DIR
 from modules.models.usrr_1dcnn.spatial_reduction_module.gdal_lib import coords2rc, rc2coords, gdal_asarray, gdal_transform, gdal_writetiff
 from modules.models.usrr_1dcnn.spatial_reduction_module.rep_location_finder import find_representative_locations_and_clusters
 from modules.models.usrr_1dcnn.spatial_reduction_module.base_functions import read_shp_point
 from modules.utils.run_util import check_device
+
+import numpy as np
+import os
+import glob
+import logging
+import torch
+import pandas as pd
 
 logger = logging.getLogger("UNetDataManager")
 logger.setLevel(logging.INFO)
@@ -22,11 +23,10 @@ class UNetDataManager():
                  batch_size=32, 
                  num_of_batch_per_map=6):
 
-        self.rep_loc_file_path = f"{OUTPUT_DIR}/rls/ss_{sampling_dist}.shp"
-        self.dem_asc_file = f"{CARLISLE_DATA_DIR}/Carlisle_5m.asc"
+        self.rep_loc_file_path = f"{OUTPUT_DIR}/rls/ss_{sampling_dist}.csv"
+        self.dem_asc_file = f"{SIMULATION_DATA_DIR}/Carlisle_5m.asc"
         self.simulation_dir = SIMULATION_DATA_DIR
-        self.possible_inun_file = f"{self.simulation_dir}/Run1-0175.wd"
-        self.reconstruction_out = f"{OUTPUT_DIR}/reconstruction.tif"
+        self.possible_inun_file = f"{self.simulation_dir}/Run1-0145.wd"
         self.area_check_file = f"{OUTPUT_DIR}/area_check.tif"
         
         inundation_files = sorted(glob.glob(f"{self.simulation_dir}/*.wd"))
@@ -53,7 +53,10 @@ class UNetDataManager():
     def get_representative_locations(self):
         if self.rep_loc_file_path and os.path.exists(self.rep_loc_file_path):
                 # Load representative locations from file if provided
-                rl_list = read_shp_point(self.rep_loc_file_path)
+                rl_list = pd.read_csv(self.rep_loc_file_path)
+                logger.info(f"rep loc: {rl_list.iloc[0]}")
+                rl_list = rl_list[['x', 'y']].values
+                rl_list = [tuple(x) for x in rl_list]
                 logger.info(f"Loaded {len(rl_list)} representative locations from {self.rep_loc_file_path}")
         else:
             raise ValueError(f"RL file path is not valid: {self.rep_loc_file_path}")
@@ -64,10 +67,10 @@ class UNetDataManager():
         
         # First reshape the map to the desired size (a multiple of the map size)
         new_map_x = slicing_func(x)[:self.map_size * ax0_n, :self.map_size * ax1_n]
-        new_map_x = new_map_x.reshape((-1, ax0_n, self.map_size)) 
+        new_map_x = new_map_x.reshape((-1, ax1_n, self.map_size)) 
         new_map_x = new_map_x.swapaxes(0, 1)
         
-        new_map_x = new_map_x.reshape((ax0_n, -1, self.map_size, self.map_size))
+        new_map_x = new_map_x.reshape((ax1_n, -1, self.map_size, self.map_size))
         
         new_map_x = new_map_x.swapaxes(0, 1)
         new_map_x = new_map_x.reshape((-1, self.map_size, self.map_size))
@@ -79,7 +82,7 @@ class UNetDataManager():
         ext_mask = (~np.isnan(flood_extent)).astype(np.float32)
         
         # Create a slicing function to create tiles based on an offset
-        slicing_func = lambda  x: x[cross_tile_size_r:, cross_tile_size_c:]
+        slicing_func = lambda  x: x[3 + cross_tile_size_r:, 23 + cross_tile_size_c:]
         new_shape = slicing_func(ext_mask).shape
         ax0_n = new_shape[0] // self.map_size  # new number of tiles in row
         ax1_n = new_shape[1] // self.map_size  # new number of tiles in column
@@ -93,7 +96,7 @@ class UNetDataManager():
             & (np.sum(reshaping_func(self.rl_map), axis=(1, 2)) != 0)
               
         if development_mode:
-            return reshaping_func, filter_arr, ax0_n, ax1_n, (cross_tile_size_r, cross_tile_size_c)
+            return reshaping_func, filter_arr, ax0_n, ax1_n, (3 + cross_tile_size_r, 23 + cross_tile_size_c)
         else: 
             tiling_func = lambda x: reshaping_func(x)[filter_arr, :, :]
             logger.info(f"Created tiling function successfully")
@@ -108,9 +111,6 @@ class UNetDataManager():
     def tiles_prep_func_gpu(self, x):
         # Apply tiling functions to the input map
         tiles_maps =  [tiling_func(x) for tiling_func in self.reshaping_func_seq]
-        
-        logger.info(f"RL map: {x.shape}")
-        logger.info(f"Number of tiles: {len(tiles_maps)}")
         
         # Concatenate the tiled maps along the first dimension
         tiles_maps = torch.cat(tiles_maps, dim=0)
@@ -178,30 +178,27 @@ class UNetDataManager():
         torch.cuda.empty_cache()
         return 0
     
-    def prepare_indices(self):
-        """Creates indices for organising the training, testing and validation data accross different 
-            events, timesteps, batches"""
-            
+    def prepare_indices(self):            
         # How many maps per event
-        time_steps_per_event = 200 # Should be changed to dynamically read from the inundation files
+        time_steps_per_event = 190 # Should be changed to dynamically read from the inundation files
         self.maps_per_event = time_steps_per_event // self.t_interval
         
         # create indices for a given x and multiplier i
         idx_expander = lambda x, mul_i: np.repeat(x, mul_i) * mul_i + np.array(list(range(mul_i)) * len(x))
         
-        test_map_idx = idx_expander(self.test_event_ids, self.maps_per_event)
+        test_map_idx = idx_expander([id-1 for id in self.test_event_ids], self.maps_per_event)
         self.test_idxs = idx_expander(test_map_idx, self.num_of_batch_per_map)
         
-        train_map_idx = idx_expander(self.train_event_ids, self.maps_per_event)
+        train_map_idx = idx_expander([id-1 for id in self.train_event_ids], self.maps_per_event)
         self.train_idxs = idx_expander(train_map_idx, self.num_of_batch_per_map)
-
-        rng = np.random.default_rng()
-        rng.shuffle(self.train_idxs)
-        rng.shuffle(self.test_idxs)
-        val_map_index = idx_expander(self.val_event_ids, self.maps_per_event)
+        
+        val_map_index = idx_expander([id-1 for id in self.val_event_ids], self.maps_per_event)
         self.val_idxs = idx_expander(val_map_index, self.num_of_batch_per_map)
         
-        # Create lambda functions to get event_id, t_idx and batch_idx givem the idx
+        # rng = np.random.default_rng()
+        # rng.shuffle(self.train_idxs)
+        
+        # Create lambda functions to get event_id, t_idx and batch_idx given the idx
         self.idx2eventid = lambda idx: int((idx // self.num_of_batch_per_map) // self.maps_per_event)
         self.idx2tidx = lambda idx: int((idx // self.num_of_batch_per_map) % self.maps_per_event)
         self.idx2batchidx = lambda idx: int(idx % self.num_of_batch_per_map)  
@@ -222,24 +219,25 @@ class UNetDataManager():
         return inundation_map
     
     def get_batch(self, idx, test_mode=False, rl_depth=None):
-        event_id = self.idx2eventid(idx)
-        t_idx = self.idx2tidx(idx)
+        event_id = self.idx2eventid(idx) + 1
+        t_idx = self.idx2tidx(idx) + 8
         batch_idx = self.idx2batchidx(idx)
         
         if test_mode:
             # Get the inundation map for the given event and timestep
             inundation_file = f'{self.simulation_dir}/Run{event_id}-{str(t_idx).zfill(4)}.wd'
-            inundation_map = gdal_asarray(inundation_file)
-            self.rl_map_filled = self.rl_map.copy()  # Make a copy to avoid modifying original
-            rl_indices = np.where(self.rl_map_filled == 1)
-            self.rl_map_filled[rl_indices[0], rl_indices[1]] = rl_depth
-            self.rl_map_filled = torch.from_numpy(self.rl_map_filled).float().to(self.device)
+            inundation_map = torch.from_numpy(gdal_asarray(inundation_file))
+            # self.rl_map_filled = self.rl_map.copy()
+            # rl_indices = np.where(self.rl_map_filled == 1)
+            # self.rl_map_filled[rl_indices[0], rl_indices[1]] = rl_depth
+            self.rl_map_filled = torch.from_numpy(rl_depth).float().to(self.device)
             self.input_temp_filled = self.tiles_prep_func_gpu(self.rl_map_filled)
             input_filled = self.input_temp_filled[batch_idx * self.batch_size:
                                                          (batch_idx + 1) * self.batch_size, :, :].unsqueeze(1)
             dem_batch = torch.from_numpy(self.shaped_dem[batch_idx*self.batch_size:(batch_idx+1)*self.batch_size,
                                              :, :].copy()).float().to(self.device).unsqueeze(1)
-            return torch.cat((dem_batch, input_filled), dim=1), inundation_map
+            return torch.cat((input_filled, dem_batch), dim=1), inundation_map
+        
         with torch.no_grad():
             inundation_file = f'{self.simulation_dir}/Run{event_id}-{str(t_idx).zfill(4)}.wd'
             images = self.tiles_prep_func_gpu(self.process_inundation_file(inundation_file))
@@ -266,7 +264,7 @@ class UNetDataManager():
             
             # Fill the input with the DEM values
             input_filled[input_filled == 1] = images[input_filled == 1]
-            return torch.cat((dem_images, input_filled), dim=1), images
+            return torch.cat((input_filled, dem_images), dim=1), images
 
     def get_timestep_index(self, filepath):
         filename = os.path.basename(filepath)
@@ -295,7 +293,7 @@ class UNetDataManager():
                 reshaping_func, filter_arr, ax0_n, ax1_n, map_origin = \
                     self.build_tiling_func(r_i * self.cross_tile_dist_by_cell, 
                                            c_i * self.cross_tile_dist_by_cell, development_mode=True)
-                # Number of unique tile with atleast one representative location
+                #Number of unique tiles with at least one representative location
                 self.layers_seperation_idxs.append((start_idx, start_idx + np.sum(filter_arr))) 
                 start_idx = self.layers_seperation_idxs[-1][1]
                 ouput_map = np.zeros(self.dem_map.size())
@@ -309,31 +307,34 @@ class UNetDataManager():
             # Check if the reconstruction output covers the entire map
             temp_tensor = torch.ones(self.input_temp.shape).float().to(self.device)
             self.lyr_num_map = self.reconstruct_full_map_return_and_sum(temp_tensor)
-            gdal_writetiff(self.lyr_num_map.detach().cpu().numpy(),self.area_check_file, ras_temp=self.dem_asc_file)
+            gdal_writetiff(self.lyr_num_map.detach().cpu().numpy(), self.area_check_file, ras_temp=self.dem_asc_file)
             
-            ext_mask = gdal_asarray(self.possible_inun_file)
-            ext_mask = ~np.isnan(ext_mask).astype(int)
+            # Add 1 to area not covered by the reconstruction
             self.lyr_num_map[self.lyr_num_map == 0] = 1
+               
+            ext_mask = gdal_asarray(self.possible_inun_file)
+            ext_mask = (~np.isnan(ext_mask)).astype(int)
+         
             cond = np.sum((ext_mask==1) & (self.lyr_num_map.detach().cpu().numpy()==0))==0
             logger.info("Reconstruction output covers the entire map: " + str(cond))
         return 0
 
     def reconstruct_full_map_return_and_sum(self, x):
-        for lyr_i in range(len(self.layers_seperation_idxs)):
+        for lyr_i in range(len(self.layers_seperation_idxs)-1):
             start_idx, end_idx = self.layers_seperation_idxs[lyr_i]
-            #change the values of the output map in the return_temp_list
             self.return_temp_list[lyr_i][self.filter_list[lyr_i]] = x[start_idx:end_idx].squeeze(1) # remove axis with size 1
             row_size, col_size = self.layer_sizes[lyr_i]
             row_origin, col_origin = self.map_origins[lyr_i]
             self.output_maps_list[lyr_i][row_origin:row_origin + row_size, col_origin:col_origin + col_size] = \
                 self.back_trans_funcs[lyr_i](self.return_temp_list[lyr_i])   
-        output_sum = torch.sum(torch.stack(self.output_maps_list), dim=0)
+        # output_sum = torch.sum(torch.stack(self.output_maps_list), dim=0)
+        output_sum = self.output_maps_list[0]
         return output_sum
     
     def reconstruct_full_map(self, x):
         with torch.no_grad():
-            output_final = torch.div(self.reconstruct_full_map_return_and_sum(x), self.lyr_num_map)
-        
+            # output_final = torch.div(self.reconstruct_full_map_return_and_sum(x), self.lyr_num_map)
+            output_final = self.reconstruct_full_map_return_and_sum(x)
         return output_final
 
     def build_back_func_lambda(self, ax1_n):

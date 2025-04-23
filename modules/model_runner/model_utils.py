@@ -6,16 +6,7 @@ from modules.lib.constants import RUN_DIR
 
 def count_total_neurons(model):
     """Count total number of neurons in the model"""
-    total_neurons = 0
-    for module in model.modules():
-        # Only count LSTM and Linear layers
-        if isinstance(module, (nn.LSTM, nn.Linear)):
-            # For LSTM layers, count the hidden_size
-            if isinstance(module, nn.LSTM):
-                total_neurons += module.hidden_size
-            # For Linear layers, count the out_features (neurons)
-            elif isinstance(module, nn.Linear):
-                total_neurons += module.out_features
+    total_neurons = sum(p.numel() for p in model.parameters() if p.requires_grad)
     return total_neurons
 
 def get_model_parameters(model):
@@ -29,10 +20,13 @@ def get_model_parameters(model):
         'total_params': total_params
     }
     
-def find_model_file(model_name, run_id):
+def find_model_file(model_name):
     #Find the latest uent model file from the run directory
-    run_dir = os.path.join(RUN_DIR, model_name, run_id)
-    model_file = os.path.join(run_dir, f"{model_name}_{run_id}.pth")
-    if not os.path.exists(model_file):
-        raise FileNotFoundError(f"Model file {model_file} not found.")
-    return model_file
+    run_dir = os.path.join(RUN_DIR, model_name)
+    meta_data_file = os.path.join(run_dir, "run_metadata.csv")
+    if not os.path.exists(meta_data_file):
+        raise FileNotFoundError(f"Metadata file {meta_data_file} not found.")
+    meta_data = pd.read_csv(meta_data_file)
+    latest_run_id = meta_data['run_id'].sort_values(ascending=False).iloc[0]
+    latest_model_file = meta_data[meta_data['run_id'] == latest_run_id]['model_file'].values[0]
+    return latest_model_file

@@ -1,9 +1,10 @@
 # Configuration for deep learning model training using parallel processing
 PROJECT_DIR="/home/91/23016891/projects/carlisle"
-n_clusters="20 50 100"
+n_clusters=50
 
 # Run parallel jobs with different sampling_dist and matching rl_group ranges
 # For sampling_dist=20, use rl_group 0-20
+
 parallel --line-buffer CUDA_VISIBLE_DEVICES={1} python3.11 "${PROJECT_DIR}/main.py" train \
   --model USSR_1DCNN_V1 \
   --batch_size {2} \
@@ -11,7 +12,7 @@ parallel --line-buffer CUDA_VISIBLE_DEVICES={1} python3.11 "${PROJECT_DIR}/main.
   --learning_rate {4} \
   --epochs {5} \
   --patience {6} \
-  --n_clusters 20 \
+  --n_clusters $n_clusters \
   --sampling_dist 20 \
   --rl_group {7} \
   --input_time_len_h {8} \
@@ -20,48 +21,6 @@ parallel --line-buffer CUDA_VISIBLE_DEVICES={1} python3.11 "${PROJECT_DIR}/main.
   ::: 2 \
   ::: 0.001 \
   ::: 100 \
-  ::: 5 \
-  ::: $(seq 0 20) \
-  ::: 10
-
-# For sampling_dist=50, use rl_group 0-50
-parallel --line-buffer CUDA_VISIBLE_DEVICES={1} python3.11 "${PROJECT_DIR}/main.py" train \
-  --model USSR_1DCNN_V1 \
-  --batch_size {2} \
-  --lag {3} \
-  --learning_rate {4} \
-  --epochs {5} \
-  --patience {6} \
-  --n_clusters 50 \
-  --sampling_dist 50 \
-  --rl_group {7} \
-  --input_time_len_h {8} \
-  ::: 0 \
-  ::: 16 \
-  ::: 2 \
-  ::: 0.001 \
-  ::: 100 \
-  ::: 5 \
+  ::: 10 \
   ::: $(seq 0 50) \
-  ::: 10
-
-# For sampling_dist=100, use rl_group 0-100
-parallel --line-buffer CUDA_VISIBLE_DEVICES={1} python3.11 "${PROJECT_DIR}/main.py" train \
-  --model USSR_1DCNN_V1 \
-  --batch_size {2} \
-  --lag {3} \
-  --learning_rate {4} \
-  --epochs {5} \
-  --patience {6} \
-  --n_clusters 100 \
-  --sampling_dist 100 \
-  --rl_group {7} \
-  --input_time_len_h {8} \
-  ::: 0 \
-  ::: 16 \
-  ::: 2 \
-  ::: 0.001 \
-  ::: 100 \
-  ::: 5 \
-  ::: $(seq 0 100) \
   ::: 10
