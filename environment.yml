@@ -22,6 +22,7 @@ dependencies:
   - imageio
   - tabulate
   - psutil
+  - onnx
   # Add any other pip-specific packages here
 variables:
   GDAL_DISABLE_READDIR_ON_OPEN: "EMPTY_DIR"

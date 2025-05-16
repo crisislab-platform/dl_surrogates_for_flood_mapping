@@ -1,6 +1,10 @@
+
+#!/bin/bash
+# ulimit -v 10485760
+
 # Set memory limit of 2GB for each process
 parallel --line-buffer CUDA_VISIBLE_DEVICES={1} python3.11 main.py train \
-  --model 1DCNN_V1 \
+  --model PICNN1D_V1 \
   --lag {2} \
   --horizon {3} \
   --batch_size {4} \
@@ -15,6 +19,6 @@ parallel --line-buffer CUDA_VISIBLE_DEVICES={1} python3.11 main.py train \
   ::: 32 \
   ::: 0.01 \
   ::: 50 \
-  ::: 7 \
+  ::: 5 \
   ::: 1 2 3 \
   ::: true

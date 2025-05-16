@@ -11,12 +11,13 @@ import glob
 import logging
 import torch
 import pandas as pd
+from modules.datamanager.datamanager import DataManager
 
 logger = logging.getLogger("UNetDataManager")
 logger.setLevel(logging.INFO)
 
 
-class UNetDataManager():
+class UNetDataManager(DataManager):
     def __init__(self, sampling_dist, 
                  run_dir, 
                  epochs=10, 

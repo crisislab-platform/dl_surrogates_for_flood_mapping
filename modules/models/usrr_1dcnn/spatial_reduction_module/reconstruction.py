@@ -2,9 +2,9 @@ from modules.lib.constants import OUTPUT_DIR, RUN_DIR, CARLISLE_DATA_DIR, SIMULA
 from modules.models.usrr_1dcnn.spatial_reduction_module.gdal_lib  import gdal_asarray, read_shp_point, coords2rc, gdal_transform, gdal_writetiff
 from modules.utils.run_util import check_device
 from modules.models.usrr_1dcnn.unet import UNet
-from modules.models.usrr_1dcnn.cnn1d import ConvoModel2RLs
-from modules.dataloader.raster.raster_loader_unet import UNetDataManager
-from modules.dataloader.sequential_1dcnn.cnn_datamanager import CNNDataManager
+from modules.models.usrr_1dcnn.cnn1d import CNN1DSequential
+from modules.datamanager.raster.raster_loader_unet import UNetDataManager
+from modules.datamanager.point.sequential_loader_1dcnn import CNNSequentialDataManager
 from modules.models.usrr_1dcnn.unet import model_name as UNET_MODEL_NAME
 from modules.lib.constants import USRR_1DCNN_V1
 from modules.model_runner.model_utils import find_model_file
@@ -147,7 +147,7 @@ class ReconstructionModule():
         
     def get_rl_group_predictions(self, rl_group, model):
         total_prediction_time = 0  # Initialize variable used in the method
-        cnn_data_manager = CNNDataManager(None, self.input_time_len_h, self.time_lag_h, 
+        cnn_data_manager = CNNSequentialDataManager(None, self.input_time_len_h, self.time_lag_h, 
                                              rl_group, self.timestep, self.sampling_distance, 
                                              self.cluster_size, test_mode=True)
         with torch.no_grad():
@@ -294,7 +294,7 @@ class ReconstructionModule():
     def load_model_from_file(self, model_file):
         checkpoint  = torch.load(model_file)
         model_structue  = checkpoint['model_structure'] 
-        model = UNet(enc_chs= model_structue, dec_chs=model_structue[:0:-1]).to(self.device)
+        model = UNet(encoder_channels= model_structue, decoder_channels=model_structue[:0:-1]).to(self.device)
         optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
         model.load_state_dict(checkpoint['model_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
@@ -308,7 +308,7 @@ class ReconstructionModule():
             seq_h = self.seq_h
         else:
             seq_h = checkpoint['seq_h']
-        model = ConvoModel2RLs(model_structue, seq_h)
+        model = CNN1DSequential(model_structue, seq_h)
         optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
         model.load_state_dict(checkpoint['model_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])

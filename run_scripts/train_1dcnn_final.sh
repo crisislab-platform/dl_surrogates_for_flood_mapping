@@ -7,14 +7,10 @@ parallel --line-buffer CUDA_VISIBLE_DEVICES={1} python3.11 main.py train \
   --learning_rate {5} \
   --epochs {6} \
   --patience {7} \
-  --fold {8} \
-  --tuning_mode {9} \
   ::: 0 \
   ::: 8 \
   ::: 1 \
   ::: 32 \
   ::: 0.01 \
-  ::: 50 \
+  ::: 20 \
   ::: 7 \
-  ::: 1 2 3 \
-  ::: true

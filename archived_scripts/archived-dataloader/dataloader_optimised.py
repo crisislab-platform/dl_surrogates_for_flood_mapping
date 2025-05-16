@@ -10,7 +10,7 @@ from datetime import datetime
 import sys
 import tensorflow as tf
 from dotenv import load_dotenv
-from modules.dataloader.sequential.sequence_generator import load_sequences
+from modules.datamanager.sequential.sequence_generator import load_sequences
 
 DB_BATCH_SIZE = 20000
 

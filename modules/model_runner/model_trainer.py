@@ -3,7 +3,7 @@ from modules.utils.path_util import ensure_dir
 from modules.model_runner.model_factory import create_model
 from modules.models.model_wrapper import ModelConfig
 from modules.visualiser.visualiser import plot_training_history
-from modules.model_runner.metrics_writer import save_metrics, save_prediction_metrics
+from modules.model_runner.metrics_writer import save_training_metrics, save_prediction_metrics
 from modules.models.model_wrapper import ModelWrapper
 from modules.lib.constants import RUN_DIR
 
@@ -18,31 +18,13 @@ import numpy as np
 logger = logging.getLogger("ModelTrainer")
 logger.setLevel(logging.INFO)
 
-def save_model_training_history(run_id, run_dir, model_wrapper:ModelWrapper, history, train_time, config, model_file):
+def save_model_training_history(run_id, run_dir, model_wrapper:ModelWrapper, history, train_time, config, model_file, tuning_mode):
     try:
-        logger.info(f"history: {history}")
-        logger.info("Writing training history to JSON")
-        serializable_history = {}
-        if history is None:
-            logger.error("No training history available")
-            return False
-        for key, value in history.items():
-            if isinstance(value, list):
-                serializable_history[key] = [float(item) if isinstance(item, (np.number, np.ndarray)) 
-                                            else item for item in value]
-            elif isinstance(value, (np.number, np.ndarray)):
-                serializable_history[key] = float(value)
-            else:
-                serializable_history[key] = value
-                
-        with open(os.path.join(run_dir, 'model_history.json'), 'w') as f:
-            json.dump(serializable_history, f)
-    
         logger.info("Plotting training history")
         plot_training_history(history, run_dir)
         
         logger.info("Saving training metrics")
-        save_metrics(run_id, history, train_time, model_wrapper.model, config, model_file)
+        save_training_metrics(run_id, history, train_time, model_wrapper.model, config, model_file, tuning_mode)
         return True
     except Exception as e:
         logger.error(f"Error saving model: {e}")
@@ -73,22 +55,28 @@ def train_model(config: ModelConfig, args) -> str:
             return None
         logger.info(f"Training model {config.model_name}")
         
-        
-        history, train_time, model_file = model.train(run_dir)
+        tuning_mode = bool(args.tuning_mode)
+        history, train_time, model_file = model.train(run_dir, tuning_mode)
         logger.info(f"Training completed in {train_time:.2f} seconds")
         logger.info("Training history: {history}")
-        logger.info("Saving training history")
         
+        logger.info("Saving training history")
         state  = save_model_training_history(
-            run_id, run_dir, model, history, train_time, config, model_file
+            run_id, run_dir, model, history, train_time, config, model_file, tuning_mode=tuning_mode
         )
+        
         if not state:
             logger.error("Model saving failed")
         else:
             logger.info("Model training history saved successfully")
 
-        logger.info("Validating model")
-        metrics = model.validate_model()
+        if args.tuning_mode:
+            logger.info("Tuning mode is enabled, skipping prediction")
+            return run_id
+        
+        
+        logger.info("Testing model")
+        metrics = model.test_model()
         
         # Extract metrics from the dictionary
         pred_mse = metrics.get("mse", 0)
@@ -96,23 +84,22 @@ def train_model(config: ModelConfig, args) -> str:
         pred_nse = metrics.get("nse", 0)
         pred_time = metrics.get("pred_time", 0)
         flops = metrics.get("flops", 0)
-        rmse_wet = metrics.get("wet_rmse", 0)
-        wet_acc = metrics.get("wet_acc", 0)
+        mRMSE = metrics.get("mRMSE", 0)
     
 
         logger.info(f"Prediction completed in {pred_time:.2f} seconds")
         logger.info(f"Prediction MSE: {pred_mse}")
         logger.info(f"Prediction RMSE: {pred_rmse}")
+        logger.info(f"Prediction mRMSE: {mRMSE}")
         logger.info(f"Prediction NSE: {pred_nse}")
         logger.info(f"Model FLOPS: {flops}")
-        logger.info(f"Wet cells RMSE: {rmse_wet}")
-        logger.info(f"Wet cells classification accuracy: {wet_acc}")
         
         save_prediction_metrics(
-            run_id, metrics
+            run_id, config.model_name, metrics
         )
         logger.info(f"Training run {run_id} completed")
         return run_id
+    
     except Exception as e:
         logger.error(f"Error training model: {e}")
         raise

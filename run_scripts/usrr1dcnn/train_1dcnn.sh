@@ -16,11 +16,15 @@ parallel --line-buffer CUDA_VISIBLE_DEVICES={1} python3.11 "${PROJECT_DIR}/main.
   --sampling_dist 20 \
   --rl_group {7} \
   --input_time_len_h {8} \
+  --tuning_mode {9} \
+  --fold {10} \
   ::: 0 \
-  ::: 16 \
+  ::: 32 \
   ::: 2 \
   ::: 0.001 \
-  ::: 100 \
+  ::: 50 \
+  ::: 5 \
+  ::: 1 \
   ::: 10 \
-  ::: $(seq 0 50) \
-  ::: 10
+  ::: true \
+  ::: $(seq 1 8)

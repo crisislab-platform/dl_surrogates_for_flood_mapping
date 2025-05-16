@@ -4,7 +4,7 @@ This project implements deep learning models to predict flood inundation pattern
 
 ## Prerequisites
 
-- LISFLOOD-FP simulator
+- LISFLOOD-FP simulator 8.1
 - Python 3.8+
 - CUDA-capable GPU
 - GNU Parallel

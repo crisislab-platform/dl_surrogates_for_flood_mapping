@@ -5,8 +5,10 @@ from modules.models.usrr_1dcnn.spatial_reduction_module.reconstruction import va
 import logging
 import argparse
 from datetime import datetime
-from modules.visualiser.visualiser import plot_upstream_conditions, visualise_rep_locations, plot_boundary_information, create_flood_animation, plot_extent_reference, plot_extent_prediction, plot_extents_on_same_image, visualise_area_check_map, draw_metrics
-from modules.metrics_reader.metrics_reader import read_metrics
+from modules.visualiser.visualiser import plot_upstream_conditions, visualise_rep_locations, plot_boundary_information, create_flood_animation, plot_extent_reference, plot_extent_prediction, plot_extents_on_same_image, visualise_area_check_map, draw_metrics, plot_model_architecture, plot_study_area
+from modules.visualiser.flow_analysis import find_peak_inflow_timestep
+# from modules.visualiser.hydrological_visuals import find_peak_inflow_timestep
+from modules.metrics_reader.metrics_reader import hyperparam_analysis
 
 
 logging.basicConfig(level=logging.INFO)
@@ -43,7 +45,9 @@ def parse_args():
     parser.add_argument('--random_state', type=int, help='Random state for SRR clustering')
     parser.add_argument('--n_init', type=int, help='Number of initializations for SRR clustering')
     parser.add_argument('--rl_group', type=str, help='RL group for clustering')
-    parser.add_argument('--input_time_len_h', type=int, help='Input time length in hours for clustering')
+    parser.add_argument('--tuning_mode', type=bool, help='Enable tuning mode')
+    parser.add_argument('--fold', type=int, default=0, help='Validation fold for training')
+    parser.add_argument('--input_time_len_h', type=float, default=False, help='Lenght of the input time series in hours')
     return parser.parse_args()
 
 
@@ -64,7 +68,8 @@ if __name__ == "__main__":
             batch_size=args.batch_size,
             learning_rate=args.learning_rate,
             epochs=args.epochs,
-            patience=args.patience
+            patience=args.patience, 
+            fold=args.fold
         )
         train_model(config, args)
         
@@ -98,7 +103,7 @@ if __name__ == "__main__":
                 exit(1)
             visualise_rep_locations(args.run_id, args.file)
         elif args.plot_type == "boundary_information":
-            plot_boundary_information()
+            plot_study_area()
         elif args.plot_type == "animation":
             create_flood_animation() 
         elif args.plot_type == "extent":
@@ -109,11 +114,18 @@ if __name__ == "__main__":
             visualise_area_check_map()  
         elif args.plot_type == "draw_metrics":
             draw_metrics()
+        elif args.plot_type == "architecture":
+            plot_model_architecture()
+        elif args.plot_type == "flow_analysis":
+            find_peak_inflow_timestep()
+            # find_peak_inflow_timestep()
+        elif args.plot_type == "extent_reference":
+            plot_extent_reference()
         else:
             logger.error(f"Unknown plot type: {args.plot_type}")
             exit(1)
             
     elif args.command == METRICS_COMMAND:
-        read_metrics()
+        hyperparam_analysis(args.model)
         
     logger.info("Commands executed successfully")

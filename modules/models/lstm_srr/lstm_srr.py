@@ -26,7 +26,7 @@ class LSTMSRRModel(ModelWrapper):
     def init_model(self) -> bool:
         pass
     
-    def validate_model(self, run_id = None, model_file = None):
+    def test_model(self, run_id = None, model_file = None):
         return "Not implemented"
 
         

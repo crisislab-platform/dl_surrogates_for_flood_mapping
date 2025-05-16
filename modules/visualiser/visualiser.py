@@ -2,7 +2,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import os
 import numpy as np
-from modules.lib.constants import CARLISLE_DATA_DIR, OUTPUT_DIR, SIMULATION_DATA_DIR, RUN_DIR, GRAPH_OUTPUT_DIR
+from modules.lib.constants import CARLISLE_DATA_DIR as DATA_DIR, OUTPUT_DIR, SIMULATION_DATA_DIR, RUN_DIR, GRAPH_OUTPUT_DIR
 import logging
 import rasterio
 import geopandas as gpd
@@ -517,8 +517,6 @@ def create_flood_animation():
         logger.error("No frames were created, cannot generate GIF")
         return None
 
-
-
 def find_the_time_step_with_max_flood_extent(files):
     max_extent_count = 0
     max_extent_file = None
@@ -588,7 +586,7 @@ def plot_extent_reference():
     # Read the test event data 
     test_event_files = glob.glob(os.path.join(SIMULATION_DATA_DIR, "Run1-*.wd"))
     test_event_files.sort()
-    test_event_files = test_event_files[8:]  # skip the first 8 files
+    # test_event_files = test_event_files[8:]  # skip the first 8 files
     
     # Find the timestep with the maximum flood extent
     max_extent_file, timestep = find_the_time_step_with_max_flood_extent(test_event_files)
@@ -596,7 +594,7 @@ def plot_extent_reference():
     
     # Create and save the visualization
     output_file = os.path.join(OUTPUT_DIR, "maximum_flood_extent.png")
-    return plot_extent_map(max_extent_file, output_file)
+    # return plot_extent_map(max_extent_file, output_file)
 
 def plot_extent_prediction(run_id=None, idx="0145"):
     if run_id is None:
@@ -1001,3 +999,218 @@ def create_performance_plot(x_values, y_values, model_names, x_label, y_label, t
     logger.info(f"Saved visualization to {output_file}")
     
     plt.close()
+  
+def plot_study_area(output_filename=None):
+
+    logger.info("Generating study area visualization")
+    
+    if output_filename is None:
+        output_filename = "carlisle_study_area.png"
+    
+    output_file = os.path.join(GRAPH_OUTPUT_DIR, output_filename)
+    dem_file = os.path.join(SIMULATION_DATA_DIR, "Carlisle_5m.asc")
+    
+    try:
+        # Load DEM data
+        with rasterio.open(dem_file) as src:
+            dem_data = src.read(1)
+            extent = [src.bounds.left, src.bounds.right, src.bounds.bottom, src.bounds.top]
+            transform = src.transform
+            dem_nodata = src.nodata
+        
+        # Create figure and axis
+        fig, ax = plt.subplots(figsize=(12, 10))
+        
+        # Enhance DEM visualization with terrain colormap and hillshade effect
+        # Calculate hillshade for enhanced topographic visualization
+        x, y = np.gradient(dem_data)
+        slope = np.pi/2 - np.arctan(np.sqrt(x*x + y*y))
+        aspect = np.arctan2(-x, y)
+        
+        # Light direction and intensity
+        azimuth = np.pi/4  # Light from northwest
+        altitude = np.pi/4  # 45 degree elevation
+        
+        # Calculate hillshade
+        hillshade = np.sin(altitude) * np.sin(slope) + np.cos(altitude) * np.cos(slope) * np.cos(azimuth - aspect)
+        hillshade = hillshade * 255  # Scale to 0-255
+        
+        # Display hillshade with DEM
+        ax.imshow(hillshade, extent=extent, cmap='gray', alpha=0.5, origin='upper')
+        dem_plot = ax.imshow(dem_data, extent=extent, cmap='terrain', alpha=0.7, origin='upper')
+        
+        # Add color bar for elevation
+        cbar = fig.colorbar(dem_plot, ax=ax, shrink=0.6)
+        cbar.set_label('Elevation (m)', fontsize=12, fontweight='bold')
+        
+        # Read boundary conditions file to highlight key features
+        bci_file = os.path.join(DATA_DIR, "carlisle.bci")
+        
+        upstream1_points = []
+        upstream2_points = []
+        upstream3_points = []
+        
+        try:
+            with open(bci_file, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith('//'): 
+                        continue
+                    
+                    parts = line.split()
+            
+                    if parts[0] == 'P':  # Point source
+                        x, y = float(parts[1]), float(parts[2])
+                        if parts[4] == 'upstream1':
+                            upstream1_points.append((x, y))
+                        elif parts[4] == 'upstream2':
+                            upstream2_points.append((x, y))
+                        elif parts[4] == 'upstream3':
+                            upstream3_points.append((x, y))
+        except Exception as e:
+            logger.warning(f"Could not process boundary conditions: {e}")
+        
+        # Plot upstream points with distinct markers and colors
+        if upstream1_points:
+            x, y = zip(*upstream1_points)
+            
+            # Label the river
+            x_ref, y_ref = upstream1_points[0]
+            ax.annotate("River Eden", 
+                       xy=(x_ref, y_ref),
+                       xytext=(30, 30),
+                       textcoords="offset points",
+                       fontsize=12,
+                       fontweight='bold',
+                       arrowprops=dict(arrowstyle="->", 
+                                      connectionstyle="arc3,rad=0.2", 
+                                      shrinkA=5, 
+                                      shrinkB=5,
+                                      mutation_scale=15))  # Shorter arrow with curve
+        
+        if upstream2_points:
+            x, y = zip(*upstream2_points)
+
+            # Label the river
+            x_ref, y_ref = upstream2_points[0]
+            ax.annotate("River Petteril", 
+                       xy=(x_ref, y_ref),
+                       xytext=(30, -30),
+                       textcoords="offset points",
+                       fontsize=12,
+                       fontweight='bold',
+                       arrowprops=dict(arrowstyle="->", 
+                                      connectionstyle="arc3,rad=-0.2", 
+                                      shrinkA=5, 
+                                      shrinkB=5,
+                                      mutation_scale=15))  # Shorter arrow with curve
+        
+        if upstream3_points:
+            x, y = zip(*upstream3_points)
+            
+            # Label the river
+            x_ref, y_ref = upstream3_points[0]
+            ax.annotate("River Caldew", 
+                       xy=(x_ref, y_ref),
+                       xytext=(-120, -30),  # Moved further left from -80 to -120
+                       textcoords="offset points",
+                       fontsize=12,
+                       fontweight='bold',
+                       arrowprops=dict(arrowstyle="->", 
+                                      connectionstyle="arc3,rad=0.2", 
+                                      shrinkA=5, 
+                                      shrinkB=5,
+                                      mutation_scale=15))  # Shorter arrow with curve
+
+        # Add specific points of interest (S₁, S₂, S₃) with adjusted positions
+        points_of_interest = [
+            {"name": "S₁", "easting": 342682, "northing": 557532, "desc": "Upstream1"},
+            # Move S₂ and S₃ slightly upward to make them more visible
+            {"name": "S₂", "easting": 341362, "northing": 554702 + 50, "desc": "Upstream2"}, # Added +50 to northing
+            {"name": "S₃", "easting": 339947, "northing": 554702 + 50, "desc": "Upstream3"}, # Added +50 to northing
+        ]
+        
+        # Use the same color for all points of interest for consistency
+        poi_color = '#e41a1c'  # Red color for all points
+        
+        # Draw these special points LAST to ensure they're on top (zorder controls stacking)
+        for i, poi in enumerate(points_of_interest):
+            ax.scatter(poi["easting"], poi["northing"], color=poi_color, s=120, 
+                      marker='D', edgecolor='black', linewidth=1.5, alpha=0.9, 
+                      label=f"{poi['name']}" + (f" ({poi['desc']})" if poi['desc'] else ""),
+                      zorder=10)  # Higher zorder brings to front
+            
+            # Add label with name (also with high zorder)
+            # Customize the position for S₁
+            if poi["name"] == "S₁":
+                xytext = (10, -25)  # Move S₁ label down
+            else:
+                xytext = (10, 10)  # Default position for other labels
+                
+            ax.annotate(poi["name"], 
+                       xy=(poi["easting"], poi["northing"]),
+                       xytext=xytext,
+                       textcoords="offset points",
+                       fontsize=14,
+                       fontweight='bold',
+                       color=poi_color,
+                       bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="grey", alpha=0.8),
+                       zorder=11)  # Ensure labels are on top
+        
+        # Add north arrow
+        ax.text(0.95, 0.05, '↑N', transform=ax.transAxes, fontsize=16, 
+                fontweight='bold', ha='center', va='center',
+                bbox=dict(facecolor='white', alpha=0.8, edgecolor='black'))
+        
+        # Add scale bar
+        scalebar_length_m = 1000  # 1 km
+        scale_x = extent[0] + (extent[1] - extent[0]) * 0.05
+        scale_y = extent[2] + (extent[3] - extent[2]) * 0.05
+        ax.plot([scale_x, scale_x + scalebar_length_m], [scale_y, scale_y], 'k-', linewidth=2)
+        ax.text(scale_x + scalebar_length_m/2, scale_y - (extent[3] - extent[2]) * 0.01, 
+                f'1 km', ha='center', va='top', 
+                fontweight='bold',
+                bbox=dict(facecolor='white', alpha=0.8, edgecolor='black'))
+        
+        # Option 1: Place legend below the plot
+        ax.legend(bbox_to_anchor=(0.5, -0.15), loc='upper center', ncol=3, 
+                  framealpha=0.9, fontsize=10)
+        
+        # Adjust layout to make room for the legend
+        plt.tight_layout()
+        
+        # Save figure with extra space for the legend
+        os.makedirs(os.path.dirname(output_file), exist_ok=True)
+        plt.savefig(output_file, dpi=300, bbox_inches='tight')
+        logger.info(f"Study area visualization saved to {output_file}")
+        plt.close()
+        
+        return output_file
+        
+    except Exception as e:
+        logger.error(f"Error creating study area visualization: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return None
+
+import torch
+import torch.nn as nn
+
+class SimpleNet(nn.Module):
+    def __init__(self):
+        super(SimpleNet, self).__init__()
+        self.fc1 = nn.Linear(10, 20)
+        self.relu = nn.ReLU()
+        self.fc2 = nn.Linear(20, 2)
+
+    def forward(self, x):
+        x = self.fc1(x)
+        x = self.relu(x)
+        x = self.fc2(x)
+        return x
+
+def plot_model_architecture():
+    model = SimpleNet()
+    dummy_input = torch.randn(1, 10)
+    torch.onnx.export(model, dummy_input, f"{GRAPH_OUTPUT_DIR}/model.onnx", input_names=['input'], output_names=['output'])
+

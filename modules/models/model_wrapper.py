@@ -1,15 +1,16 @@
 from dataclasses import dataclass
 import os
-import json
-import gc
 import logging
 import time
 import torch
-import psutil
-import os
-import gc
-from typing import Dict, Tuple
 from torch.profiler import profile, ProfilerActivity
+import numpy as np
+import time
+from torch.utils.flop_counter import FlopCounterMode
+from torch.profiler import profile, ProfilerActivity
+from modules.utils.model_util import profiler_analysis, format_flops, save_prediction_map
+from modules.datamanager.datamanager import DataManager
+import json
 
 logger = logging.getLogger("Model")
 
@@ -27,6 +28,7 @@ class ModelConfig:
     run_id: str = None
     run_dir: str = None
     args: dict = None
+    fold: int = None #validation fold
 
 class ModelWrapper:
     def __init__(self, model_config: ModelConfig):
@@ -40,6 +42,10 @@ class ModelWrapper:
         self.train_steps = None
         self.val_steps = None
         self.model = None
+        self.loss_fn = None
+        self.data_manager:DataManager = None
+        self.optimizer = None
+        self.device = None
         
     def init_model(self) -> bool:
         pass
@@ -47,51 +53,178 @@ class ModelWrapper:
     def create_dataset(self):
         pass
     
-    def train(self, run_dir: str):
-        pass
-    
-    def validate_model(self):
-        pass
-
-    def save_model_checkpoint(self, run_id, run_dir, model, config):
-        pass
-    
-    # Add these helper functions to your class
-    def get_memory_usage(self) -> Dict[str, float]:
-        """Get current memory usage for CPU and GPU."""
-        memory_stats = {
-            "cpu_percent": psutil.Process(os.getpid()).memory_percent(),
-            "cpu_mb": psutil.Process(os.getpid()).memory_info().rss / (1024 * 1024),  # Convert to MB
+    def train_model(self, run_dir: str, tuning_mode = True):
+        device = self.device
+        history = {
+            "loss": [],
+            "val_loss": [],
+            "train_time": None
         }
-        
-        # Add GPU stats if available
-        if torch.cuda.is_available():
-            memory_stats.update({
-                "gpu_allocated_mb": torch.cuda.memory_allocated() / (1024 * 1024),
-                "gpu_reserved_mb": torch.cuda.memory_reserved() / (1024 * 1024),
-                "gpu_max_allocated_mb": torch.cuda.max_memory_allocated() / (1024 * 1024)
-            })
-        
-        return memory_stats
 
-    def log_memory_stats(self, phase="training", epoch=None, batch=None):
-        """Log memory statistics with appropriate context."""
-        stats = self.get_memory_usage()
+        start_time = time.time()
+        best_val_loss = float("inf")
+        epochs_no_improvement = 0
+        best_epoch = 0
+        if not tuning_mode:
+            best_model_state = None
+            best_optimizer_state = None
+       
         
-        # Format the context
-        context = phase
-        if epoch is not None:
-            context += f" epoch {epoch}"
-        if batch is not None:
-            context += f" batch {batch}"
+        for epoch in range(self.config.epochs):
+            epoch_loss = 0
+            valid_batches = 0
+            self.model.train()
+            for idx, t_indices in enumerate(self.data_manager.train_idx):
+                self.optimizer.zero_grad()
+                input_batch, output_batch = self.data_manager.get_batch(t_indices)
+                if input_batch is None or output_batch is None:
+                    logger.warning(f"Error getting batch {idx}, skipping")
+                    continue
+                input_in_batch = input_batch.to(device)
+                output_in_batch = output_batch.to(device)
+                pred = self.model(input_in_batch.float())
+                output_in_batch = output_in_batch.float()
+                batch_loss = self.loss_fn(pred, output_in_batch)
+                epoch_loss += batch_loss.item()
+                valid_batches += 1  # Increment valid batch counter
+                batch_loss.backward()
+                self.optimizer.step()
+                logger.info(f"Batch train loss: {batch_loss.item()}")
+                
+            # Divide by actual number of valid batches processed
+            epoch_loss = epoch_loss / valid_batches if valid_batches > 0 else float('inf')
+            history["loss"].append(epoch_loss)
+            
+            # Epoch Validation
+            if tuning_mode:
+                val_loss = 0
+                valid_val_batches = 0
+                self.model.eval()
+                for idx, t_indices in enumerate(self.data_manager.validation_idx):
+                    input_batch, output_batch = self.data_manager.get_batch(t_indices)
+                    if input_batch is None or output_batch is None:
+                        logger.warning(f"Error getting validation batch {idx}, skipping")
+                        continue
+                    input_in_batch = input_batch.to(device)
+                    output_in_batch = output_batch.to(device)
+
+                    with torch.no_grad():
+                        pred_val = self.model(input_in_batch)
+                        # If pred < 0.2 then set to 0
+                        pred_val = torch.where(pred_val < 0.2, torch.tensor(0.0).to(device), pred_val)
+                        batch_val_loss = self.loss_fn(pred_val, output_in_batch).item()
+                        val_loss += batch_val_loss
+                        valid_val_batches += 1  # Increment valid validation batch counter
+                        logger.info(f"Batch validation loss: {batch_val_loss} ")
+                        
+                # Divide by actual number of valid validation batches processed
+                epoch_val_loss = val_loss / valid_val_batches if valid_val_batches > 0 else float('inf')
+                history["val_loss"].append(epoch_val_loss)
+                logger.info(f"Epoch {epoch} loss: {epoch_loss}  validation loss: {epoch_val_loss} ")
+            
+                if epoch_val_loss < best_val_loss:
+                    best_val_loss = epoch_val_loss
+                    if not tuning_mode:
+                        best_model_state = self.model.state_dict().copy()
+                        best_optimizer_state = self.optimizer.state_dict().copy()
+                    epochs_no_improvement = 0
+                    best_epoch = epoch
+                else:
+                    epochs_no_improvement += 1
+                    if epochs_no_improvement >= self.config.patience:
+                        logger.info(f"Early stopping at epoch {epoch}")
+                        logger.info(f"Best validation loss: {best_val_loss} at epoch {best_epoch}")
+                        break
+            torch.cuda.empty_cache()   
+            
+        # Add required metrics to history
+        if tuning_mode:
+            best_val_rmse = np.sqrt(best_val_loss) if best_val_loss != float('inf') else None
+            history["best_val_rmse"] = best_val_rmse
+            history["best_epoch"] = best_epoch
+            
+            # Create hyperparameters dictionary
+            hyperparameters = {
+                "learning_rate": self.config.learning_rate,
+                "batch_size": self.config.batch_size,
+                "epochs": self.config.epochs,
+                "patience": self.config.patience,
+                "lag": self.config.lag,
+                "horizon": self.config.horizon
+            }
+            history["hyperparameters"] = json.dumps(hyperparameters)
+                
+                
+        end_time = time.time()
+        train_time = end_time - start_time
+        logger.info(f"Training time: {train_time}")
+        history["train_time"] = train_time
+    
+        # Save the model state
+        model_file = None
+        if not tuning_mode and best_model_state is not None:
+                logger.info("Loading best model state")
+                self.model.load_state_dict(best_model_state)
+                logger.info("Saving model with best validation loss")
+                model_file = self.save_model_checkpoint(self.config.run_id, run_dir, best_model_state, best_optimizer_state, self.config)
+        return history, train_time, model_file
+    
+    def train(self, run_dir: str, tuning_mode = True):
+        if tuning_mode:
+            return self.train_model(run_dir, tuning_mode)
         
-        # Log the stats
-        mem_msg = f"Memory usage ({context}): CPU: {stats['cpu_mb']:.2f}MB ({stats['cpu_percent']:.2f}%)"
-        if torch.cuda.is_available():
-            mem_msg += f", GPU allocated: {stats['gpu_allocated_mb']:.2f}MB, reserved: {stats['gpu_reserved_mb']:.2f}MB"
-        
-        logger.info(mem_msg)
-        return stats
+        with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], profile_memory=True, on_trace_ready=torch.profiler.tensorboard_trace_handler(run_dir)) as prof:
+            history, train_time, model_file = self.train_model(run_dir, tuning_mode)
+        key_averages = prof.key_averages()
+        analysis_results = profiler_analysis(key_averages)
+        logger.info(f"Memory profiling results: {key_averages.table(sort_by='cuda_memory_usage', row_limit=10)}")
+        logger.info(f"Profiler analysis results: {analysis_results}")
+        history['memory'] = analysis_results
+        return history, train_time, model_file
+    
+    def test_model(self):
+        logger.info("Testing model")
+        self.model.eval()
+        with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], profile_memory=True, on_trace_ready=torch.profiler.tensorboard_trace_handler(self.config.run_dir)) as prof:
+            with torch.no_grad():
+                input_data = (self.data_manager.test_input).to(self.device)
+                output_data = (self.data_manager.test_output).to(self.device)
+                start_time = time.time()
+                pred = self.model(input_data)
+                # If pred < 0.2 then set to 0
+                pred = torch.where(pred < 0.2, torch.tensor(0.0).to(self.device), pred)
+                end_time = time.time()
+                ref_out = output_data.float()
+                loss = self.loss_fn(pred, ref_out)
+                mse = loss.item()
+                rmse = np.sqrt(mse)
+                
+                # Calculate mRMSE for wet cells
+                mRMSE = self.mRMSE_fn(pred, ref_out)
+
+                # Calculate NSE
+                observed = ref_out
+                predicted = pred
+                nse = self.nse_fn(observed, predicted)
+                
+                pred_time = end_time - start_time
+                logger.info(f"Validation prediction_time:{pred_time} loss MSE: {mse} RMSE: {rmse}  NSE: {nse} mRMSE: {mRMSE}")
+                flops = self.calculate_flops()
+                self.save_predictions(pred)
+                
+       
+        analysis_results = profiler_analysis(prof.key_averages())
+        metrics = {
+            "mse": mse,
+            "rmse": rmse,
+            "nse": nse,
+            "mRMSE": mRMSE,
+            "pred_time": pred_time,
+            "flops": flops,
+            "pred_memory_usage": analysis_results
+        }
+        logger.info(prof.key_averages().table(sort_by="cuda_memory_usage", row_limit=10))
+        return metrics
     
     def nse_fn(self, observed, predicted):
         observed_mean = torch.mean(observed)
@@ -101,68 +234,64 @@ class ModelWrapper:
         nse = nse.item()
         return nse 
     
-    def format_flops(self, flops):
-        """Convert FLOPS to a human-readable string."""
-        if (flops < 1e9):
-            return f"{flops / 1e6:.2f} MFLOPS"
-        else:
-            return f"{flops / 1e9:.2f} GFLOPS"
-    
-    def profiler_analysis(self, key_averages):
-        """
-        Analyze profiling results from PyTorch profiler.
+    def mRMSE_fn(self, pred, ref_out):
+        # Define threshold for wet cells (typically > 0.01m is considered wet)
+        threshold = 0.02
         
-        Args:
-            key_averages: The key_averages object from PyTorch profiler
-            
-        Returns:
-            Dictionary containing memory and time metrics
-        """
+        # Create binary masks
+        pred_wet = (pred > threshold).float()
+        ref_wet = (ref_out > threshold).float()
+        
+        # Calculate RMSE for wet cells only
+        pred_wet_values = pred * ref_wet
+        ref_wet_values = ref_out * ref_wet
+        wet_loss = self.loss_fn(pred_wet_values, ref_wet_values)
+        rmse_wet = np.sqrt(wet_loss.item())
+        logger.info(f"Wet cells RMSE: {rmse_wet}")
+        return rmse_wet
+    
+    def calculate_flops(self):
         try:
-            # Get the correct attribute names
-            cuda_memory_values = [getattr(item, 'self_device_memory_usage', 0) for item in key_averages]
-            cpu_memory_values = [getattr(item, 'self_cpu_memory_usage', 0) for item in key_averages]
+            t_indices = self.data_manager.train_idx[0]
+            input_batch, _  = self.data_manager.get_batch(t_indices)
+
+            # Create a sample input for the model
+            input_batch = torch.tensor(input_batch).to(self.device)
+            sample_input = input_batch[0].unsqueeze(0)
+        
+            # Use FlopCounterMode to count FLOPS
+            with FlopCounterMode(self.model) as counter:
+                _ = self.model(sample_input)
+                
+            flops = counter.get_total_flops()
+            logger.info(f"FLOPS: {flops}")
+            flops_str = format_flops(flops)
+            logger.info(f"Model FLOPS: {flops_str}")
             
-            # Extract maximum memory usage
-            max_cuda_memory = max(cuda_memory_values) if cuda_memory_values else 0
-            max_cpu_memory = max(cpu_memory_values) if cpu_memory_values else 0
-            
-            # Extract total memory usage
-            total_cuda_memory = sum(cuda_memory_values) if cuda_memory_values else 0
-            total_cpu_memory = sum(cpu_memory_values) if cpu_memory_values else 0
-            
-            # Extract total CPU and GPU time
-            cpu_time_values = [getattr(item, 'cpu_time_total', 0) for item in key_averages]
-            gpu_time_values = [getattr(item, 'device_time_total', 0) for item in key_averages]
-            
-            total_cpu_time = sum(cpu_time_values) if cpu_time_values else 0
-            total_gpu_time = sum(gpu_time_values) if gpu_time_values else 0
-            
-            # Log the results
-            # Memory usage is in bytes
-            logging.info(f"Maximum CUDA memory usage: {max_cuda_memory / (1024 ** 2):.2f} MB")
-            logging.info(f"Maximum CPU memory usage: {max_cpu_memory / (1024 ** 2):.2f} MB")
-            logging.info(f"Total CUDA memory usage: {total_cuda_memory / (1024 ** 2):.2f} MB")
-            logging.info(f"Total CPU memory usage: {total_cpu_memory / (1024 ** 2):.2f} MB")
-            logging.info(f"Total CPU time: {total_cpu_time / 1e6:.2f} ms")
-            logging.info(f"Total GPU time: {total_gpu_time / 1e6:.2f} ms")
-            
-            return {
-                "max_cuda_memory": max_cuda_memory,
-                "max_cpu_memory": max_cpu_memory,
-                "total_cuda_memory": total_cuda_memory,
-                "total_cpu_memory": total_cpu_memory,
-                "total_cpu_time": total_cpu_time,
-                "total_gpu_time": total_gpu_time
-            }
+            return flops
         except Exception as e:
-            logging.error(f"Error in profiler analysis: {e}")
-            return {
-                "max_cuda_memory": 0,
-                "max_cpu_memory": 0,
-                "total_cuda_memory": 0,
-                "total_cpu_memory": 0,
-                "total_cpu_time": 0,
-                "total_gpu_time": 0,
-                "error": str(e)
-            }
+            logger.error(f"Error calculating FLOPS: {e}")
+            return None
+
+    def save_model_checkpoint(self, run_id, run_dir, best_model_state, best_optimizer_state, config):
+        try:
+            model_file = os.path.join(run_dir, f"{config.model_name}_{run_id}.pth")
+            torch.save({
+                'model_state_dict': best_model_state,
+                'optimizer_state_dict': best_optimizer_state,
+                'learning_rate': self.config.learning_rate,
+                'batch_size': self.config.batch_size,
+                'num_epochs': self.config.epochs,
+                'run_id': run_id,
+            }, os.path.join(run_dir, model_file)) 
+            return model_file      
+        except Exception as e:
+            logger.error(f"Error saving model metrics: {e}")
+            return None
+        
+    def save_predictions(self, pred):
+        idx = 146
+        pred_max = pred.detach().cpu().numpy()[idx]
+        output_dir = os.path.join(self.config.run_dir, "output_maps")
+        save_prediction_map(pred_max, output_dir, idx)
+

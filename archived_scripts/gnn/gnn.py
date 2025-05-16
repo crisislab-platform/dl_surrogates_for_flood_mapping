@@ -27,10 +27,10 @@ class GNNModelWrapper(ModelWrapper):
             pass
         return history
     
-    def validate_model(self):
+    def test_model(self):
         pass
 
-    def validate_model(self):
+    def test_model(self):
         pass
 
     

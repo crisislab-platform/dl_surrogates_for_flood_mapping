@@ -5,10 +5,10 @@ from modules.models.lstm_srr.lstm_srr import LSTMSRRModel
 from modules.models.usrr_1dcnn.ussr1dcnn import USSR1DCNNModelWrapper
 from modules.models.usrr_1dcnn.unet import UNetModelWrapper
 from modules.models.usrr_1dcnn.cnn1d import CNN1DModelWrapper
+from modules.models.pi1dcnn.pi1dcnn import PICNN1DModelWrapper
 from modules.models.model_wrapper import ModelConfig, ModelWrapper
 
-from modules.lib.constants import (CNN1D_V1, LSTM_SRR_V1, 
-                                  USRR_UNET_V1, USRR_1DCNN_V1, USRR_CNN1D_COMBINED)
+from modules.lib.constants import (CNN1D_V1, USRR_UNET_V1, USRR_1DCNN_V1, USRR_CNN1D_COMBINED, PICNN1D_V1)
 logger = logging.getLogger("ModelFactory")
 
 def create_model(config: ModelConfig, args)-> ModelWrapper:
@@ -20,7 +20,9 @@ def create_model(config: ModelConfig, args)-> ModelWrapper:
         
         USRR_1DCNN_V1: lambda: create_rl1dcnn_model(config, args),
         
-        USRR_CNN1D_COMBINED: lambda: create_combined_model(config, args)
+        USRR_CNN1D_COMBINED: lambda: create_combined_model(config, args), 
+        
+        PICNN1D_V1: lambda:create_pi1dcnn_model(config, args),
     }
     
     try:
@@ -38,6 +40,10 @@ def create_model(config: ModelConfig, args)-> ModelWrapper:
         return None
     
 def create_1dcnn_standalone_model(config: ModelConfig, args):
+    tuning_mode = args.tuning_mode
+    config.args = {
+        'tuning_mode': tuning_mode, 
+    }
     cnn_model =  CNN1DSAModelWrapper(config)
     logger.info(f"Created 1DCNN model again")
     return cnn_model
@@ -54,6 +60,7 @@ def create_rl1dcnn_model(config, args):
     n_clusters = args.n_clusters
     rl_group = args.rl_group
     input_time_len_h = args.input_time_len_h
+    tuning_mode = args.tuning_mode
     if not sampling_dist or not n_clusters or not rl_group:
         logger.error("Missing required parameters for CNN1D model")
         raise ValueError("Missing required parameters for CNN1D model")
@@ -63,6 +70,7 @@ def create_rl1dcnn_model(config, args):
         'sampling_dist': sampling_dist,
         'rl_group': rl_group,
         'input_time_len_h': input_time_len_h,
+        'tuning_mode': tuning_mode
     }
     return CNN1DModelWrapper(config)
 
@@ -74,3 +82,13 @@ def create_combined_model(config, args):
     
     # Create USSR1DCNNModel with combined configuration
     return USSR1DCNNModelWrapper(config)
+
+def create_pi1dcnn_model(config, args):
+    config.args = {
+        'sampling_dist': args.sampling_dist,
+        'n_clusters': args.n_clusters, 
+        'tuning_mode': args.tuning_mode
+    }
+    
+    # Create Pi1DCNNModel with combined configuration
+    return PICNN1DModelWrapper(config)

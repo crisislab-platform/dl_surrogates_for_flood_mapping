@@ -24,7 +24,7 @@ class USSR1DCNNModelWrapper(ModelWrapper):
     def train(self, run_dir):
         return {}, 0, None
 
-    def validate_model(self):
+    def test_model(self):
         metrics = validate_reconstruction(self.sampling_dist, self.n_clusters, self.config.run_dir)
         return metrics
         

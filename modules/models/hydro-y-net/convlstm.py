@@ -3,8 +3,8 @@ from modules.models.model_wrapper import ModelWrapper as BaseModel
 from tensorflow.keras.layers import Input, ConvLSTM2D, BatchNormalization, Conv2D, Reshape, TimeDistributed, Conv2DTranspose
 import tensorflow as tf
 from lib.commons import ModelConfig
-from modules.dataloader.sequential.archived.sequence_loader import load_grid_datasets
-from modules.dataloader.sequential.sequence_loader_1dcnn import load_grid_datasets_light
+from modules.datamanager.sequential.archived.sequence_loader import load_grid_datasets
+from archived_scripts.sequence_loader_1dcnn import load_grid_datasets_light
 import logging
 import numpy as np
 
@@ -74,5 +74,5 @@ class ConvLSTMModel(BaseModel):
                 logger.error(f"Upstream-only model creation failed: {e}")
                 raise
             
-    def validate_model(self, run_id = None, model_file = None):
+    def test_model(self, run_id = None, model_file = None):
         return "Not implemented"
