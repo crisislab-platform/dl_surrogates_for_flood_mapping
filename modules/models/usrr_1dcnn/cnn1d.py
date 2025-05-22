@@ -94,4 +94,20 @@ class CNN1DModelWrapper(ModelWrapper):
         
     def test_model(self):
         return super().test_model()
+    
+    def create_hyperparameters_dict(self):
+        hyperparameters = {
+            "learning_rate": self.config.learning_rate,
+            "batch_size": self.config.batch_size,
+            "epochs": self.config.epochs,
+            "patience": self.config.patience,
+            "lag": self.config.lag,
+            "horizon": self.config.horizon, 
+            "sampling_dist": self.map_sampling_dist,
+            "n_clusters": self.num_of_clusters,
+            "rl_group": self.rl_group, 
+            "input_time_len_h": self.input_time_len_h
+        }
+        
+        return hyperparameters
         

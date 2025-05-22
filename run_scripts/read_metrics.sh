@@ -1,1 +1,1 @@
-python3.11 main.py metrics --model 1DCNN_V1
+python3.11 main.py metrics --model PICNN1D_V1

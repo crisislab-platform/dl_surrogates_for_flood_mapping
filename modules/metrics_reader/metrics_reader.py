@@ -116,31 +116,37 @@ def log_metrics(row):
 
 def hyperparam_analysis(model):
     logger.info(f"Hyper parameter analysis for {model}")
-    metrics = pd.read_csv(os.path.join(RUN_DIR, model, "tuning_metrics.csv"))
-    hyperparams = metrics['hyperparameters'].unique()
+    output_dir = os.path.join(RUN_DIR, model, "hyperparam_analysis")
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
     
-    tuning_metrics_summary_file = os.path.join(RUN_DIR, model, "tuning_metrics_summary.csv")
+    tuning_metrics_summary_file = os.path.join(output_dir, "tuning_metrics_summary.csv")
     if os.path.exists(tuning_metrics_summary_file):
         tuning_metrics_summary = pd.read_csv(tuning_metrics_summary_file)
     
     else:
         tuning_metrics_summary = pd.DataFrame(columns=['hyperparameters', 'average_val_loss'])
+        
+    tuning_metrics = pd.read_csv(os.path.join(RUN_DIR, model, "tuning_metrics.csv"))
+    hyperparams = tuning_metrics['hyperparameters'].unique()
     # Now write to a new CSV file the average val loss with the hyperparamater combination
     for idx, hyperparam in enumerate(hyperparams):
-        hyperparam_metrics = metrics[metrics['hyperparameters'] == hyperparam]
-        average_loss = get_average_loss(model, hyperparam_metrics, idx)
+        hyperparam_metrics = tuning_metrics[tuning_metrics['hyperparameters'] == hyperparam]
+        average_loss, average_epocs = get_average_cvloss(model, hyperparam_metrics, idx)
         new_row = {
             'hyper_param_id': idx,
             'hyperparameters': hyperparam,
             'average_val_loss': average_loss,
+            'average_convergence_epoch': round(average_epocs),
         }
         if tuning_metrics_summary.size == 0:
             tuning_metrics_summary = pd.DataFrame([new_row])
         else:
             tuning_metrics_summary = pd.concat([tuning_metrics_summary, pd.DataFrame([new_row])], ignore_index=True)
     tuning_metrics_summary.to_csv(tuning_metrics_summary_file, index=False)
+    logger.info(f"Hyperparameter tuning metrics saved to {tuning_metrics_summary_file}")
     
-def get_average_loss(model, metrics, hyperparam_id):
+def get_average_cvloss(model, metrics, hyperparam_id):
     val_losses = []
     metrics.sort_values(by=['fold'], inplace=True)
     metrics.reset_index(drop=True, inplace=True)
@@ -155,27 +161,23 @@ def get_average_loss(model, metrics, hyperparam_id):
         val_losses.append(best_val_loss)
         epochs.append(best_epoch + 1)
     
-    # Create a summary plot of all validation losses
+
     output_dir = os.path.join(RUN_DIR, model, "hyperparam_analysis")
-    plt.figure(figsize=(10, 6))
-    folds = range(1, len(val_losses) + 1)
-    plt.plot(folds, val_losses, 'o-', color='blue', linewidth=2, markersize=8, label='Validation Loss')
-    plt.axhline(y=sum(val_losses)/len(val_losses), color='r', linestyle='--', 
-               label=f'Average: {sum(val_losses)/len(val_losses):.4f}')
-    plt.title(f'Best Validation Loss by Fold - {model}\nHyperparams: {hyperparam_id}')
-    plt.xlabel('Fold')
-    plt.ylabel('Best Validation Loss')
-    plt.legend()
-    plt.grid(True)
-    plt.xticks(folds)  # Ensure all fold numbers are shown on x-axis
-    plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, f'validation_loss_summary_{hyperparam_id}.png'))
-    plt.close()
+    avg_epochs = sum(epochs)/len(epochs)
+    folds = 8
     
+    logger.info(f"Hyperparams id {hyperparam_id}")
+    logger.info(f"Average best epoch across {len(epochs)} folds: {avg_epochs:.2f}")
+    average_val_loss = sum(val_losses) / len(val_losses)
+    logger.info(f"Hyperparams {hyperparam_id} - Average val loss across {len(val_losses)} folds: {average_val_loss}")
+    logger.info(f"Loss plots saved to {output_dir}")
+    return average_val_loss, avg_epochs
+
+def create_plot1(folds, epochs, avg_epochs, model, hyperparam_id, output_dir):
     # Create a summary plot of best epochs
     plt.figure(figsize=(10, 6))
     plt.plot(folds, epochs, 'o-', color='green', linewidth=2, markersize=8, label='Best Epoch')
-    avg_epochs = sum(epochs)/len(epochs)
+
     plt.axhline(y=avg_epochs, color='r', linestyle='--', 
                label=f'Average: {avg_epochs:.2f}')
     plt.title(f'Best Epoch by Fold - {model}\nHyperparams: {hyperparam_id}')
@@ -188,9 +190,87 @@ def get_average_loss(model, metrics, hyperparam_id):
     plt.savefig(os.path.join(output_dir, f'best_epoch_summary_{hyperparam_id}.png'))
     plt.close()
     
-    logger.info(f"Average best epoch across {len(epochs)} folds: {avg_epochs:.2f}")
+def create_plot2(folds, val_losses, avg_val_loss, model, hyperparam_id, output_dir):
+    # Create a summary plot of all validation losses
+    plt.figure(figsize=(10, 6))
+
+    plt.plot(folds, val_losses, 'o-', color='blue', linewidth=2, markersize=8, label='Validation Loss')
+    plt.axhline(y=sum(val_losses)/len(val_losses), color='r', linestyle='--', 
+            label=f'Average: {sum(val_losses)/len(val_losses):.4f}')
+    plt.title(f'Best Validation Loss by Fold - {model}\nHyperparams: {hyperparam_id}')
+    plt.xlabel('Fold')
+    plt.ylabel('Best Validation Loss')
+    plt.legend()
+    plt.grid(True)
+    plt.xticks(folds)  # Ensure all fold numbers are shown on x-axis
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, f'validation_loss_summary_{hyperparam_id}.png'))
+    plt.close()
     
-    average_val_loss = sum(val_losses) / len(val_losses)
-    logger.info(f"Hyperparams {hyperparam_id} - Average val loss across {len(val_losses)} folds: {average_val_loss}")
-    logger.info(f"Loss plots saved to {output_dir}")
-    return average_val_loss
+def get_memory_usage(train_memory_usage, inference_memory_usage):
+    # Parse memory usage information
+    inference_memory_usage = inference_memory_usage.split(",")
+    train_memory_usage = train_memory_usage.split(",")
+    
+    train_gpu = float(train_memory_usage[0].split(":")[1].strip())
+    train_cpu = float(train_memory_usage[1].split(":")[1].strip())
+    
+    pred_gpu_ = float(inference_memory_usage[0].split(":")[1].strip())
+    pred_cpu = float(inference_memory_usage[1].split(":")[1].strip())
+    
+    # Convert to GB
+    return train_gpu, train_cpu, pred_gpu_, pred_cpu
+        
+            
+    
+def metrics()-> pd.DataFrame:
+    logger.info(f"Quality and Efficiency metrics for all models")
+    perf_metrics_file  = os.path.join(RUN_DIR, "final_performance_metrics.csv")
+    training_metrics_file = os.path.join(RUN_DIR, "final_training_metrics.csv")
+    
+    if not os.path.exists(perf_metrics_file) or not os.path.exists(training_metrics_file):
+        logger.error(f"Metrics files do not exist")
+    train_metrics_df = pd.read_csv(training_metrics_file)
+    perf_metrics_df = pd.read_csv(perf_metrics_file)
+   
+    model_metrics = pd.DataFrame(columns=['model_name', 'rmse', 'nse', 'mrmse', 'flops', 'params', 'inference_latency', 'inference_memory_usage', 'training_memory_usage', 'train_time', 'total_neurons'])
+    # For each model in the metrics file read metrics
+    for idx, train_metrics in train_metrics_df.iterrows():
+            perf_metrics = perf_metrics_df[(perf_metrics_df['run_id'] == train_metrics['run_id'])]
+            if perf_metrics.empty:
+                logger.warning(f"No performance metrics found for model {train_metrics['model']}")
+                continue
+            perf_metrics = perf_metrics.iloc[0]
+            model  = train_metrics['model']
+            
+            # I get the memory usages in the following way
+            # 'max_cuda_memory': 357310398464.0, 'max_cpu_m...  410.930379 
+            # Need to read the max_cuda_memory and max_cpu_memory from the perf_metrics
+            # Parse memory usage information
+            train_memory_usage = train_metrics['training_memory_usage']
+            inference_memory_usage = perf_metrics['pred_memory_usage']
+            
+            train_gpu, train_cpu, pred_gpu, pred_cpu = get_memory_usage(train_memory_usage, inference_memory_usage)
+            
+            row = {
+                'model_name': model,
+                'rmse': perf_metrics['mse'], 
+                'nse': perf_metrics['nse'],
+                'mrmse': perf_metrics['mRMSE'],
+                'flops': perf_metrics['flops'],
+                'inference_latency': perf_metrics['inference_latency'],
+                'inference_gpu': pred_gpu,
+                'inference_cpu': pred_cpu,
+                'params': train_metrics['trainable_params'],
+                'training_gpu': train_gpu,
+                'training_cpu': train_cpu,
+                'training_memory_usage': train_metrics['training_memory_usage'],
+                'train_time': train_metrics['train_time'],
+                'total_neurons': train_metrics['total_neurons'],
+                'hyperparameters': train_metrics['hyperparameters'],
+            }
+            # Append the row to the DataFrame
+            model_metrics = pd.concat([model_metrics, pd.DataFrame([row])], ignore_index=True)
+            
+    return model_metrics
+

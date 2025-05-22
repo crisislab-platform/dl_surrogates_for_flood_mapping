@@ -104,3 +104,4 @@ class CNN1DSAModelWrapper(ModelWrapper):
     def test_model(self):
         return super().test_model()
     
+    

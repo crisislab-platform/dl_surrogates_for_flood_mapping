@@ -64,7 +64,7 @@ class CNNRasterDataManager(DataManager):
     
     def get_no_time_steps(self, event_id):
         inundation_files = glob.glob(f"{lisflood_simulation_dir}/Run{event_id}-*.wd")
-        return len(inundation_files) - self.lag
+        return len(inundation_files) - self.lag #Exclude the first 8 files and lag files
     
     def load_inundation_data(self, event_id, time_indices):
         event_inundation_files = glob.glob(f"{lisflood_simulation_dir}/Run{event_id}-*.wd")

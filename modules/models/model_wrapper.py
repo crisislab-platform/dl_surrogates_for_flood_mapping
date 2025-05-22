@@ -17,7 +17,6 @@ logger = logging.getLogger("Model")
 # Unified Model configuration
 @dataclass
 class ModelConfig:
-    """Unified configuration class for model parameters and training"""
     model_name: str
     lag: int
     horizon: int
@@ -143,16 +142,9 @@ class ModelWrapper:
             history["best_val_rmse"] = best_val_rmse
             history["best_epoch"] = best_epoch
             
-            # Create hyperparameters dictionary
-            hyperparameters = {
-                "learning_rate": self.config.learning_rate,
-                "batch_size": self.config.batch_size,
-                "epochs": self.config.epochs,
-                "patience": self.config.patience,
-                "lag": self.config.lag,
-                "horizon": self.config.horizon
-            }
-            history["hyperparameters"] = json.dumps(hyperparameters)
+        # Create hyperparameters dictionary
+        hyperparameters = self.create_hyperparameters_dict()
+        history["hyperparameters"] = json.dumps(hyperparameters)
                 
                 
         end_time = time.time()
@@ -182,9 +174,22 @@ class ModelWrapper:
         history['memory'] = analysis_results
         return history, train_time, model_file
     
+    def create_hyperparameters_dict(self):
+        hyperparameters = {
+            "learning_rate": self.config.learning_rate,
+            "batch_size": self.config.batch_size,
+            "epochs": self.config.epochs,
+            "patience": self.config.patience,
+            "lag": self.config.lag,
+            "horizon": self.config.horizon
+        }
+        return hyperparameters
+    
     def test_model(self):
+        
         logger.info("Testing model")
         self.model.eval()
+        
         with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], profile_memory=True, on_trace_ready=torch.profiler.tensorboard_trace_handler(self.config.run_dir)) as prof:
             with torch.no_grad():
                 input_data = (self.data_manager.test_input).to(self.device)
@@ -212,8 +217,8 @@ class ModelWrapper:
                 flops = self.calculate_flops()
                 self.save_predictions(pred)
                 
-       
         analysis_results = profiler_analysis(prof.key_averages())
+        
         metrics = {
             "mse": mse,
             "rmse": rmse,
@@ -223,6 +228,7 @@ class ModelWrapper:
             "flops": flops,
             "pred_memory_usage": analysis_results
         }
+        
         logger.info(prof.key_averages().table(sort_by="cuda_memory_usage", row_limit=10))
         return metrics
     

@@ -30,23 +30,7 @@ def plot(plot_type, file, run_id):
         
 def plot_upstream_flows(csv_file, show_plots=True):
     
-    """
-    Plot beautiful visualizations of upstream flow data from a CSV file.
-    
-    Parameters:
-    -----------
-    csv_file_path : str
-        Path to the CSV file containing upstream flow data
-    output_dir : str, optional
-        Directory to save the plots. If None, plots won't be saved.
-    show_plots : bool, optional
-        Whether to display the plots. Default is True.
-    
-    Returns:
-    --------
-    dict
-        Dictionary containing the figure objects
-    """
+ 
     # Load the data
     file_path = os.path.join(DATA_DIR, csv_file)
     output_dir = OUTPUT_DIR

@@ -6,9 +6,11 @@ import logging
 import argparse
 from datetime import datetime
 from modules.visualiser.visualiser import plot_upstream_conditions, visualise_rep_locations, plot_boundary_information, create_flood_animation, plot_extent_reference, plot_extent_prediction, plot_extents_on_same_image, visualise_area_check_map, draw_metrics, plot_model_architecture, plot_study_area
+from modules.visualiser.metrics.metrics_viz import plot_metrics
 from modules.visualiser.flow_analysis import find_peak_inflow_timestep
 # from modules.visualiser.hydrological_visuals import find_peak_inflow_timestep
 from modules.metrics_reader.metrics_reader import hyperparam_analysis
+from modules.visualiser.test_event_viz import vizualise_test_event
 
 
 logging.basicConfig(level=logging.INFO)
@@ -112,8 +114,8 @@ if __name__ == "__main__":
             plot_extent_prediction()
         elif args.plot_type == "area_check":
             visualise_area_check_map()  
-        elif args.plot_type == "draw_metrics":
-            draw_metrics()
+        elif args.plot_type == "plot_metrics":
+            plot_metrics()
         elif args.plot_type == "architecture":
             plot_model_architecture()
         elif args.plot_type == "flow_analysis":
@@ -121,6 +123,9 @@ if __name__ == "__main__":
             # find_peak_inflow_timestep()
         elif args.plot_type == "extent_reference":
             plot_extent_reference()
+            
+        elif args.plot_type == "test_event":
+            vizualise_test_event()
         else:
             logger.error(f"Unknown plot type: {args.plot_type}")
             exit(1)

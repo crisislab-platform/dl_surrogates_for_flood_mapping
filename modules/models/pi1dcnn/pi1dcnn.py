@@ -226,8 +226,6 @@ class PICNN1DModelWrapper(ModelWrapper):
                         logger.info(f"Best validation loss: {best_val_loss} at epoch {best_epoch}")
                         break
     
-                        
-             
         torch.cuda.empty_cache()   
         end_time = time.time()
         train_time = end_time - start_time
@@ -240,16 +238,16 @@ class PICNN1DModelWrapper(ModelWrapper):
             history["best_val_rmse"] = best_val_rmse
             history["best_epoch"] = best_epoch
             
-            # Create hyperparameters dictionary
-            hyperparameters = {
-                "learning_rate": self.config.learning_rate,
-                "batch_size": self.config.batch_size,
-                "epochs": self.config.epochs,
-                "patience": self.config.patience,
-                "lag": self.config.lag,
-                "horizon": self.config.horizon
-            }
-            history["hyperparameters"] = json.dumps(hyperparameters)
+        # Create hyperparameters dictionary
+        hyperparameters = {
+            "learning_rate": self.config.learning_rate,
+            "batch_size": self.config.batch_size,
+            "epochs": self.config.epochs,
+            "patience": self.config.patience,
+            "lag": self.config.lag,
+            "horizon": self.config.horizon
+        }
+        history["hyperparameters"] = json.dumps(hyperparameters)
         
         model_file = None
         if not tuning_mode:

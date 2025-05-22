@@ -28,7 +28,7 @@ def save_training_metrics(run_id, history, train_time, model, model_config: Mode
             'best_epoch': history.get('best_epoch', None),
             'hyperparameters': history.get('hyperparameters', None),
             'train_time': float(train_time),
-            'model_file': model_file,
+            'model_file': model_file
         }
         save_csv(metrics, metrics_file)
         return
@@ -51,7 +51,8 @@ def save_training_metrics(run_id, history, train_time, model, model_config: Mode
         'val_loss': val_loss, 
         'train_time': float(train_time),
         'model_file': model_file,
-        'training_memory_usage': memory_usage
+        'training_memory_usage': memory_usage, 
+        'hyperparameters': history.get('hyperparameters', None),
     }
     save_csv(metrics, metrics_file)
     

@@ -2,8 +2,7 @@
 # Configuration for spatial reduction representative clustering with parallel processing
 
 # Run SRR clustering with different parameter combinations
-# Parameters: {1}=GPU_ID, {2}=sampling_dist, {3}=n_clusters, {4}=random_state, {5}=n_init
-PROJECT_DIR="/home/91/23016891/projects/carlisle"
+# Parameters: {1}=GPU_ID, {2}=sampling_dist, {3}=n_clusters, {4}=random_state, {5}=n_init for clustering
 
 parallel --line-buffer CUDA_VISIBLE_DEVICES={1} python3.11 main.py srr_cluster \
   --sampling_dist {2} \
@@ -11,9 +10,7 @@ parallel --line-buffer CUDA_VISIBLE_DEVICES={1} python3.11 main.py srr_cluster \
   --random_state {4} \
   --n_init {5} \
   ::: 0 \
-  ::: 20 \
-  ::: 50  \
+  ::: 20 30 50 80 100 \
+  ::: 20 50 100 200 \
   ::: 42 \
   ::: 10
-
-
