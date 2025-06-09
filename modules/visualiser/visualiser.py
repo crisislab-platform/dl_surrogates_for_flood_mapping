@@ -13,7 +13,7 @@ import imageio
 from matplotlib import cm
 import matplotlib.pyplot as plt
 from pathlib import Path
-from modules.models.usrr_1dcnn.spatial_reduction_module.gdal_lib import gdal_asarray
+from modules.models.usrr_1dcnn.lib.gdal_lib import gdal_asarray
 
 
 logging.basicConfig(level=logging.INFO)
@@ -905,84 +905,7 @@ def visualise_area_check_map():
         logger.error(traceback.format_exc())
         return None
 
-def draw_metrics():
-    """Generate and save comparative performance visualizations of different models."""
-    metric_file = os.path.join(RUN_DIR, "training_metrics.csv")
-    
-    try:
-        metrics = pd.read_csv(metric_file)
-        # Keep only the last row for each model (final performance)
-        metrics = metrics.groupby('model').last().reset_index()
-        
-        # Extract relevant metrics
-        model_names = metrics['model'].values
-        rmse = metrics['pred_rmse'].values
-        inference_times = metrics['pred_time'].values
-        params = metrics['trainable_params'].values
-        flops = metrics['flops'].values
-        neurons = metrics['total_neurons'].values
-        logger.info(f"Generating performance comparisons for {len(model_names)} models")
-        
-        create_performance_plot(inference_times, rmse, model_names, 
-                                  'Inference Time (seconds)', 'RMSE (m)', 
-                                  'Model Performance Comparison',
-                                  'model_performance_comparison.png')
-        
-        create_performance_plot(params, inference_times, model_names,
-                                  'Parameters (Million)', 'Inference Time (seconds)',
-                                  'Model Complexity vs Inference Time',
-                                  'model_complexity_vs_inference_time.png')
-        
-        create_performance_plot(flops, params, model_names,
-                                  'FLOPs (Billion)', 'Parameters (Million)',
-                                  'Model Complexity Comparison',
-                                  'model_complexity_comparison.png')
-        
-        create_performance_plot(neurons, rmse, model_names,
-                                  'Total Neurons (Million)', 'RMSE (m)',
-                                  'Model Size vs RMSE',
-                                  'model_size_vs_rmse.png')
-        
-        
-    except Exception as e:
-        logger.error(f"Error generating metrics visualizations: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
-        return None
 
-def create_performance_plot(x_values, y_values, model_names, x_label, y_label, title, filename):
-    fig, ax = plt.subplots(figsize=(10, 6))
-    
-    # Create scatter plot with color gradient
-    scatter = ax.scatter(x_values, y_values, s=100, c=range(len(model_names)), 
-                        cmap='viridis', alpha=0.8, edgecolors='black')
-    
-    # Add model name annotations
-    for i, model in enumerate(model_names):
-        ax.annotate(model, 
-                   (x_values[i], y_values[i]),
-                   xytext=(10, 5),
-                   textcoords='offset points',
-                   fontsize=10,
-                   bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="gray", alpha=0.8))
-    
-    # Configure plot
-    ax.set_xlabel(x_label, fontsize=12, fontweight='bold')
-    ax.set_ylabel(y_label, fontsize=12, fontweight='bold')
-    ax.set_title(title, fontsize=14, fontweight='bold')
-    
-    # Add grid and improve aesthetics
-    ax.grid(True, linestyle='--', alpha=0.7)
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
-    
-    # Save the figure
-    output_file = os.path.join(GRAPH_OUTPUT_DIR, filename)
-    os.makedirs(os.path.dirname(output_file), exist_ok=True)
-    plt.savefig(output_file, dpi=300, bbox_inches='tight')
-    logger.info(f"Saved visualization to {output_file}")
-    
-    plt.close()
   
 def plot_study_area(output_filename=None):
 

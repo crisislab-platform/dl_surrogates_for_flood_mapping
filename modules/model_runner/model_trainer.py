@@ -6,6 +6,7 @@ from modules.visualiser.visualiser import plot_training_history
 from modules.model_runner.metrics_writer import save_training_metrics, save_prediction_metrics
 from modules.models.model_wrapper import ModelWrapper
 from modules.lib.constants import RUN_DIR
+from modules.lib.constants import USRR_CNN1D_COMBINED
 
 import json
 import torch
@@ -53,27 +54,29 @@ def train_model(config: ModelConfig, args) -> str:
         if not init_status:
             logger.error("Model initialization failed")
             return None
+        
         logger.info(f"Training model {config.model_name}")
-        
-        tuning_mode = bool(args.tuning_mode)
-        history, train_time, model_file = model.train(run_dir, tuning_mode)
-        logger.info(f"Training completed in {train_time:.2f} seconds")
-        logger.info("Training history: {history}")
-        
-        logger.info("Saving training history")
-        state  = save_model_training_history(
-            run_id, run_dir, model, history, train_time, config, model_file, tuning_mode=tuning_mode
-        )
-        
-        if not state:
-            logger.error("Model saving failed")
-        else:
-            logger.info("Model training history saved successfully")
+        if config.model_name != USRR_CNN1D_COMBINED:         
+            tuning_mode = bool(args.tuning_mode)
+            history, train_time, model_file = model.train(run_dir, tuning_mode)
+            logger.info(f"Training completed in {train_time:.2f} seconds")
+            logger.info("Training history: {history}")
+            
+            logger.info("Saving training history")
+            state  = save_model_training_history(
+                run_id, run_dir, model, history, train_time, config, model_file, tuning_mode=tuning_mode
+            )
+            
+            if not state:
+                logger.error("Model saving failed")
+            else:
+                logger.info("Model training history saved successfully")
 
-        if args.tuning_mode:
-            logger.info("Tuning mode is enabled, skipping prediction")
-            return run_id
-        
+            if args.tuning_mode:
+                logger.info("Tuning mode is enabled, skipping prediction")
+                return run_id
+        else:   
+            logger.info("Skipping training for USRR_1DCNN_COMBINED model")
         
         logger.info("Testing model")
         metrics = model.test_model()

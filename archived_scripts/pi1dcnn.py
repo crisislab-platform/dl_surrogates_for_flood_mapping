@@ -13,7 +13,7 @@ from torch.profiler import profile, ProfilerActivity
 import os
 from modules.lib.constants import SIMULATION_DATA_DIR, RUN_DIR, GRAPH_OUTPUT_DIR
 import rasterio 
-from modules.models.usrr_1dcnn.spatial_reduction_module.gdal_lib import gdal_writetiff
+from modules.models.usrr_1dcnn.lib.gdal_lib import gdal_writetiff
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("PI1DCNN_ModelWrapper")
@@ -188,7 +188,6 @@ class PICNN1DModelWrapper(ModelWrapper):
                 if val_loss < best_val_loss:
                     best_val_loss = val_loss
                     best_model_state = model.state_dict().copy()
-                    best_optimizer_state = self.optimizer.state_dict().copy()
                     epochs_no_improvement = 0
                     best_epoch = epoch
                 else:
@@ -208,7 +207,7 @@ class PICNN1DModelWrapper(ModelWrapper):
         logger.info(f"Training time: {train_time}")
         history["train_time"] = train_time
         logger.info("Saving model with best validation loss")
-        model_file = self.save_model_checkpoint(self.config.run_id, run_dir, best_model_state, best_optimizer_state,  self.config)
+        model_file = self.save_model_checkpoint(self.config.run_id, run_dir, best_model_state, self.config)
         key_averages = prof.key_averages()
         analysis_results = super().profiler_analysis(key_averages)
         logger.info(f"Memory profiling results: {key_averages.table(sort_by='cuda_memory_usage', row_limit=10)}")
@@ -420,21 +419,6 @@ class PICNN1DModelWrapper(ModelWrapper):
             logger.error(f"Error calculating FLOPS: {e}")
             return None
 
-    def save_model_checkpoint(self, run_id, run_dir, best_model_state, best_optimizer_state, config):
-        try:
-            model_file = os.path.join(run_dir, f"{config.model_name}_{run_id}.pth")
-            torch.save({
-                'model_state_dict': best_model_state,
-                'optimizer_state_dict': best_optimizer_state,
-                'learning_rate': self.config.learning_rate,
-                'batch_size': self.config.batch_size,
-                'num_epochs': self.config.epochs,
-                'run_id': run_id,
-            }, os.path.join(run_dir, model_file))       
-        except Exception as e:
-            logger.error(f"Error saving model metrics: {e}")
-            return None
-        
     def loss_fn(self, y_hat_t, y_t, y_t_plus_1, bc_t, bc_t_plus_1):
         # Need to implement the physics informed loss function
         # Equation 1: Loss = MSE + physics informed loss

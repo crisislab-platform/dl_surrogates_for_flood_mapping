@@ -2,9 +2,9 @@ from modules.models.model_wrapper import ModelWrapper
 from modules.models.model_wrapper import ModelConfig
 from modules.datamanager.raster.raster_loader_unet import UNetDataManager
 from modules.utils.run_util import check_device
-from modules.lib.constants import USRR_UNET_V1, RUN_DIR
-from torch.utils.flop_counter import FlopCounterMode
+from modules.lib.constants import USRR_UNET_V1
 from torch.profiler import profile, ProfilerActivity
+from modules.utils.model_util import profiler_analysis
 
 import time
 import torch
@@ -12,8 +12,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 import logging
 import numpy as np
-import os
-import pandas as pd
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("USSR_UNET_Model")
@@ -82,239 +80,131 @@ class UNetModelWrapper(ModelWrapper):
         super().__init__(config)
         self.model_name = USRR_UNET_V1
         self.sampling_dist = config.args.get('sampling_dist', 300)
-        self.data_loader = None
-        pass
+        self.data_manager = None
     
     def create_dataset(self):
-        self.data_loader = UNetDataManager(self.sampling_dist, self.config.run_dir, self.config.epochs)
+        self.data_manager = UNetDataManager(self.sampling_dist,  self.config.run_dir, batches_per_map = self.config.batch_size)
         return True
         
     def init_model(self):
         self.create_dataset()
         device = check_device()
-        self.model_structure = [2, 32, 64, 128, 256]
-        model = UNet(encoder_channels= self.model_structure, decoder_channels= self.model_structure[:0:-1]).to(device)
-        model.float()
+        # Define the model structure by the number of channels in each layer. input channel is 2 (x, y) and output channel is 1 (target).
+        self.model_structure = [2, 32, 64, 128, 256] 
+        self.model = UNet(encoder_channels= self.model_structure, decoder_channels= self.model_structure[:0:-1]).to(device)
+        self.model.float() 
         self.loss_fn = nn.MSELoss()
-        self.optimizer = torch.optim.Adam(model.parameters(), lr=self.config.learning_rate)
-        self.eval_loss_fn = nn.L1Loss()
-        self.model = model
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.config.learning_rate)
         logger.info(f"UNet model created")
         return True
     
+    def train_model(self, run_dir, tuning_mode=True):
+        return super().train_model(run_dir, tuning_mode)
+    
     def train(self, run_dir: str, tuning_mode = True):
-        super().train(run_dir, tuning_mode)
+        return super().train(run_dir, tuning_mode)
         
     def test_model(self):
-        super().test_model()
+        self.model.eval()
+        batch_loss = 0
+        batch_mRMSE = 0
+        batch_nse = 0
+        start_time = time.time()
         
-    # def train(self, run_dir: str):
-    #     losses = []
-    #     eval_losses = []
-    #     val_losses = []
-    #     eval_val_losses = []
-        
-    #     history = {
-    #         "loss": [],
-    #         "eval_loss": [],
-    #         "val_loss": [],
-    #         "eval_val_loss": [], 
-    #         "train_time": None,
-    #     }
-
-    #     best_val_loss = float('inf')
-    #     best_epoch = 0
-    #     best_model_state = None
-    #     epochs_no_improvement = 0
-   
-    #     start_time = time.time()
-    #     model = self.model
-        
-    #     with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], profile_memory=True, on_trace_ready=torch.profiler.tensorboard_trace_handler(run_dir)) as prof:
-    #         for epoch in range(1,self.config.epochs+1):
-    #             model.train()
-    #             logger.info(f"Epoch {epoch + 1}/{self.config.epochs}")
-    #             for idx in self.data_loader.train_idxs:
-    #                 x, y = self.data_loader.get_batch(idx)
-    #                 if x.shape[0] == 0:
-    #                     logger.error(f"Input empy skipping batch {idx}")
-    #                     continue
-    #                 model.train() # set model to training mode
-    #                 optimizer = self.optimizer
-    #                 optimizer.zero_grad()
-    #                 pred = model(x.float())
-    #                 loss = self.loss_fn(pred, y.float())
-    #                 losses.append(loss.item())
-    #                 loss.backward()
-    #                 optimizer.step()
-    #                 eval_loss = self.eval_loss_fn(pred, y.float())
-    #                 eval_losses.append(self.eval_loss_fn(pred, y.float()).detach().cpu().numpy())
+        with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], profile_memory=True, on_trace_ready=torch.profiler.tensorboard_trace_handler(self.config.run_dir)) as prof:
+            with torch.no_grad():
+                for idx, batch_list in enumerate(self.data_manager.test_input_batches): 
+                    output_batch_list = self.data_manager.test_output_batches[idx]
                     
-    #                 if torch.isnan(loss):
-    #                     logger.error("Loss is NaN, stopping training")
-    #                     exit(1)
-    #                 logger.info(f"Epoch {epoch}, Batch {idx} - Loss: {loss.item()} Eval loss: {eval_loss.item()}")
-    #             with torch.no_grad():
-    #                 for val_idx in self.data_loader.val_idxs:
-    #                     x_val, y_val = self.data_loader.get_batch(val_idx)
-    #                     if x_val.shape[0] == 0:
-    #                         logger.error(f"Input empy skipping batch {val_idx}")
-    #                         continue
-    #                     model.eval()
-    #                     pred_val = model(x_val.float())
-    #                     output_ref = y_val.float()
-    #                     val_loss = self.loss_fn(pred_val, output_ref)
-    #                     val_losses.append(val_loss.item())
-    #                     eval_val_loss = self.eval_loss_fn(pred_val, output_ref).detach().cpu().numpy()
-    #                     eval_val_losses.append(eval_val_loss)
-                        
-    #             train_loss = np.mean(losses[-len(self.data_loader.train_idxs):])
-    #             val_loss = np.mean(val_losses[-len(self.data_loader.val_idxs):])
-    #             eval_loss = np.mean(eval_losses[-len(self.data_loader.train_idxs):])
-    #             eval_val_loss = np.mean(eval_val_losses[-len(self.data_loader.val_idxs):])
+                    # Process each individual tensor in the batch list
+                    batch_preds = []
+                    batch_losses = []
+                    batch_mrmses = []
+                    batch_nses = []
+                    
+                    for i, input_tensor in enumerate(batch_list):
+                        output_tensor = output_batch_list[i]
+                        # Ensure input is a proper tensor with batch dimension
+                        if not isinstance(input_tensor, torch.Tensor):
+                            logger.error(f"Expected tensor, got {type(input_tensor)}")
+                            continue
+                            
+                        # Process a single tensor through the model
+                        pred = self.model(input_tensor)
+                        loss = self.loss_fn(pred, output_tensor)
+                        batch_losses.append(loss.item())
+                        mRMSE = self.mRMSE_fn(pred, output_tensor)
+                        nse = self.nse_fn(output_tensor, pred)
+                        batch_mrmses.append(mRMSE)
+                        batch_nses.append(nse)
+                        batch_preds.append(pred)
+                    
+                    # Compute average metrics for this batch
+                    avg_loss = np.mean(batch_losses) if batch_losses else 0
+                    avg_mRMSE = np.mean(batch_mrmses) if batch_mrmses else 0
+                    avg_nse = np.mean(batch_nses) if batch_nses else 0
+                    
+                    batch_loss += avg_loss
+                    batch_mRMSE += avg_mRMSE
+                    batch_nse += avg_nse
+                    prof.step()
+                    logger.info(f"Test Loss for batch {idx}: {avg_loss} mRMSE: {avg_mRMSE} NSE: {avg_nse}")
                 
-    #             logger.info(f"Epoch: {epoch}")
-    #             logger.info(f"Train loss: {train_loss}")
-    #             logger.info(f"Eval loss: {eval_loss}")
-    #             logger.info(f"Validation loss: {val_loss}")
-    #             logger.info(f"Eval validation loss: {eval_val_loss}")
+                end_time = time.time()
+                # Calculate final metrics
+                num_batches = len(self.data_manager.test_input_batches)
+                mse = batch_loss / num_batches if num_batches > 0 else 0
+                rmse = np.sqrt(mse)
+                mRMSE = batch_mRMSE / num_batches if num_batches > 0 else 0
+                nse = batch_nse / num_batches if num_batches > 0 else 0
                 
-    #             history["loss"].append(train_loss)
-    #             history["eval_loss"].append(eval_loss)
-    #             history["val_loss"].append(val_loss)
-    #             history["eval_val_loss"].append(eval_val_loss)
+                logger.info(f"Test Loss : {mse} mRMSE: {mRMSE} NSE: {nse} RMSE: {rmse}")
                 
-    #             if val_loss < best_val_loss:
-    #                 best_val_loss = val_loss
-    #                 best_model_state = model.state_dict().copy()
-    #                 epochs_no_improvement = 0
-    #                 best_epoch = epoch
-    #                 logger.info(f"Saving model with best validation loss: {best_val_loss}")
-    #                 self.save_model_checkpoint(self.config.run_id, run_dir, self.model, self.config)
-    #             else:
-    #                 epochs_no_improvement += 1
-    #                 if epochs_no_improvement >= self.config.patience:
-    #                     logger.info(f"Early stopping at epoch {epoch} with validation loss: {best_val_loss}")
-    #                     break
+        # Calculate NSEß
+        key_averages = prof.key_averages()
+        pred_time = end_time - start_time
+        logger.info(f"Validation prediction_time:{pred_time} loss MSE: {mse} RMSE: {rmse}  NSE: {nse} mRMSE: {mRMSE}")
+        flops = self.calculate_flops()
         
-    #     if best_model_state is not None:
-    #         logger.info(f"Restoring best model state from epoch {best_epoch} with validation loss: {best_val_loss}")
-    #         model.load_state_dict(best_model_state)
-        
-    #     self.model = model
-    #     end_time = time.time()
-    #     train_time = end_time - start_time
-    #     history["train_time"] = train_time
-    #     logger.info(f"Training completed in {train_time} seconds")
-        
-    #     key_averages = prof.key_averages()
-    #     analysis_results = super().profiler_analysis(key_averages)
-    #     logger.info(f"Memory profiling results: {key_averages.table(sort_by='cuda_memory_usage', row_limit=10)}")
-    #     logger.info(f"Profiler analysis results: {analysis_results}")
-    #     history['memory'] = analysis_results
-        
-    #     model_file = self.save_model_checkpoint(self.config.run_id, run_dir, self.model, self.config)
-    #     return history, train_time, model_file
+        analysis_results = profiler_analysis(key_averages)
+        metrics = {
+            "mse": mse,
+            "rmse": rmse,
+            "nse": nse,
+            "mRMSE": mRMSE,
+            "pred_time": pred_time,
+            "flops": flops,
+            "pred_memory_usage": analysis_results
+        }
     
-    # def test_model(self):
-    #     device = check_device()
-    #     self.model.eval()
-    #     losses = []
-    #     nses = []
-        
-    #     with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], profile_memory=True, on_trace_ready=torch.profiler.tensorboard_trace_handler(self.config.run_dir)) as prof:
-    #         with torch.no_grad():
-    #             start_time = time.time()
-    #             logger.info("Running inference on test data")
-    #             for idx in self.data_loader.test_idxs:
-    #                 x_test, y_test = self.data_loader.get_batch(idx)
-    #                 logger.info(f"Test data shape: {x_test.shape}")
-    #                 if x_test.shape[0] == 0:
-    #                     logger.error(f"Input empy skipping batch {idx}")
-    #                     continue
-    #                 x_test = x_test.float().to(device)
-    #                 pred = self.model(x_test)
-    #                 loss = self.loss_fn(pred, y_test.float())
-    #                 nse = self.nse_fn(pred, y_test.float())
-    #                 logger.info(f"Test Loss: {loss.item()}")
-    #                 losses.append(loss.item())
-    #             mse = np.mean(losses)
-    #             rmse = np.sqrt(mse)
-    #             nse = np.mean(nses)
-    #             flops = self.calculate_flops()
-    #             wet_rmse = None
-    #             wet_acc = None
-    #         end_time = time.time()
-    #         pred_time = end_time - start_time
-        
-    #     key_averages = prof.key_averages()
-    #     analysis_results = super().profiler_analysis(key_averages)
-    #     logger.info(f"Validation profiling results: {key_averages.table(sort_by='cuda_memory_usage', row_limit=10)}")
-        
-    #     metrics = {
-    #         'mse': mse,
-    #         'rmse': rmse,
-    #         'nse': nse,
-    #         'pred_time': pred_time,
-    #         'wet_rmse': wet_rmse,
-    #         'wet_acc': wet_acc,
-    #         'flops': flops,
-    #         "pred_memory_usage": analysis_results
-    #     }
-    #     return metrics
-    
-    # def calculate_flops(self):
-    #     idx = self.data_loader.test_idxs[0]
-    #     x, y = self.data_loader.get_batch(idx)
-    #     x = x[0:1]
-    #     self.model.eval()
-        
-    #     with FlopCounterMode(self.model) as counter:
-    #         _ = self.model(x.float())
-    #         flops = counter.get_total_flops()
-    #         flops_str = self.format_flops(flops)
-    #         logger.info(f"Model FLOPS: {flops_str}")
-    #         return flops
+        logger.info(prof.key_averages().table(sort_by="cuda_memory_usage", row_limit=10))
+        return metrics
 
-    # def save_model_checkpoint(self, run_id, run_dir, model, config):
-    #     try:
-    #         model_file = os.path.join(run_dir, f"{model_name}_{run_id}.pt")
-    #         metadata_dir = os.path.join(RUN_DIR, self.config.model_name)
-    #         metadata_file = os.path.join(metadata_dir, "run_metadata.csv")
-        
-    #         torch.save({
-    #             'model_state_dict': model.state_dict(),
-    #             'optimizer_state_dict': self.optimizer.state_dict(),
-    #             'model_structure': self.model_structure,
-    #             'sampling_dist': self.sampling_dist,
-    #             'learning_rate': self.config.learning_rate,
-    #             'batch_size': self.data_loader.batch_size,
-    #             'model_strcture': self.model_structure,
-    #             'num_epochs': self.config.epochs,
-    #             'run_id': run_id,
-    #         }, os.path.join(run_dir, model_file))
+
+    def save_model_checkpoint(self, run_id, run_dir, model_state, config):
+        try:
+            model_file = os.path.join(run_dir, f"{config.model_name}_{run_id}.pth")
+            torch.save({
+                'model_state_dict': model_state,
+                'learning_rate': self.config.learning_rate,
+                'batch_size': self.config.batch_size,
+                'num_epochs': self.config.epochs,
+                'run_id': run_id,
+                'model_structure': self.model_structure,
+                'sampling_dist': self.sampling_dist
+            }, model_file) 
+            return model_file      
+        except Exception as e:
+            logger.error(f"Error saving model metrics: {e}")
+            return None
             
-    #         os.makedirs(metadata_dir, exist_ok=True)
-            
-    #         if os.path.exists(metadata_file):
-    #             logger.info(f"Metadata file exists: {metadata_file}")
-    #             run_metadata = pd.read_csv(metadata_file)
-    #         else:
-    #             logger.info(f"Creating new metadata file: {metadata_file}")
-    #             run_metadata = pd.DataFrame(columns=["run_id", "sampling_dist", "model_name", "model_file"])
-            
-    #         new_row = pd.DataFrame({
-    #             "run_id": [run_id],
-    #             "sampling_dist": [self.sampling_dist],
-    #             "model_name": [self.model_name],
-    #             "model_file": [model_file]
-    #         })
-            
-    #         run_metadata = pd.concat([run_metadata, new_row], ignore_index=True)
-    #         run_metadata.to_csv(metadata_file, index=False)  
-    #         logger.info(f"Run metadata saved to {metadata_file}")
-    #         return model_file
-        
-    #     except Exception as e:
-    #         logger.error(f"Error saving model metrics: {e}")
-    #     return None
+    def create_hyperparameters_dict(self):
+        return {
+            "learning_rate": self.config.learning_rate,
+            "batch_size": self.config.batch_size,
+            "epochs": self.config.epochs,
+            "patience": self.config.patience,
+            "sampling_dist": self.sampling_dist,
+            "model_name": self.model_name,
+            "run_id": self.config.run_id
+        }

@@ -1,7 +1,7 @@
 from modules.models.model_wrapper import ModelWrapper, ModelConfig
 from modules.utils.run_util import check_device
 from modules.datamanager.point.sequential_loader_1dcnn import CNNSequentialDataManager
-from modules.lib.constants import USRR_1DCNN_V1
+from modules.lib.constants import USRR_1DCNN_V1, RUN_DIR
 
 import numpy as np
 import torch
@@ -17,18 +17,15 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("CNN1D_USRR_ModelWrapper")
 
 class CNN1DSequential(nn.Module):
-    def __init__(self, model_structure, seq_h):
+    def __init__(self, model_structure, seq_h, convo_kernel=4, pool_kernel=3):
         super(CNN1DSequential, self).__init__()
-        convo_1_kernel = 4
-        pool_1_kernel = 3
-        
         self.convo_1 = nn.Conv1d(in_channels=model_structure[0], out_channels=model_structure[1], 
-                                 kernel_size=convo_1_kernel)
-        self.pooling_1 = nn.MaxPool1d(pool_1_kernel, ceil_mode=True)
+                                 kernel_size=convo_kernel)
+        self.pooling_1 = nn.MaxPool1d(pool_kernel, ceil_mode=True)
         self.convo_2 = nn.Conv1d(in_channels=model_structure[1],out_channels=model_structure[1], 
-                                 kernel_size=convo_1_kernel)
-        self.pooling_2 = nn.MaxPool1d(pool_1_kernel, ceil_mode=True)
-        self.dim_past_convo = lambda dim_in: int(np.ceil((dim_in - convo_1_kernel + 1)/pool_1_kernel))
+                                 kernel_size=convo_kernel)
+        self.pooling_2 = nn.MaxPool1d(pool_kernel, ceil_mode=True)
+        self.dim_past_convo = lambda dim_in: int(np.ceil((dim_in - convo_kernel + 1)/pool_kernel))
         flattened_dim = self.dim_past_convo(self.dim_past_convo(seq_h)) * model_structure[1]
         self.flatten = nn.Flatten()
         self.hidden_1 = nn.Linear(flattened_dim, model_structure[-2])
@@ -37,7 +34,6 @@ class CNN1DSequential(nn.Module):
         
 
     def forward(self, x):
-        
         x = self.convo_1(x.transpose(1, 2))
         x = self.pooling_1(x)
         x = torch.tanh(x)
@@ -68,6 +64,8 @@ class CNN1DModelWrapper(ModelWrapper):
         self.input_time_len_h = self.config.args.get("input_time_len_h", 12)
         # 4 timesteps (15min) per hour
         self.seq_h = self.input_time_len_h * 4 
+        self.convo_kernel = self.config.args.get("conv_kernel", 4)
+        self.pool_kernel = self.config.args.get("pool_kernel", 3)
         self.device = check_device()
         self.tuninig_mode = config.args.get('tuning_mode', True)
 
@@ -82,7 +80,9 @@ class CNN1DModelWrapper(ModelWrapper):
         self.create_dataset()
         # model structure [input_dim, conv_out_dim, hidden-fc-layer-size output_dim]
         self.model_structure = [self.num_of_features, 32, 64, self.rl_group_size]
-        self.model = CNN1DSequential(self.model_structure, self.seq_h).to(self.device)
+        self.model = CNN1DSequential(self.model_structure, self.seq_h, 
+                                    convo_kernel=self.convo_kernel, 
+                                    pool_kernel=self.pool_kernel).to(self.device)
         self.model.float()
         self.loss_fn = nn.MSELoss()
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.config.learning_rate)
@@ -106,8 +106,68 @@ class CNN1DModelWrapper(ModelWrapper):
             "sampling_dist": self.map_sampling_dist,
             "n_clusters": self.num_of_clusters,
             "rl_group": self.rl_group, 
-            "input_time_len_h": self.input_time_len_h
-        }
-        
+            "input_time_len_h": self.input_time_len_h,
+            "convo_kernel": self.convo_kernel,
+            "pool_kernel": self.pool_kernel
+        } 
         return hyperparameters
+    
+    def save_model_checkpoint(self, run_id, run_dir, model_state, config):
+        try:
+            model_file = os.path.join(run_dir, f"{config.model_name}_{run_id}.pth")
+            torch.save({
+                'model_state_dict': model_state,
+                'learning_rate': self.config.learning_rate,
+                'batch_size': self.config.batch_size,
+                'num_epochs': self.config.epochs,
+                'run_id': run_id,
+                'model_structure': self.model_structure, 
+                'rl_group': self.rl_group,
+                'input_time_len_h': self.input_time_len_h,
+                'convo_kernel': self.convo_kernel,
+                'pool_kernel': self.pool_kernel,
+            }, model_file) 
+            return model_file      
+        except Exception as e:
+            logger.error(f"Error saving model metrics: {e}")
+            return None
         
+    def save_predictions(self, pred):
+        pass
+        # idx = 146
+        # pred_max = pred.detach().cpu().numpy()[idx]
+        # output_dir = os.path.join(self.config.run_dir, )
+        # output_dir = os.path.join(RUN_DIR, model_name,"output_maps")  
+        
+        # os.makedirs(output_dir, exist_ok=True)
+        # output_file = os.path.join(output_dir, f"1dcnn_predictions_{idx:04d}.csv")
+
+        # # Get row and column coordinates from the data manager
+        # coords = [(row, col) for row, col in self.data_manager.coords_to_cluster_rls]
+        # rows = [coord[0] for coord in coords]
+        # cols = [coord[1] for coord in coords]
+        
+        # # Create DataFrame with predictions and coordinates
+        # prediction_map = pd.DataFrame({
+        #     'row': rows,
+        #     'col': cols,
+        #     f'value_{self.rl_group}': pred_max.flatten()
+        # })
+        
+        # if os.path.exists(output_file):
+        #     df = pd.read_csv(output_file)
+        #     # Merge on row and col if they exist in the file
+        #     if 'row' in df.columns and 'col' in df.columns:
+        #         # Keep only the columns from prediction_map that aren't row/col
+        #         value_cols = [col for col in prediction_map.columns if col not in ['row', 'col']]
+        #         # Merge the new predictions with existing data
+        #         df = pd.merge(df, prediction_map[['row', 'col'] + value_cols], on=['row', 'col'], how='outer')
+        #     else:
+        #         # If existing file doesn't have coordinates, just use the new format
+        #         df = prediction_map
+        # else:
+        #     df = prediction_map
+            
+        # df.to_csv(output_file, index=False)
+        # logger.info(f"Prediction map saved to {output_file} with row/col coordinates")
+

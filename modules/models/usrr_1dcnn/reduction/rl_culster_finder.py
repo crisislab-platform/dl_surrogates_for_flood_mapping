@@ -2,8 +2,8 @@ import numpy as np
 from sklearn.cluster import KMeans
 import os
 import matplotlib.pyplot as plt
-from modules.models.usrr_1dcnn.spatial_reduction_module.gdal_lib import read_shp_point
-from modules.models.usrr_1dcnn.spatial_reduction_module.base_functions import save_pts_to_shp
+from modules.models.usrr_1dcnn.lib.gdal_lib import read_shp_point
+from modules.models.usrr_1dcnn.lib.base_functions import save_pts_to_shp
 import logging
 from modules.lib.constants import GRAPH_OUTPUT_DIR
 import pandas as pd

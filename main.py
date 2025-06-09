@@ -1,12 +1,11 @@
 from modules.model_runner.model_trainer import train_model
 from modules.models.model_wrapper import ModelConfig
-from modules.models.usrr_1dcnn.spatial_reduction_module.rep_location_finder import find_representative_locations_and_clusters
-from modules.models.usrr_1dcnn.spatial_reduction_module.reconstruction import validate_reconstruction
+from modules.models.usrr_1dcnn.reconstruction.reconstruction import reconstruct_and_test
 import logging
 import argparse
 from datetime import datetime
-from modules.visualiser.visualiser import plot_upstream_conditions, visualise_rep_locations, plot_boundary_information, create_flood_animation, plot_extent_reference, plot_extent_prediction, plot_extents_on_same_image, visualise_area_check_map, draw_metrics, plot_model_architecture, plot_study_area
-from modules.visualiser.metrics.metrics_viz import plot_metrics
+from modules.visualiser.visualiser import plot_upstream_conditions, visualise_rep_locations, plot_boundary_information, create_flood_animation, plot_extent_reference, plot_extent_prediction, plot_extents_on_same_image, visualise_area_check_map,plot_model_architecture, plot_study_area
+from modules.visualiser.metrics.performance_and_footprint import plot_metrics
 from modules.visualiser.flow_analysis import find_peak_inflow_timestep
 # from modules.visualiser.hydrological_visuals import find_peak_inflow_timestep
 from modules.metrics_reader.metrics_reader import hyperparam_analysis
@@ -50,7 +49,78 @@ def parse_args():
     parser.add_argument('--tuning_mode', type=bool, help='Enable tuning mode')
     parser.add_argument('--fold', type=int, default=0, help='Validation fold for training')
     parser.add_argument('--input_time_len_h', type=float, default=False, help='Lenght of the input time series in hours')
+    parser.add_argument('--physics_weight', type=float, default=0.5, help='Weight for physics-based loss')
+    parser.add_argument('--usrr_conv_kernel', type=int, default=4, help='Directory to save run outputs')
+    parser.add_argument('--usrr_pool_kernel', type=int, default=3, help='Pooling kernel size for USRR models')
+    parser.add_argument('--save_model', action='store_true', help='Save the trained model checkpoint')
     return parser.parse_args()
+
+
+def check_if_already_run(args):
+    from modules.lib.constants import RUN_DIR
+    import os
+    import pandas as pd
+
+    if args.tuning_mode:
+        metrics_file = f"{RUN_DIR}/{args.model}/tuning_metrics.csv"
+        hyperparams = {
+            "batch_size": args.batch_size,
+            "learning_rate": args.learning_rate,
+            "epochs": args.epochs,
+            "input_time_len_h": args.input_time_len_h,
+            "sampling_dist": args.sampling_dist,
+            "n_clusters": args.n_clusters,
+            "rl_group": args.rl_group,
+            "lag": args.lag,
+            "horizon": args.horizon,
+            "patience": args.patience
+        }
+        compare_keys = ["batch_size", "learning_rate", "epochs", "patience", "lag", "horizon", "rl_group", "sampling_dist", "n_clusters", "input_time_len_h"]
+    else:
+        metrics_file = f"{RUN_DIR}/{args.model}/final_training_metrics.csv"
+        # Define the hyperparameters to check for duplicates
+        hyperparams = {
+            "batch_size": args.batch_size,
+            "learning_rate": args.learning_rate,
+            "epochs": args.epochs,
+            "input_time_len_h": args.input_time_len_h,
+            "sampling_dist": args.sampling_dist,
+            "n_clusters": args.n_clusters,
+            "rl_group": args.rl_group,
+            "lag": args.lag,
+            "horizon": args.horizon,
+            "patience": args.patience
+        }
+
+        # Only keep keys that are relevant for comparison
+        compare_keys = ["batch_size", "learning_rate", "epochs", "patience", "lag", "horizon", "rl_group", "sampling_dist", "n_clusters", "input_time_len_h"]
+
+    if not os.path.exists(metrics_file):
+        return  # No previous runs, so continue
+
+    try:
+        df = pd.read_csv(metrics_file)
+    except Exception as e:
+        logger.warning(f"Could not read {metrics_file}: {e}")
+        return
+    
+    # Prepare current run's hyperparameters as strings for comparison
+    current_hyperparams = {k: hyperparams[k] for k in compare_keys if k in hyperparams}
+
+    import ast
+    for idx, row in df.iterrows():
+        if row.get("model") != args.model:
+            continue
+        if args.tuning_mode and row.get("fold") != args.fold:
+            continue
+        try:
+            row_hyperparams = ast.literal_eval(row.get("hyperparameters", "{}"))
+        except Exception:
+            continue
+        # Only compare keys present in both
+        if all(str(row_hyperparams.get(k)) == str(current_hyperparams.get(k)) for k in current_hyperparams):
+            logger.warning("A run with the same hyperparameters already exists. Exiting to avoid duplicate runs.")
+            exit(0)
 
 
 if __name__ == "__main__":
@@ -63,6 +133,8 @@ if __name__ == "__main__":
         exit(1)
 
     elif args.command == TRAIN_COMMAND:
+        if args.model == "USSR_1DCNN_V1":
+            check_if_already_run(args)
         config = ModelConfig(
             model_name=args.model,
             lag=args.lag,
@@ -71,7 +143,8 @@ if __name__ == "__main__":
             learning_rate=args.learning_rate,
             epochs=args.epochs,
             patience=args.patience, 
-            fold=args.fold
+            fold=args.fold,
+            save_model=args.save_model
         )
         train_model(config, args)
         
@@ -87,7 +160,7 @@ if __name__ == "__main__":
         if not args.sampling_dist or not args.n_clusters:
             logger.error("Missing required arguments for SRR reconstruction")
             exit(1)
-        validate_reconstruction(args.run_id, args.sampling_dist, args.n_clusters)
+        reconstruct_and_test(args.run_id, args.sampling_dist, args.n_clusters)
         
     elif args.command == PLOT_COMMAND:
         if not args.plot_type:
@@ -134,3 +207,4 @@ if __name__ == "__main__":
         hyperparam_analysis(args.model)
         
     logger.info("Commands executed successfully")
+

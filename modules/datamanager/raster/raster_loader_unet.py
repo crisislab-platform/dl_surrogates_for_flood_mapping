@@ -1,8 +1,7 @@
 # Description: Data loader for U-Net model (PyTorch version)
 from modules.lib.constants import CARLISLE_DATA_DIR, OUTPUT_DIR, SIMULATION_DATA_DIR
-from modules.models.usrr_1dcnn.spatial_reduction_module.gdal_lib import coords2rc, rc2coords, gdal_asarray, gdal_transform, gdal_writetiff
-from modules.models.usrr_1dcnn.spatial_reduction_module.rep_location_finder import find_representative_locations_and_clusters
-from modules.models.usrr_1dcnn.spatial_reduction_module.base_functions import read_shp_point
+from modules.models.usrr_1dcnn.lib.gdal_lib import coords2rc, rc2coords, gdal_asarray, gdal_transform, gdal_writetiff
+from modules.models.usrr_1dcnn.lib.base_functions import read_shp_point
 from modules.utils.run_util import check_device
 
 import numpy as np
@@ -11,339 +10,273 @@ import glob
 import logging
 import torch
 import pandas as pd
-from modules.datamanager.datamanager import DataManager
+from modules.datamanager.raster.raster_loader_base import USRRDataManager
 
 logger = logging.getLogger("UNetDataManager")
 logger.setLevel(logging.INFO)
 
 
-class UNetDataManager(DataManager):
+class UNetDataManager(USRRDataManager):
+    
     def __init__(self, sampling_dist, 
                  run_dir, 
-                 epochs=10, 
-                 batch_size=32, 
-                 num_of_batch_per_map=6):
-
+                 batches_per_map=6):
+        
+        super().__init__()
+        
+        cross_tile_dist=32
+        map_size=64
+        
+        # Paths
         self.rep_loc_file_path = f"{OUTPUT_DIR}/rls/ss_{sampling_dist}.csv"
         self.dem_asc_file = f"{SIMULATION_DATA_DIR}/Carlisle_5m.asc"
         self.simulation_dir = SIMULATION_DATA_DIR
         self.possible_inun_file = f"{self.simulation_dir}/Run1-0145.wd"
         self.area_check_file = f"{OUTPUT_DIR}/area_check.tif"
         
-        inundation_files = sorted(glob.glob(f"{self.simulation_dir}/*.wd"))
-        self.inundation_files = [f for f in inundation_files if self.get_timestep_index(f) > 7]
-        
-        # Parameters
+        # Hyperparameters and configurations
         self.sampling_dist = sampling_dist
         self.run_dir = run_dir
-        self.epochs = epochs
-        self.batch_size = batch_size
-        self.map_size = 64 # Should be divisible by 16 as the model is UNet
-        self.cross_tile_dist_by_cell = 32 # For creating overlapping tiles
-        self.num_of_batch_per_map = num_of_batch_per_map
+        self.batch_size = None
+        self.map_size = map_size # Should be divisible by 16 as the model is UNet
+        self.cross_tile_dist = cross_tile_dist # For creating overlapping tiles. The distance between the tiles in cells
+        self.batches_per_map = batches_per_map # Number of batches for one map (timestep)
         self.t_interval = 1
         self.dry_samples_per_map = 1
         self.device = check_device()
-        
         self.test_event_ids = [1]
-        self.val_event_ids = [9]
-        self.train_event_ids = [2,3,4,5,6,7,8]
+        self.train_event_ids = [2,3,4,5,6,7,8,9]
+        self.all_event_ids = self.test_event_ids + self.train_event_ids
+        
         self.prepare_input_template()
-        self.prepare_indices()
-
-    def get_representative_locations(self):
-        if self.rep_loc_file_path and os.path.exists(self.rep_loc_file_path):
-                # Load representative locations from file if provided
-                rl_list = pd.read_csv(self.rep_loc_file_path)
-                logger.info(f"rep loc: {rl_list.iloc[0]}")
-                rl_list = rl_list[['x', 'y']].values
-                rl_list = [tuple(x) for x in rl_list]
-                logger.info(f"Loaded {len(rl_list)} representative locations from {self.rep_loc_file_path}")
+        self.preload_inundation_maps()
+        self.prepare_batch_idxs()
+        self.prepare_test_event_batches()
+        
+    def prepare_test_event_batches(self):
+        logger.info("Preparing test event data for UNet evaluation")
+        
+        # Calculate time indices for the test period
+        test_start_tidx = (17 * 4) - (2 * 4) - 1 
+        test_end_tidx = (65 * 4) - (2 * 4) - 1
+        test_event_id = self.test_event_ids[0]
+        
+        # Create containers for final batch structures
+        self.test_input_batches = []
+        self.test_output_batches = []
+        
+        # Process each timestep in the test range and create batches directly
+        for t_idx in range(test_start_tidx, test_end_tidx + 1):
+            if t_idx not in self.preloaded_tiles[test_event_id]:
+                logger.warning(f"Timestep {t_idx} not found in preloaded tiles for event {test_event_id}")
+                continue
+                
+            # Get preloaded tiles for this timestep
+            output_tiles = self.preloaded_tiles[test_event_id][t_idx]
+            
+            # Create sparse RL input tensor
+            rl_tensor = torch.zeros_like(output_tiles, device=self.device)
+            rl_tensor[self.input_temp_gpu.bool()] = output_tiles[self.input_temp_gpu.bool()]
+            
+            # Create and store batches directly
+            timestep_batches = []
+            timestep_output_batches = []
+            
+            # Use batches_per_map directly instead of calculating from size
+            tiles_per_batch = output_tiles.size(0) // self.batches_per_map
+            
+            # Create exactly batches_per_map batches for this timestep
+            for b_idx in range(self.batches_per_map):
+                start_idx = b_idx * tiles_per_batch
+                end_idx = (b_idx + 1) * tiles_per_batch
+                
+                # Create input tensor (RL values + DEM)
+                input_batch = rl_tensor[start_idx:end_idx].unsqueeze(1)
+                dem_batch = self.shaped_dem_gpu[start_idx:end_idx].unsqueeze(1)
+                model_input = torch.cat((input_batch, dem_batch), dim=1)
+                
+                # Get corresponding output batch
+                output_batch = output_tiles[start_idx:end_idx].unsqueeze(1)
+                
+                # Store batches
+                timestep_batches.append(model_input)
+                timestep_output_batches.append(output_batch)
+                
+            # Add batches for this timestep to main containers
+            if timestep_batches:
+                self.test_input_batches.append(timestep_batches)
+                self.test_output_batches.append(timestep_output_batches)
+        
+        logger.info(f"Prepared batch structure for {len(self.test_input_batches)} timesteps with matching inputs and outputs")
+    
+        
+    def get_maps_per_event(self, event_id):
+        inundation_files = glob.glob(f"{self.simulation_dir}/Run{event_id}-*.wd")
+        inundation_files.sort()
+        inundation_files = inundation_files[8:]  # Skip the first 8 timesteps
+        return len(inundation_files)
+    
+    def idx_expander(self, event_ids):
+        all_indices = []
+        if len(event_ids) == 0:
+            return np.array([])
+        
+        # First, collect all valid indices from each event
+        for event_id in event_ids:
+            start_idx = self.event_start_id_map[event_id]
+            num_idx = self.get_maps_per_event(event_id) * self.batches_per_map
+            event_indices = start_idx + np.arange(num_idx)
+            all_indices.extend(event_indices)
+            
+        # Convert to numpy array and shuffle to mix events
+        all_indices = np.array(all_indices)
+        rng = np.random.default_rng(341)  # Use same seed for consistency
+        rng.shuffle(all_indices)
+        
+        # Create batches from mixed indices
+        num_of_batches = len(all_indices) // self.batch_size
+        idx_batch_list = []
+        
+        for i in range(num_of_batches):
+            batch_start = i * self.batch_size
+            batch_end = min((i + 1) * self.batch_size, len(all_indices))
+            if batch_end - batch_start < self.batch_size:
+                # Skip incomplete batches
+                continue
+            batch_indices = all_indices[batch_start:batch_end]
+            idx_batch_list.append(batch_indices)
+                
+        if len(idx_batch_list) > 0:
+            idx_batch_list = np.array(idx_batch_list)
+            logger.info(f"Index batches shape: {idx_batch_list.shape}")
+            logger.info(f"Created mixed-event batches with data from multiple events")
+            return idx_batch_list
         else:
-            raise ValueError(f"RL file path is not valid: {self.rep_loc_file_path}")
-        self.rl_list = rl_list
-        return rl_list
+            logger.error("No batches were created! Check your data and batch size.")
+            return np.array([])
+        
     
-    def reshaping_func_def(self, slicing_func, x, ax0_n, ax1_n):
+    def prepare_batch_idxs(self):
+        #start index for each event
+        self.event_start_id_map = {}
         
-        # First reshape the map to the desired size (a multiple of the map size)
-        new_map_x = slicing_func(x)[:self.map_size * ax0_n, :self.map_size * ax1_n]
-        new_map_x = new_map_x.reshape((-1, ax1_n, self.map_size)) 
-        new_map_x = new_map_x.swapaxes(0, 1)
+        # Calculate start indices for each event
+        for event_id in self.all_event_ids:
+            if event_id == 1:  # First event
+                start_idx = 0
+            else:
+                prev_event_id = event_id - 1
+                start_idx = self.event_start_id_map[prev_event_id] + self.get_maps_per_event(prev_event_id) * self.batches_per_map
+            self.event_start_id_map[event_id] = start_idx
         
-        new_map_x = new_map_x.reshape((ax1_n, -1, self.map_size, self.map_size))
-        
-        new_map_x = new_map_x.swapaxes(0, 1)
-        new_map_x = new_map_x.reshape((-1, self.map_size, self.map_size))
-        return new_map_x
-
-    def build_tiling_func(self, cross_tile_size_r, cross_tile_size_c, development_mode=False):
-        # Create a mask with maximum extent of the flood
-        flood_extent = gdal_asarray(self.possible_inun_file)
-        ext_mask = (~np.isnan(flood_extent)).astype(np.float32)
-        
-        # Create a slicing function to create tiles based on an offset
-        slicing_func = lambda  x: x[3 + cross_tile_size_r:, 23 + cross_tile_size_c:]
-        new_shape = slicing_func(ext_mask).shape
-        ax0_n = new_shape[0] // self.map_size  # new number of tiles in row
-        ax1_n = new_shape[1] // self.map_size  # new number of tiles in column
-        logger.info(f"New shape after slicing: {new_shape}, maps: {ax0_n}x{ax1_n}")
-        
-        # Create a reshaping function to get the maps(tiles)
-        reshaping_func = lambda x: self.reshaping_func_def(slicing_func, x, ax0_n, ax1_n)
-        
-        # Create a mask to filter out the tiles that do not contain any flood or representative locations
-        filter_arr = (np.sum(reshaping_func(ext_mask), axis=(1, 2)) !=0) \
-            & (np.sum(reshaping_func(self.rl_map), axis=(1, 2)) != 0)
-              
-        if development_mode:
-            return reshaping_func, filter_arr, ax0_n, ax1_n, (3 + cross_tile_size_r, 23 + cross_tile_size_c)
-        else: 
-            tiling_func = lambda x: reshaping_func(x)[filter_arr, :, :]
-            logger.info(f"Created tiling function successfully")
-            return tiling_func
+        self.train_idx = self.idx_expander(self.train_event_ids)
+        # self.validation_idx = self.idx_expander(self.val_event_ids)
+        self.test_idx = self.idx_expander(self.test_event_ids)      
     
-    def build_reshaping_func_seq(self, num_of_subm_maps_per_axes):
-        # Function sequence to create reshaped maps(tiles) used for training
-        self.reshaping_func_seq = []
-        for r_i in range(num_of_subm_maps_per_axes):
-            self.reshaping_func_seq.append(self.build_tiling_func(r_i * self.cross_tile_dist_by_cell,
-                                                                  r_i * self.cross_tile_dist_by_cell))
-    def tiles_prep_func_gpu(self, x):
-        # Apply tiling functions to the input map
-        tiles_maps =  [tiling_func(x) for tiling_func in self.reshaping_func_seq]
-        
-        # Concatenate the tiled maps along the first dimension
-        tiles_maps = torch.cat(tiles_maps, dim=0)
-        return tiles_maps
-    
-    def prepare_input_template(self):
-        logger.info("Preparing input template for U-Net model")
-        self.rl_list = self.get_representative_locations()
-        transform  = gdal_transform(self.dem_asc_file)
-        self.dem_map = gdal_asarray(self.dem_asc_file)
-        
-        # Convert RL coordinates to row/col indices
-        self.rc_rl_points = [coords2rc(transform, rl) for rl in self.rl_list] 
-        length_of_rl_points = len(self.rc_rl_points)
-        logger.info(f"Number of representative locations: {length_of_rl_points}")
-        
-        # Create a binary map with representative locations. 1 at RL, 0 elsewhere
-        self.rl_map = np.zeros(self.dem_map.shape)
-        for row, col in self.rc_rl_points:
-            self.rl_map[row, col] = 1
-        
-        # See the number of representative locations in the rl_map check for points with 1
-        num_of_representative_locations = np.count_nonzero(self.rl_map)
-        logger.info(f"Number of representative locations in map: {num_of_representative_locations}")
-
-        # Number of overlapping tiles per axes  y(row) and x(column)
-        num_of_nodes_per_axes = round(self.map_size / self.cross_tile_dist_by_cell) 
-        self.build_reshaping_func_seq(num_of_nodes_per_axes)
-        logger.info("Preparation of reshaping functions completed")
-        
-        with torch.no_grad():
-            # Set NaN values in DEM to max value if any
-            is_dem_nan = np.isnan(self.dem_map).any()
-            if is_dem_nan:
-                logger.info("Setting NaN values in DEM to max value")
-                self.dem_map[np.isnan(self.dem_map)] = np.nanmax(self.dem_map) + 1
-                
-            logger.info("Converting numpy arrays to tensors and moving to GPU")
-            self.dem_map = torch.from_numpy(self.dem_map.copy()).float().to(self.device)
-            self.rl_map =  torch.from_numpy(self.rl_map.copy()).float().to(self.device)
-            self.input_temp = self.tiles_prep_func_gpu(self.rl_map)
-            
-            # Determine the batch size for training
-            self.batch_size = self.input_temp.size()[0] // self.num_of_batch_per_map
-            logger.info(f"input_temp shape: {self.input_temp.size()}")
-            logger.info(f"batch_size: {self.batch_size}")
-            
-            assert self.input_temp.size()[0] % self.num_of_batch_per_map == 0,\
-                f'Tiles ({self.input_temp.size()[0]}) of each map cannot be equally divided by the number of batches!' \
-                f'Please adjust map_size or cross_tile_dist_by_cell.'
-                
-            # Elevation normalization for DEM
-            self.shaped_dem = self.tiles_prep_func_gpu(self.dem_map)
-            dem_mins = torch.amin(self.shaped_dem, dim=(1,2))
-            self.shaped_dem = self.shaped_dem - dem_mins.repeat_interleave(self.map_size ** 2).view(self.shaped_dem.size())
-            if is_dem_nan:
-                # Set the max value to -1. These are typically pixels that were previously NaN
-                self.shaped_dem[self.shaped_dem == self.shaped_dem.max()]  = -1
-                self.dem_map[self.dem_map == self.dem_map.max()] = float('nan')
-            
-            # Move to CPU and convert tensors to numpy
-            self.shaped_dem = self.shaped_dem.detach().to('cpu').numpy()
-            self.input_temp = self.input_temp.detach().to('cpu').numpy()
-            self.rl_map = self.rl_map.detach().to('cpu').numpy()
-        torch.cuda.empty_cache()
         return 0
     
-    def prepare_indices(self):            
-        # How many maps per event
-        time_steps_per_event = 190 # Should be changed to dynamically read from the inundation files
-        self.maps_per_event = time_steps_per_event // self.t_interval
-        
-        # create indices for a given x and multiplier i
-        idx_expander = lambda x, mul_i: np.repeat(x, mul_i) * mul_i + np.array(list(range(mul_i)) * len(x))
-        
-        test_map_idx = idx_expander([id-1 for id in self.test_event_ids], self.maps_per_event)
-        self.test_idxs = idx_expander(test_map_idx, self.num_of_batch_per_map)
-        
-        train_map_idx = idx_expander([id-1 for id in self.train_event_ids], self.maps_per_event)
-        self.train_idxs = idx_expander(train_map_idx, self.num_of_batch_per_map)
-        
-        val_map_index = idx_expander([id-1 for id in self.val_event_ids], self.maps_per_event)
-        self.val_idxs = idx_expander(val_map_index, self.num_of_batch_per_map)
-        
-        # rng = np.random.default_rng()
-        # rng.shuffle(self.train_idxs)
-        
-        # Create lambda functions to get event_id, t_idx and batch_idx given the idx
-        self.idx2eventid = lambda idx: int((idx // self.num_of_batch_per_map) // self.maps_per_event)
-        self.idx2tidx = lambda idx: int((idx // self.num_of_batch_per_map) % self.maps_per_event)
-        self.idx2batchidx = lambda idx: int(idx % self.num_of_batch_per_map)  
-        return 0
-    
-    def process_inundation_file(self, inundation_file):
-        inundation_map = gdal_asarray(inundation_file)
-        #check if there are any NaN values in the inundation map
-        if np.isnan(inundation_map).any():
-            logger.info(f"Setting NaN values in inundation map to 0")
-            inundation_map[np.isnan(inundation_map)] = 0
-        
-        #check if there are any negative values in the inundation map
-        if np.any(inundation_map < 0):
-            logger.info(f"Setting negative values in inundation map to 0")
-            inundation_map[inundation_map < 0] = 0
-        inundation_map = torch.from_numpy(inundation_map).float().to(self.device)
-        return inundation_map
-    
-    def get_batch(self, idx, test_mode=False, rl_depth=None):
-        event_id = self.idx2eventid(idx) + 1
-        t_idx = self.idx2tidx(idx) + 8
-        batch_idx = self.idx2batchidx(idx)
-        
-        if test_mode:
-            # Get the inundation map for the given event and timestep
-            inundation_file = f'{self.simulation_dir}/Run{event_id}-{str(t_idx).zfill(4)}.wd'
-            inundation_map = torch.from_numpy(gdal_asarray(inundation_file))
-            # self.rl_map_filled = self.rl_map.copy()
-            # rl_indices = np.where(self.rl_map_filled == 1)
-            # self.rl_map_filled[rl_indices[0], rl_indices[1]] = rl_depth
-            self.rl_map_filled = torch.from_numpy(rl_depth).float().to(self.device)
-            self.input_temp_filled = self.tiles_prep_func_gpu(self.rl_map_filled)
-            input_filled = self.input_temp_filled[batch_idx * self.batch_size:
-                                                         (batch_idx + 1) * self.batch_size, :, :].unsqueeze(1)
-            dem_batch = torch.from_numpy(self.shaped_dem[batch_idx*self.batch_size:(batch_idx+1)*self.batch_size,
-                                             :, :].copy()).float().to(self.device).unsqueeze(1)
-            return torch.cat((input_filled, dem_batch), dim=1), inundation_map
-        
-        with torch.no_grad():
-            inundation_file = f'{self.simulation_dir}/Run{event_id}-{str(t_idx).zfill(4)}.wd'
-            images = self.tiles_prep_func_gpu(self.process_inundation_file(inundation_file))
-            images = images[batch_idx * self.batch_size: (batch_idx + 1) * self.batch_size, :, :].unsqueeze(1)
-            
-            #Identify wet and dry tiles and prevent data imbalance
-            wet_filter = torch.sum(images, dim=(1, 2, 3)) != 0
-            dry_filter = torch.sum(~wet_filter)
-            
-            # If there is enough dry tiles, randomly select dry tiles
-            if dry_filter.item() >=  self.dry_samples_per_map * 4:
-                random_idxs = (np.random.uniform(0, 1, self.dry_samples_per_map) * dry_filter.item()).astype(int)
-                wet_filter[torch.where(~wet_filter)[0]][random_idxs] = True
+    def find_local_indices(self, event_id, idxs):
+        tile_indices = []
+        for idx in idxs:
+            if event_id in self.event_start_id_map:
+                start_idx = self.event_start_id_map[event_id]
+                # Calculate local index within this event
+                local_idx = idx - start_idx
+                # Calculate which map/timestep this index belongs to
+                map_idx = local_idx // self.batches_per_map
+                # Calculate which batch within the map this index belongs to
+                batch_idx = local_idx % self.batches_per_map
                 
-            # Get the corresponding DEM tile
-            images = images[wet_filter]
-            dem_images = torch.from_numpy(self.shaped_dem[batch_idx * self.batch_size: (batch_idx + 1) * self.batch_size, :, :].copy())\
-                .float().to(self.device).unsqueeze(1)
-            dem_images = dem_images[wet_filter]
-            
-            input_filled =  torch.from_numpy(self.input_temp[batch_idx * self.batch_size: (batch_idx + 1) * self.batch_size, :, :].copy())\
-                .float().to(self.device).unsqueeze(1)
-            input_filled = input_filled[wet_filter]
-            
-            # Fill the input with the DEM values
-            input_filled[input_filled == 1] = images[input_filled == 1]
-            return torch.cat((input_filled, dem_images), dim=1), images
+                # Make sure the indices are valid for this event
+                maps_in_event = self.get_maps_per_event(event_id)
+                if 0 <= map_idx < maps_in_event:
+                    tile_indices.append((map_idx, batch_idx))
+        return tile_indices
 
-    def get_timestep_index(self, filepath):
-        filename = os.path.basename(filepath)
-        parts = filename.split('-')
-        if len(parts) < 2:
-            return 0
-        timestep_part = parts[1].split('.')[0]
-        return int(timestep_part)
+    def find_event_id(self, idxs):
+        event_indices = {}
+        for idx in idxs:
+            for event_id in self.all_event_ids:
+                start_idx = self.event_start_id_map[event_id]
+                end_idx = start_idx + self.get_maps_per_event(event_id) * self.batches_per_map - 1
+                if start_idx <= idx <= end_idx:
+                    if event_id not in event_indices:
+                        event_indices[event_id] = []
+                    event_indices[event_id].append(idx)
+                    break
+        return event_indices
         
-    def reconstruction_init(self):
-        logger.info("Initializing reconstruction")
-        with torch.no_grad():
-            self.rl_map_filled = torch.from_numpy(self.rl_map.copy()).float().to(self.device)
-        self.output_maps_list = []
-        self.return_temp_list = []
-        self.filter_list = []
-        self.layers_seperation_idxs = []
-        self.map_origins = []
-        self.layer_sizes = []
-        self.back_trans_funcs = []
-        num_of_nodes_per_axes = round(self.map_size/self.cross_tile_dist_by_cell)
-        start_idx = 0  
-        with torch.no_grad():
-            for r_i in range(num_of_nodes_per_axes):
-                c_i = r_i
-                reshaping_func, filter_arr, ax0_n, ax1_n, map_origin = \
-                    self.build_tiling_func(r_i * self.cross_tile_dist_by_cell, 
-                                           c_i * self.cross_tile_dist_by_cell, development_mode=True)
-                #Number of unique tiles with at least one representative location
-                self.layers_seperation_idxs.append((start_idx, start_idx + np.sum(filter_arr))) 
-                start_idx = self.layers_seperation_idxs[-1][1]
-                ouput_map = np.zeros(self.dem_map.size())
-                self.output_maps_list.append(torch.from_numpy(ouput_map).float().to(self.device))
-                self.return_temp_list.append(torch.from_numpy(reshaping_func(ouput_map)).float().to(self.device))
-                self.filter_list.append(torch.from_numpy(filter_arr).bool().to(self.device))
-                self.map_origins.append(map_origin)
-                self.layer_sizes.append((ax0_n*self.map_size, ax1_n*self.map_size))
-                self.back_trans_funcs.append(self.build_back_func_lambda(ax1_n))
+    def get_batch(self, idxs):
+        event_indices_map = self.find_event_id(idxs)
+        all_inputs = []
+        all_outputs = []
+        for event_id, idx_list in event_indices_map.items():
+            local_indices = self.find_local_indices(event_id, idx_list)
+            for t_idx, batch_idx in local_indices:
+                #Use preloaded tiles instead of loading from file
+                if t_idx in self.preloaded_tiles[event_id]:
+                    images = self.preloaded_tiles[event_id][t_idx]
+                    images = images[batch_idx * self.batch_size: (batch_idx + 1) * self.batch_size, :, :].unsqueeze(1)
+                else:
+                    logger.warning(f"Preloaded tiles not available for event {event_id}, loading from file")
+                    exit(1)
                 
-            # Check if the reconstruction output covers the entire map
-            temp_tensor = torch.ones(self.input_temp.shape).float().to(self.device)
-            self.lyr_num_map = self.reconstruct_full_map_return_and_sum(temp_tensor)
-            gdal_writetiff(self.lyr_num_map.detach().cpu().numpy(), self.area_check_file, ras_temp=self.dem_asc_file)
+                # Identify wet and dry tiles and prevent data imbalance
+                wet_filter = torch.sum(images, dim=(1, 2, 3)) != 0
+                dry_filter = torch.sum(~wet_filter)
+                
+                # If there are enough dry tiles, randomly select some dry tiles
+                if dry_filter.item() >= self.dry_samples_per_map * 4:
+                    random_idxs = (np.random.uniform(0, 1, self.dry_samples_per_map) * dry_filter.item()).astype(int)
+                    wet_filter[torch.where(~wet_filter)[0][random_idxs]] = True
+                
+                # Filter the relevant tiles
+                # Get the corresponding DEM tiles - use GPU version if available
+                filtered_images = images[wet_filter]
+                dem_images = self.shaped_dem_gpu[batch_idx * self.batch_size: 
+                                                  (batch_idx + 1) * self.batch_size, :, :].unsqueeze(1)
+
+                dem_images = dem_images[wet_filter]
+                input_filled = self.input_temp_gpu[batch_idx * self.batch_size: 
+                                                    (batch_idx + 1) * self.batch_size, :, :].unsqueeze(1)
+
+                input_filled = input_filled[wet_filter]
+                input_filled[input_filled == 1] = filtered_images[input_filled == 1]
+                
+                #Add to batch collections
+                all_inputs.append(torch.cat((input_filled, dem_images), dim=1))
+                all_outputs.append(filtered_images)
+        
+        #Concatenate all batches from different events
+        if all_inputs and all_outputs:
+            return torch.cat(all_inputs, dim=0), torch.cat(all_outputs, dim=0)
+        else:
+            logger.error("No valid batches collected")
+            return None, None
+                
+    def preload_inundation_maps(self):
+        logger.info("Preloading inundation maps")
+        inundation_files = glob.glob(f"{self.simulation_dir}/Run*-*.wd")
+        inundation_files.sort()
+        inundation_files = inundation_files[8:]
+        
+        # Preload inundation maps for all events
+        self.preloaded_tiles = {}
+        for inundation_file in inundation_files:
+            # Extract event_id and timestep
+            filename = os.path.basename(inundation_file)
+            parts = filename.split('-')
+            event_id = int(parts[0].replace("Run", ""))
+            t_idx = int(parts[1].split('.')[0])
             
-            # Add 1 to area not covered by the reconstruction
-            self.lyr_num_map[self.lyr_num_map == 0] = 1
-               
-            ext_mask = gdal_asarray(self.possible_inun_file)
-            ext_mask = (~np.isnan(ext_mask)).astype(int)
-         
-            cond = np.sum((ext_mask==1) & (self.lyr_num_map.detach().cpu().numpy()==0))==0
-            logger.info("Reconstruction output covers the entire map: " + str(cond))
+            # Process inundation map and convert to tiles
+            processed_map = self.process_inundation_file(inundation_file)
+            processed_tiles = self.tiles_prep_func_gpu(processed_map)
+            
+            # Store processed tiles by event_id and timestep
+            if event_id not in self.preloaded_tiles:
+                self.preloaded_tiles[event_id] = {}
+            self.preloaded_tiles[event_id][t_idx] = processed_tiles
+            
+        logger.info(f"Preloaded and processed inundation maps for {len(self.preloaded_tiles)} events")
         return 0
-
-    def reconstruct_full_map_return_and_sum(self, x):
-        for lyr_i in range(len(self.layers_seperation_idxs)-1):
-            start_idx, end_idx = self.layers_seperation_idxs[lyr_i]
-            self.return_temp_list[lyr_i][self.filter_list[lyr_i]] = x[start_idx:end_idx].squeeze(1) # remove axis with size 1
-            row_size, col_size = self.layer_sizes[lyr_i]
-            row_origin, col_origin = self.map_origins[lyr_i]
-            self.output_maps_list[lyr_i][row_origin:row_origin + row_size, col_origin:col_origin + col_size] = \
-                self.back_trans_funcs[lyr_i](self.return_temp_list[lyr_i])   
-        # output_sum = torch.sum(torch.stack(self.output_maps_list), dim=0)
-        output_sum = self.output_maps_list[0]
-        return output_sum
-    
-    def reconstruct_full_map(self, x):
-        with torch.no_grad():
-            # output_final = torch.div(self.reconstruct_full_map_return_and_sum(x), self.lyr_num_map)
-            output_final = self.reconstruct_full_map_return_and_sum(x)
-        return output_final
-
-    def build_back_func_lambda(self, ax1_n):
-        def back_func(x):
-            x = x.reshape(-1,ax1_n, self.map_size, self.map_size)
-            x = x.swapaxes(0, 1)
-            x = x.reshape(ax1_n,-1, self.map_size)
-            x = x.swapaxes(0, 1)
-            x = x.reshape(-1, ax1_n * self.map_size)
-            return x
-        return lambda x: back_func(x)

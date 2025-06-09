@@ -3,7 +3,7 @@ import numpy as np
 import os
 import torch
 from sys import platform
-from modules.model_runner.ussr_1dcnn.spatial_reduction_module.gdal_lib import gdal_asarray
+from modules.models.usrr_1dcnn.lib.gdal_lib import gdal_asarray
 
 
 def get_tf_event_names(event_log):

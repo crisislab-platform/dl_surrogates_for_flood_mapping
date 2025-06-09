@@ -1,6 +1,6 @@
 import numpy as np
 
-from modules.models.usrr_1dcnn.spatial_reduction_module.gdal_lib import *
+from modules.models.usrr_1dcnn.lib.gdal_lib import *
 import os
 import scipy.spatial.distance as dist
 import scipy.ndimage as ndimage

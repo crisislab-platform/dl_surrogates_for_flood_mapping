@@ -121,11 +121,7 @@ def hyperparam_analysis(model):
         os.makedirs(output_dir)
     
     tuning_metrics_summary_file = os.path.join(output_dir, "tuning_metrics_summary.csv")
-    if os.path.exists(tuning_metrics_summary_file):
-        tuning_metrics_summary = pd.read_csv(tuning_metrics_summary_file)
-    
-    else:
-        tuning_metrics_summary = pd.DataFrame(columns=['hyperparameters', 'average_val_loss'])
+    tuning_metrics_summary = pd.DataFrame(columns=['hyper_param_id', 'hyperparameters', 'average_val_loss', 'average_convergence_epoch'])
         
     tuning_metrics = pd.read_csv(os.path.join(RUN_DIR, model, "tuning_metrics.csv"))
     hyperparams = tuning_metrics['hyperparameters'].unique()

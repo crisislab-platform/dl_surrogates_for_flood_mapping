@@ -80,6 +80,7 @@ class PICNN1DModelWrapper(ModelWrapper):
         self.features = self.lag * 3
         self.outputs = 581067
         self.validation_event = self.config.fold  + 1
+        self.physics_weight = self.config.args.get('physics_weight', 0.5)
         self.tuning_mode = config.args.get('tuning_mode', True)
     
     def create_dataset(self):
@@ -93,9 +94,9 @@ class PICNN1DModelWrapper(ModelWrapper):
         try:
             self.create_dataset()
             self.model = PICNN1DModel(self.steps, self.features, self.outputs).to(self.device)
-            self.loss_fn = self.loss_fn_def
-            self.val_loss_fn = nn.MSELoss()
-            self.optimizer = optim.Adam(self.model.parameters(), lr=self.config.learning_rate)
+            self.loss_fn = nn.MSELoss()
+            self.physics_loss_fn = self.loss_fn_def
+            self.optimizer = optim.Adam(self.model.parameters(), lr=self.config.learning_rate, weight_decay=1e-4)
             return True
         
         except Exception as e:
@@ -112,12 +113,9 @@ class PICNN1DModelWrapper(ModelWrapper):
             "val_loss": [],
             "train_time": None
         }
-
         start_time = time.time()
         best_val_loss = float("inf")
         epochs_no_improvement = 0
-        best_model_state = None
-        best_optimizer_state = None
         best_epoch = 0
         
         for epoch in range(self.config.epochs):
@@ -126,35 +124,17 @@ class PICNN1DModelWrapper(ModelWrapper):
             self.model.train()
             for idx, t_indices in enumerate(self.data_manager.train_idx):
                 self.optimizer.zero_grad()
-                xt, yt, yt_plus1, bct, bct_plus1  = self.data_manager.get_batch(t_indices)
-                
-                if xt is None or yt is None:
-                    logger.warning(f"Error getting batch {idx}, skipping")
-                    continue
-                
-                input_in_batch = xt.to(device)
-                output_in_batch = yt.to(device)
-                del xt 
-                del yt
-                
-                bct_tensor = bct.to(device)
-                bct_plus1_tensor = bct_plus1.to(device)
-                yt_plus1_tensor = yt_plus1.to(device)
-                
-                del yt_plus1
-                del bct
-                del bct_plus1
-                
-                pred = self.model(input_in_batch.float())
-                output_in_batch = output_in_batch.float()
-                batch_loss = self.loss_fn(pred, output_in_batch, yt_plus1_tensor, bct_tensor, bct_plus1_tensor)
+                xt, yt, yt_minus1, yt_plus1, bct, bct_plus1  = self.data_manager.get_batch(t_indices)
+                pred = self.model(xt)
+                batch_loss = self.physics_loss_fn(pred, yt, yt_minus1, yt_plus1, bct, bct_plus1)
                 
                 del pred
-                del output_in_batch
-                del bct_tensor
-                del bct_plus1_tensor
-                del yt_plus1_tensor
-                del input_in_batch
+                del yt_plus1
+                del yt_minus1
+                del bct
+                del bct_plus1
+                del yt
+                del xt
                 
                 epoch_loss += batch_loss.item()
                 valid_batches += 1  # Increment valid batch counter
@@ -177,30 +157,18 @@ class PICNN1DModelWrapper(ModelWrapper):
                     if xt is None or yt is None:
                         logger.warning(f"Error getting validation batch {idx}, skipping")
                         continue
-                    input_in_batch = xt.to(device)
-                    output_in_batch = yt.to(device)
-                    
-                    del xt
-                    del yt
-                    
-                    bct_tensor = bct.to(device)
-                    bct_plus1_tensor = bct_plus1.to(device)
-                    yt_plus1_tensor = yt_plus1.to(device)
-                    
-                    del yt_plus1
-                    del bct
-                    del bct_plus1
 
                     with torch.no_grad():
-                        pred_val = self.model(input_in_batch)
+                        pred_val = self.model(xt)
                         # If pred < 0.2 then set to 0
                         pred_val = torch.where(pred_val < 0.2, torch.tensor(0.0).to(device), pred_val)
-                        batch_val_loss = self.val_loss_fn(pred_val, output_in_batch).item()
+                        batch_val_loss = self.loss_fn(pred_val, yt).item()
                         del pred_val
-                        del output_in_batch
-                        del bct_tensor
-                        del bct_plus1_tensor
-                        del yt_plus1_tensor
+                        del yt
+                        del yt_plus1
+                        del bct
+                        del bct_plus1
+                        del xt
                         
                         val_loss += batch_val_loss
                         valid_val_batches += 1  # Increment valid validation batch counter
@@ -216,15 +184,14 @@ class PICNN1DModelWrapper(ModelWrapper):
                     best_val_loss = epoch_val_loss
                     epochs_no_improvement = 0
                     best_epoch = epoch
-                    if not tuning_mode:
-                        best_model_state = self.model.state_dict().copy()
-                        best_optimizer_state = self.optimizer.state_dict().copy()
                 else:
                     epochs_no_improvement += 1
                     if epochs_no_improvement >= self.config.patience:
                         logger.info(f"Early stopping at epoch {epoch}")
                         logger.info(f"Best validation loss: {best_val_loss} at epoch {best_epoch}")
                         break
+            else:
+                logger.info(f"Epoch {epoch} loss: {epoch_loss}")
     
         torch.cuda.empty_cache()   
         end_time = time.time()
@@ -245,31 +212,26 @@ class PICNN1DModelWrapper(ModelWrapper):
             "epochs": self.config.epochs,
             "patience": self.config.patience,
             "lag": self.config.lag,
-            "horizon": self.config.horizon
+            "horizon": self.config.horizon,
+            "physics_weight": self.physics_weight
         }
         history["hyperparameters"] = json.dumps(hyperparameters)
         
         model_file = None
         if not tuning_mode:
-            if best_model_state is not None:
-                logger.info("Loading best model state")
-                self.model.load_state_dict(best_model_state)
-                logger.info("Saving model with best validation loss")
-                model_file = self.save_model_checkpoint(self.config.run_id, run_dir, best_model_state, best_optimizer_state, self.config)
+            logger.info("Loading best model state")
+            model_state = self.model.state_dict().copy()
+            logger.info("Saving model with best validation loss")
+            model_file = self.save_model_checkpoint(self.config.run_id, run_dir, model_state, self.config)
         return history, train_time, model_file
         
     def test_model(self):
         return super().test_model()
         
-    def loss_fn_def(self, y_hat_t, y_t, y_t_plus_1=None, bc_t=None, bc_t_plus_1=None):
-        # Standard MSE loss - this already handles batch properly
-        mse_loss = nn.MSELoss()(y_hat_t, y_t)
-        
-        if y_t_plus_1 is None or bc_t is None or bc_t_plus_1 is None:
+    def loss_fn_def(self, y_hat_t, y_t, yt_minus1, yt_plus1=None, bct=None, bct_plus1=None):
+        mse_loss = self.loss_fn(y_hat_t, y_t)
+        if yt_plus1 is None or bct is None or bct_plus1 is None:
             return mse_loss
-
-        # Physics weight to control contribution
-        physics_weight = 1  # Small weight to start with
         
         delta_x = 5
         delta_y = 5
@@ -279,25 +241,25 @@ class PICNN1DModelWrapper(ModelWrapper):
         area = delta_x * delta_y * n_x * n_y
         
         # VECTORIZED: Calculate volumes across entire batch at once
-        v_t = delta_x * delta_y * torch.sum(y_t, dim=1)  # [batch_size]
-        v_t_plus_1 = delta_x * delta_y * torch.sum(y_t_plus_1, dim=1)  # [batch_size]
+        vt_minus1 = delta_x * delta_y * torch.sum(yt_minus1, dim=1)  # [batch_size]
+        vt_plus1 = delta_x * delta_y * torch.sum(yt_plus1, dim=1)  # [batch_size]
         v_hat_t = delta_x * delta_y * torch.sum(y_hat_t, dim=1)  # [batch_size]
         
         # VECTORIZED: Sum boundary conditions for each sample
-        bc_t_sum = torch.sum(bc_t, dim=1)  # [batch_size]
-        bc_t_plus_1_sum = torch.sum(bc_t_plus_1, dim=1)  # [batch_size]
+        bc_t_sum = torch.sum(bct, dim=1)  # [batch_size]
+        bc_t_plus_1_sum = torch.sum(bct_plus1, dim=1)  # [batch_size]
         
         # VECTORIZED: Physics calculations on entire batch at once
-        relu_arg1 = v_hat_t - v_t - delta_t_val * bc_t_sum
+        relu_arg1 = v_hat_t - vt_minus1 - delta_t_val * bc_t_sum
         term2 = ((torch.relu(relu_arg1)) / area)**2
         
-        relu_arg2 = v_t_plus_1 - v_hat_t - delta_t_val * bc_t_plus_1_sum
+        relu_arg2 = vt_plus1 - v_hat_t - delta_t_val * bc_t_plus_1_sum
         term3 = ((torch.relu(relu_arg2)) / area)**2
         
         # Mean across batch
         physics_loss = torch.mean(term2 + term3)
         
         # Final loss
-        total_loss = mse_loss + physics_weight * physics_loss
+        total_loss = mse_loss + 0.5 * physics_loss
         
         return total_loss

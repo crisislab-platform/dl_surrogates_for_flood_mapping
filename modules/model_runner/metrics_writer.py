@@ -5,6 +5,7 @@ from modules.models.model_wrapper import ModelConfig
 import logging
 import pandas as pd
 import json
+from modules.lib.constants import USRR_1DCNN_V1, USRR_UNET_V1, USRR_CNN1D_COMBINED
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("MetricsWriter")
@@ -33,7 +34,10 @@ def save_training_metrics(run_id, history, train_time, model, model_config: Mode
         save_csv(metrics, metrics_file)
         return
     
-    metrics_file = f'{RUN_DIR}/final_training_metrics.csv'  
+    if model_config.model_name == USRR_1DCNN_V1 or model_config.model_name == USRR_UNET_V1:
+        metrics_file = os.path.join(RUN_DIR, model_config.model_name, 'final_training_metrics.csv')
+    else:
+        metrics_file = f'{RUN_DIR}/final_training_metrics.csv'  
     memory_usage = str(history.get('memory', None))
     nurons = 0
     trainable_params = 0
@@ -58,7 +62,10 @@ def save_training_metrics(run_id, history, train_time, model, model_config: Mode
     
      
 def save_prediction_metrics(run_id, model_name, metrics):
-    metrics_file = f'{RUN_DIR}/final_performance_metrics.csv'
+    if model_name == USRR_1DCNN_V1 or model_name == USRR_UNET_V1:
+        metrics_file = os.path.join(RUN_DIR, model_name, 'final_performance_metrics.csv')
+    else:
+        metrics_file = f'{RUN_DIR}/final_performance_metrics.csv'
     try:
         metrics = {
             'run_id': run_id,
@@ -76,26 +83,38 @@ def save_prediction_metrics(run_id, model_name, metrics):
         logger.error(f"Error updating prediction metrics: {e}")
         
 def save_csv(metrics, metrics_file):
+    import filelock
+    
+    # Create lock file path
+    lock_file = f"{metrics_file}.lock"
+    
     # Create a new DataFrame with the metrics
     new_row = pd.DataFrame([metrics])
-    file_exists = os.path.isfile(metrics_file)
-    if file_exists:
-        try:
-            # Read existing DataFrame
-            df = pd.read_csv(metrics_file)
-            # Append new row to existing DataFrame
-            df = pd.concat([df, new_row], ignore_index=True)
-        except Exception as e:
-            logger.error(f"Error reading existing metrics file: {e}")
-            # If there's an error reading the file, create a new DataFrame
-            df = new_row
-    else:
-        # If file doesn't exist, use the new DataFrame
-        df = new_row
     
-    # Write the combined DataFrame back to the file
-    try:
-        df.to_csv(metrics_file, index=False)
-        logger.info(f"Metrics written to {metrics_file}")
-    except Exception as e:
-        logger.error(f"Error writing metrics to file: {e}")
+    # Ensure lock file directory exists
+    os.makedirs(os.path.dirname(lock_file), exist_ok=True)
+    # Use a file lock to prevent race conditions
+    with filelock.FileLock(lock_file, timeout=60):
+        file_exists = os.path.isfile(metrics_file)
+        if file_exists:
+            try:
+                # Read existing DataFrame
+                df = pd.read_csv(metrics_file)
+                # Append new row to existing DataFrame
+                df = pd.concat([df, new_row], ignore_index=True)
+            except Exception as e:
+                logger.error(f"Error reading existing metrics file: {e}")
+                # If there's an error reading the file, create a new DataFrame
+                df = new_row
+        else:
+            # If file doesn't exist, use the new DataFrame
+            df = new_row
+        
+        # Write the combined DataFrame back to the file
+        try:
+            # Ensure directory exists
+            os.makedirs(os.path.dirname(metrics_file), exist_ok=True)
+            df.to_csv(metrics_file, index=False)
+            logger.info(f"Metrics written to {metrics_file}")
+        except Exception as e:
+            logger.error(f"Error writing metrics to file: {e}")

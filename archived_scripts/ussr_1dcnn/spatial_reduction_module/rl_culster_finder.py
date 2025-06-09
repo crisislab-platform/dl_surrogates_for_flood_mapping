@@ -2,7 +2,7 @@ import numpy as np
 from sklearn.cluster import KMeans
 import os
 import matplotlib.pyplot as plt
-from modules.models.usrr_1dcnn.spatial_reduction_module.gdal_lib import gdal_asarray, gdal_transform, rc2coords, read_shp_point
+from modules.models.usrr_1dcnn.lib.gdal_lib import gdal_asarray, gdal_transform, rc2coords, read_shp_point
 import logging
 
 class RLClusterFinder:

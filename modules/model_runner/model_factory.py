@@ -1,7 +1,6 @@
 import logging
 # from modules.models.lstm.lstm import SimpleLSTMModel
 from modules.models.cnn1d.cnn1d import CNN1DSAModelWrapper
-from modules.models.lstm_srr.lstm_srr import LSTMSRRModel
 from modules.models.usrr_1dcnn.ussr1dcnn import USSR1DCNNModelWrapper
 from modules.models.usrr_1dcnn.unet import UNetModelWrapper
 from modules.models.usrr_1dcnn.cnn1d import CNN1DModelWrapper
@@ -61,6 +60,8 @@ def create_rl1dcnn_model(config, args):
     rl_group = args.rl_group
     input_time_len_h = args.input_time_len_h
     tuning_mode = args.tuning_mode
+    convo_kernel = args.usrr_conv_kernel
+    pool_kernel = args.usrr_pool_kernel
     if not sampling_dist or not n_clusters or not rl_group:
         logger.error("Missing required parameters for CNN1D model")
         raise ValueError("Missing required parameters for CNN1D model")
@@ -70,7 +71,9 @@ def create_rl1dcnn_model(config, args):
         'sampling_dist': sampling_dist,
         'rl_group': rl_group,
         'input_time_len_h': input_time_len_h,
-        'tuning_mode': tuning_mode
+        'tuning_mode': tuning_mode,
+        'conv_kernel': convo_kernel,
+        'pool_kernel': pool_kernel
     }
     return CNN1DModelWrapper(config)
 
@@ -85,8 +88,7 @@ def create_combined_model(config, args):
 
 def create_pi1dcnn_model(config, args):
     config.args = {
-        'sampling_dist': args.sampling_dist,
-        'n_clusters': args.n_clusters, 
+        'physics_weight': args.physics_weight,
         'tuning_mode': args.tuning_mode
     }
     

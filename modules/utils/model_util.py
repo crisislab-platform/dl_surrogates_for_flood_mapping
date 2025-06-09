@@ -4,7 +4,7 @@ import logging
 import torch
 import rasterio
 from typing import Dict
-from modules.lib.constants import SIMULATION_DATA_DIR
+from modules.lib.constants import SIMULATION_DATA_DIR, RUN_DIR
 
 # Assuming logger is from the logging module
 logger = logging.getLogger(__name__)
@@ -106,10 +106,10 @@ def profiler_analysis(key_averages):
             "error": str(e)
         }
 
-def save_prediction_map(prediction_map, output_dir, idx):
+def save_prediction_map(prediction_map, output_dir, idx, model_name):
     os.makedirs(output_dir, exist_ok=True)
     logger.info(f"Saving prediction maps to {output_dir}")
-    
+
     # Get reference raster for metadata
     ref_file = os.path.join(SIMULATION_DATA_DIR, "Run1-0000.wd")
     with rasterio.open(ref_file) as src:
@@ -119,6 +119,7 @@ def save_prediction_map(prediction_map, output_dir, idx):
         transform = src.transform
         crs = src.crs
     
+        
     logger.info(f'Prediction shape: {prediction_map.shape}, Reshaping to dimensions: {height}x{width}')
     pred_reshaped = prediction_map.reshape(height, width)
     

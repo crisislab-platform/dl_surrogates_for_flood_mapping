@@ -1,7 +1,7 @@
 from modules.lib.constants import CARLISLE_DATA_DIR, OUTPUT_DIR, SIMULATION_DATA_DIR
-from modules.models.usrr_1dcnn.spatial_reduction_module.base_functions import *
-from modules.models.usrr_1dcnn.spatial_reduction_module.gdal_lib import gdal_asarray, gdal_transform, rc2coords
-from modules.models.usrr_1dcnn.spatial_reduction_module.rl_culster_finder import RLClusterFinder
+from modules.models.usrr_1dcnn.lib.base_functions import *
+from modules.models.usrr_1dcnn.lib.gdal_lib import gdal_asarray, gdal_transform, rc2coords
+from modules.models.usrr_1dcnn.reduction.rl_culster_finder import RLClusterFinder
 from modules.utils.path_util import ensure_dir
 
 import logging
