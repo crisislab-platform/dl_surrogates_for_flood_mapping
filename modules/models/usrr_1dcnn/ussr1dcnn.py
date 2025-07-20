@@ -25,7 +25,7 @@ class USSR1DCNNModelWrapper(ModelWrapper):
         return {}, 0, None
 
     def test_model(self):
-        metrics = reconstruct_and_test(self.sampling_dist, self.n_clusters, self.config.run_dir)
+        metrics = reconstruct_and_test(self.sampling_dist, self.n_clusters, self.config.run_dir, self.config.batch_size)
         return metrics
         
 

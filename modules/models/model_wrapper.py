@@ -26,6 +26,7 @@ class ModelConfig:
     horizon: int
     batch_size: int
     learning_rate: float
+    dropout: float = 0.2
     epochs: int = 10
     patience: int = 2
     run_id: str = None
@@ -84,12 +85,9 @@ class ModelWrapper:
             valid_batches = 0
             self.model.train()
             
-            # Verify model is on the correct device
-            logger.info(f"Model device check: {next(self.model.parameters()).device}")
-            
             for idx, t_indices in enumerate(self.data_manager.train_idx):
                 self.optimizer.zero_grad()
-                input_batch, output_batch = self.data_manager.get_batch(t_indices)
+                input_batch, output_batch = self.data_manager.get_batch(t_indices, subset="train")
                 if input_batch is None or output_batch is None:
                     logger.warning(f"Error getting batch {idx}, skipping")
                     continue
@@ -101,7 +99,8 @@ class ModelWrapper:
                     logger.info(f"Output batch device: {output_batch.device}")
                     logger.info(f"Output batch shape: {output_batch.shape}")
                 
-                pred = self.model(input_batch.float())
+                pred = self.model(input_batch)
+                pred = pred.squeeze(1)  # Remove the channel dimension if present
                 batch_loss = self.loss_fn(pred, output_batch)
                 epoch_loss += batch_loss.item()
                 valid_batches += 1  # Increment valid batch counter
@@ -119,14 +118,14 @@ class ModelWrapper:
                 valid_val_batches = 0
                 self.model.eval()
                 for idx, t_indices in enumerate(self.data_manager.validation_idx):
-                    input_batch, output_batch = self.data_manager.get_batch(t_indices)
+                    input_batch, output_batch = self.data_manager.get_batch(t_indices, subset="val")
                     if input_batch is None or output_batch is None:
                         logger.warning(f"Error getting validation batch {idx}, skipping")
                         continue
 
                     with torch.no_grad():
                         pred_val = self.model(input_batch)
-                        # If pred < 0.2 then set to 0
+                        # If pred < 0.3 then set to 0
                         pred_val = torch.where(pred_val < 0.3, torch.tensor(0.0).to(device), pred_val)
                         batch_val_loss = self.loss_fn(pred_val, output_batch).item()
                         val_loss += batch_val_loss
@@ -162,7 +161,6 @@ class ModelWrapper:
         hyperparameters = self.create_hyperparameters_dict()
         history["hyperparameters"] = json.dumps(hyperparameters)
                 
-                
         end_time = time.time()
         train_time = end_time - start_time
         logger.info(f"Training time: {train_time}")
@@ -171,6 +169,7 @@ class ModelWrapper:
         # Save the model state
         model_file = None
         if self.config.save_model:
+            logger.info(f"Saving model state to {run_dir}")
             model_state = self.model.state_dict().copy()
             model_file = self.save_model_checkpoint(self.config.run_id, run_dir, model_state, self.config)
         return history, train_time, model_file
@@ -180,7 +179,7 @@ class ModelWrapper:
             logger.info("Tuning mode is enabled, skipping profiling")
             return self.train_model(run_dir, tuning_mode)
 
-        if self.config.model_name == USRR_UNET_V1:
+        if self.config.model_name == USRR_UNET_V1 or self.config.model_name == USRR_1DCNN_V1:
             history, train_time, model_file = self.train_model(run_dir, tuning_mode)
             history['memory'] = ""
             logger.info("Training completed, no profiling for UNet model")
@@ -190,11 +189,11 @@ class ModelWrapper:
             logger.info("Starting model training with memory profiling")
             history, train_time, model_file = self.train_model(run_dir, tuning_mode)
 
-        logger.info("Training completed, profiling memory usage")
-        key_averages = prof.key_averages()
-        analysis_results = profiler_analysis(key_averages)
-        logger.info(f"Memory profiling results: {key_averages.table(sort_by='cuda_memory_usage', row_limit=10)}")
-        logger.info(f"Profiler analysis results: {analysis_results}")
+        # logger.info("Training completed, profiling memory usage")
+        # key_averages = prof.key_averages()
+        # analysis_results = profiler_analysis(key_averages)
+        # logger.info(f"Memory profiling results: {key_averages.table(sort_by='cuda_memory_usage', row_limit=10)}")
+        # logger.info(f"Profiler analysis results: {analysis_results}")
         return history, train_time, model_file
     
     def create_hyperparameters_dict(self):
@@ -216,13 +215,12 @@ class ModelWrapper:
         with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], profile_memory=True, on_trace_ready=torch.profiler.tensorboard_trace_handler(self.config.run_dir)) as prof:
             with torch.no_grad():
                 input_data = self.data_manager.test_input
-                output_data = self.data_manager.test_output
+                ref_out = self.data_manager.test_output
                 start_time = time.time()
                 pred = self.model(input_data)
-                # If pred < 0.2 then set to 0
+                # If pred < 0.3 then set to 0
                 pred = torch.where(pred < 0.3, torch.tensor(0.0).to(self.device), pred)
                 end_time = time.time()
-                ref_out = output_data
                 loss = self.loss_fn(pred, ref_out)
                 mse = loss.item()
                 rmse = np.sqrt(mse)
@@ -343,13 +341,19 @@ class ModelWrapper:
         observed_mean = torch.mean(observed)
         numerator = torch.sum((observed - predicted) ** 2)
         denominator = torch.sum((observed - observed_mean) ** 2)
+        if denominator.item() == 0.0:
+            if numerator.item() == 0.0:
+                return 1
+            else:
+                logger.warning("Denominator is zero, returning NSE as 0")
+                return 0
         nse = 1 - (numerator / denominator)
         nse = nse.item()
         return nse 
     
     def mRMSE_fn(self, pred, ref_out):
         # Define threshold for wet cells (typically > 0.01m is considered wet)
-        threshold = 0.02
+        threshold = 0.3
         
         # Create binary masks
         pred_wet = (pred > threshold).float()
@@ -360,7 +364,6 @@ class ModelWrapper:
         ref_wet_values = ref_out * ref_wet
         wet_loss = self.loss_fn(pred_wet_values, ref_wet_values)
         rmse_wet = np.sqrt(wet_loss.item())
-        logger.info(f"Wet cells RMSE: {rmse_wet}")
         return rmse_wet
     
     def calculate_flops(self):

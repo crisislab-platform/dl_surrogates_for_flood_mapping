@@ -7,8 +7,8 @@ echo "============================================"
 
 # Define parameter arrays
 GPU_ID=0
-SAMPLING_DISTS=(20 30 50 80 100)
-N_CLUSTERS=(50 100 200)
+SAMPLING_DISTS=(30)
+N_CLUSTERS=(200)
 RANDOM_STATE=42
 N_INIT=10
 

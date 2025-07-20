@@ -1,6 +1,6 @@
 from modules.lib.constants import CARLISLE_DATA_DIR, OUTPUT_DIR, SIMULATION_DATA_DIR
 from modules.models.usrr_1dcnn.lib.base_functions import *
-from modules.models.usrr_1dcnn.lib.gdal_lib import gdal_asarray, gdal_transform, rc2coords
+from modules.models.usrr_1dcnn.lib.gdal_lib import gdal_asarray, gdal_transform, rc2coords, gdal_writeasc
 from modules.models.usrr_1dcnn.reduction.rl_culster_finder import RLClusterFinder
 from modules.utils.path_util import ensure_dir
 
@@ -8,6 +8,7 @@ import logging
 import numpy as np
 import pandas as pd
 import os
+import torch
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("Representaitve_Location_Finder")
@@ -19,9 +20,6 @@ class RepLocation:
         logger.info(f"Representative Location Finder initialized with work directory: {self.work_dir}")
         
     def spatial_sampling(self, run_id, dem_asc_file, max_inun_file, sampling_dist):
-        """ Block sampling of representative locations from the IWL map.
-            Suitable for cases containing multiple mainstreams and complex IWL conditions. 
-            Only includes blocks with inundation. """
         rl_coords_ls = []
         potential_inun_arr = gdal_asarray(max_inun_file)
         dem_arr = gdal_asarray(dem_asc_file)
@@ -110,25 +108,110 @@ class RepLocation:
         logger.info(f"Saved representative locations to CSV: {file_path}")
         return file_path
     
+    def spatial_sampling_new(self, run_id, dem_asc_file, max_inun_file, sampling_dist):
+        potential_inun_arr = torch.from_numpy(gdal_asarray(max_inun_file)).cuda()
+        dem_arr = torch.from_numpy(gdal_asarray(dem_asc_file)).cuda()
+        
+        inundation_mask = (potential_inun_arr > 0)
+        inundated_cells_count = inundation_mask.sum().item()
+        logger.info(f"Total inundated cells: {inundated_cells_count} out of {potential_inun_arr.shape[0] * potential_inun_arr.shape[1]}")
+        
+        pixel_width = 5
+        num_cell_per_sample = int(sampling_dist / pixel_width)
+        num_block_0 = (potential_inun_arr.shape[0] + num_cell_per_sample - 1) // num_cell_per_sample  # dir y (height)
+        num_block_1 = (potential_inun_arr.shape[1] + num_cell_per_sample - 1) // num_cell_per_sample  # dir x (width)
+        rl_tensor  = torch.zeros((potential_inun_arr.shape[0], potential_inun_arr.shape[1]), dtype=torch.float32)
+        
+        for i_0 in range(num_block_0):
+            start_0 = i_0 * num_cell_per_sample
+            end_0 = min(start_0 + num_cell_per_sample, potential_inun_arr.shape[0])
+            for i_1 in range(num_block_1):
+                start_1 = i_1 * num_cell_per_sample
+                end_1 = min(start_1 + num_cell_per_sample, potential_inun_arr.shape[1])
+                
+                inundation_block = inundation_mask[start_0:end_0, start_1:end_1]
+                if not torch.any(inundation_block):
+                    logger.info(f"Block {i_0}, {i_1} has no inundation - skipping")
+                    continue
+                
+    
+                curr_dem_block_arr = dem_arr[start_0:end_0, start_1:end_1]
+   
+                masked_dem = curr_dem_block_arr.clone()
+                masked_dem[~inundation_block] = float('inf')
+                argmin_dem = torch.argmin(masked_dem.view(-1)).item()
+                block_width = end_1 - start_1
+                ri = argmin_dem // block_width
+                ci = argmin_dem % block_width
+                rl_tensor[start_0 + ri, start_1 + ci] = 1
+                logger.info(f"Block {i_0}, {i_1} - Minimum DEM value at ({start_0 + ri}, {start_1 + ci})")
+        
+        # Save the rl_tensor as a .asc file
+        output_asc_file = f'{self.work_dir}/rl_{sampling_dist}.asc'
+        gdal_writeasc(output_asc_file, rl_tensor.cpu().numpy(), dem_asc_file)
+        self.visualise_points(output_asc_file, dem_asc_file, f'{self.work_dir}/rl_{sampling_dist}.png')
+        
+        return output_asc_file
+    
+    def visualise_points(self, rl_asc_file, dem_asc_file, output_file):
+        import matplotlib.pyplot as plt
+        from matplotlib.colors import Normalize
+        from matplotlib.cm import ScalarMappable
+        from matplotlib import colorbar
+        
+        rl_arr = gdal_asarray(rl_asc_file)
+    
+        # Load DEM data
+        dem_arr = gdal_asarray(dem_asc_file)
+        
+        # Create figure
+        plt.figure(figsize=(12, 10))
+        
+        # Plot DEM as background with terrain colormap
+        dem_plot = plt.imshow(dem_arr, cmap='terrain', alpha=0.8)
+        
+        # Create colorbar for DEM elevation
+        cbar = plt.colorbar(dem_plot)
+        cbar.set_label('Elevation (m)')
+        
+        # Find representative locations (where rl_arr is 1)
+        rl_points_y, rl_points_x = np.where(rl_arr == 1)
+        
+        # Plot representative locations as blue points
+        plt.scatter(rl_points_x, rl_points_y, c='blue', s=30, marker='o', 
+                   edgecolors='black', linewidths=0.5, label='Representative Locations')
+        
+        # Add legend
+        plt.legend(loc='upper right')
+        
+        # Add title and labels
+        plt.xlabel('X (Column)')
+        plt.ylabel('Y (Row)')
+        
+        plt.title('Representative Locations Overlayed on DEM')
+        plt.savefig(output_file)
+        plt.close()
+        logger.info(f"Representative locations visualized and saved to {output_file}")
+    
 def find_representative_locations_and_clusters(run_id, sampling_dist, n_clusters=10, random_state=42, n_init=10):
     work_dir = f"{OUTPUT_DIR}/rls"
     dem_asc_file = f"{SIMULATION_DATA_DIR}/Carlisle_5m.asc"
     simulation_dir = SIMULATION_DATA_DIR
-    possible_inun_file = f"{simulation_dir}/Run1-0145.wd"
+    max_inunundation_file = f"{simulation_dir}/Run3-0096.wd"
     run_meta_data_file = f"{work_dir}/run_meta_data.csv"
     
     rep_loc = RepLocation(work_dir)
-    rl_file_path = rep_loc.spatial_sampling(run_id, dem_asc_file, possible_inun_file, sampling_dist=sampling_dist)
+    rl_file_path = rep_loc.spatial_sampling_new(run_id, dem_asc_file, max_inunundation_file, sampling_dist=sampling_dist)
     
     # Create the cluster finder with GPU awareness
     
     cluster_finder = RLClusterFinder(work_dir, run_id, rl_file_path, sampling_dist, n_clusters=n_clusters,
-                                    random_state=random_state, n_init=n_init)
+                                    random_state=random_state, n_init=n_init, raster_temp=dem_asc_file)
 
     # Run clustering
-    cluster_finder.run_clustering()
+    cluster_finder.run_clustering_new()
     
-    # Save the meta data to csv file
+    # Save the meta data to csv files
     meta_data = {
         'run_id': run_id,
         'sampling_dist': sampling_dist,

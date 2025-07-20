@@ -8,7 +8,6 @@ import pandas as pd
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("USRRDataManager")
 
-
 class USRRDataManager(DataManager):
     def __init__(self):
         super().__init__()
@@ -17,8 +16,8 @@ class USRRDataManager(DataManager):
         # Function sequence to create reshaped maps(tiles) used for training
         self.reshaping_func_seq = []
         for r_i in range(num_of_subm_maps_per_axes):
-            self.reshaping_func_seq.append(self.build_tiling_func(r_i * self.cross_tile_dist,
-                                                                  r_i * self.cross_tile_dist))
+            self.reshaping_func_seq.append(self.build_tiling_func(r_i * self.cross_tile_dist, r_i * self.cross_tile_dist))
+            
     def prepare_input_template(self):
         logger.info("Preparing input template for U-Net model")
         rl_map_np, dem_map_np = self.get_representative_locations()
@@ -87,72 +86,73 @@ class USRRDataManager(DataManager):
     
     def process_inundation_file(self, inundation_file):
         inundation_map = gdal_asarray(inundation_file)
-        #check if there are any NaN values in the inundation map
-        if np.isnan(inundation_map).any():
-            logger.info(f"Setting NaN values in inundation map to 0")
-            inundation_map[np.isnan(inundation_map)] = 0
-        
-        #check if there are any negative values in the inundation map
-        if np.any(inundation_map < 0):
-            logger.info(f"Setting negative values in inundation map to 0")
-            inundation_map[inundation_map < 0] = 0
+        inundation_map[inundation_map < 0.3] = 0
         inundation_map = torch.from_numpy(inundation_map).float().to(self.device)
         return inundation_map
     
     def get_representative_locations(self):
-        rl_list = pd.read_csv(self.rep_loc_file_path)
-        logger.info(f"rep loc: {rl_list.iloc[0]}")
-        rl_list = rl_list[['x', 'y']].values
-        rl_list = [tuple(x) for x in rl_list]
-        
-        transform = gdal_transform(self.dem_asc_file)
+        rl_map = gdal_asarray(self.rep_loc_file_path)
         dem_map_np = gdal_asarray(self.dem_asc_file)
-
-        # Convert RL coordinates to row/col indices
-        self.rc_rl_points = [coords2rc(transform, rl) for rl in rl_list] 
-        transform = gdal_transform(self.dem_asc_file)
-        dem_map_np = gdal_asarray(self.dem_asc_file)
-        
-        # Convert RL coordinates to row/col indices
-        rc_rl_points = [coords2rc(transform, rl) for rl in  rl_list] 
-        rl_map_np = np.zeros(dem_map_np.shape)
-        for row, col in rc_rl_points:
-            rl_map_np[row, col] = 1
-        
-        logger.info(f"Loaded {len(rl_list)} representative locations ")
-        return rl_map_np, dem_map_np
+        return rl_map, dem_map_np
     
     def tiles_prep_func_gpu(self, x):
-        tiles_maps =  [tiling_func(x) for tiling_func in self.reshaping_func_seq]
-        tiles_maps = torch.cat(tiles_maps, dim=0)
-        return tiles_maps
+        with torch.no_grad():
+            tiles_maps =  [tiling_func(x) for tiling_func in self.reshaping_func_seq]
+            tiles_maps = torch.cat(tiles_maps, dim=0)
+            return tiles_maps
     
-    def build_tiling_func(self, cross_tile_size_r, cross_tile_size_c, development_mode=False):
-        
-        # Create a mask with maximum extent of the flood
-        flood_extent = gdal_asarray(self.possible_inun_file)
+    def get_padding_height_width(self):
+        # Calculate padding needed for height and width to be divisible by map_size
+        flood_extent = gdal_asarray(self.max_inundation_file)
         ext_mask = (~np.isnan(flood_extent)).astype(np.float32)
+        orig_height, orig_width = ext_mask.shape
+        pad_height = (self.map_size - (orig_height % self.map_size)) % self.map_size
+        pad_width = (self.map_size - (orig_width % self.map_size)) % self.map_size
+        return pad_height, pad_width, orig_height, orig_width, ext_mask
+    
+    def build_tiling_func(self, cross_tile_size_r, cross_tile_size_c, development_mode=True):
         
-        # Create a slicing function to create tiles based on an offset
-        slicing_func = lambda  x: x[3 + cross_tile_size_r:, 23 + cross_tile_size_c:]
-        new_shape = slicing_func(ext_mask).shape
-        ax0_n = new_shape[0] // self.map_size  # new number of tiles in row
-        ax1_n = new_shape[1] // self.map_size  # new number of tiles in column
-        logger.info(f"New shape after slicing: {new_shape}, maps: {ax0_n}x{ax1_n}")
+        pad_height, pad_width, orig_height, orig_width, ext_mask = self.get_padding_height_width()
+
+        # Create padding function
+        def padding_func(x):
+            is_tensor = torch.is_tensor(x)
+            if is_tensor:
+                x_np = x.cpu().numpy()
+            else:
+                x_np = x
+            padded = np.pad(x_np, ((0, pad_height), (0, pad_width)), mode='reflect')
+            sliced = padded[cross_tile_size_r:, cross_tile_size_c:]
+            if is_tensor:
+                return torch.from_numpy(sliced).to(x.device)
+            return sliced
+    
+        new_shape = padding_func(ext_mask).shape
+        ax0_n = new_shape[0] // self.map_size
+        ax1_n = new_shape[1] // self.map_size
+        logger.info(f"New shape after padding: {new_shape}, maps: {ax0_n}x{ax1_n}")
+        # # Create a slicing function to create tiles based on an offset
+        # # Calculate padding needed for height and width to be divisible by map_size
+        # slicing_func = lambda  x: x[3 + cross_tile_size_r:, 23 + cross_tile_size_c:]
+        # new_shape = slicing_func(ext_mask).shape
+        # ax0_n = new_shape[0] // self.map_size  # new number of tiles in row
+        # ax1_n = new_shape[1] // self.map_size  # new number of tiles in column
+        # logger.info(f"New shape after slicing: {new_shape}, maps: {ax0_n}x{ax1_n}")
         
         # Create a reshaping function to get the maps(tiles)         
         # Create a mask to filter out the tiles that do not contain any flood or representative locations
-        reshaping_func = lambda x: self.reshaping_func_def(slicing_func, x, ax0_n, ax1_n)
+        reshaping_func = lambda x: self.reshaping_func_def(padding_func, x, ax0_n, ax1_n)
         filter_arr = (np.sum(reshaping_func(ext_mask), axis=(1, 2)) !=0) \
             & (np.sum(reshaping_func(self.rl_map), axis=(1, 2)) != 0)
+
               
         if development_mode:
-            return reshaping_func, filter_arr, ax0_n, ax1_n, (3 + cross_tile_size_r, 23 + cross_tile_size_c)
-        else: 
             tiling_func = lambda x: reshaping_func(x)[filter_arr, :, :]
             logger.info(f"Created tiling function successfully")
             return tiling_func
-    
+        else:
+            return reshaping_func, filter_arr, ax0_n, ax1_n, (cross_tile_size_r, cross_tile_size_c)
+
     def reshaping_func_def(self, slicing_func, x, ax0_n, ax1_n):
         # First reshape the map to the desired size (a multiple of the map size)
         new_map_x = slicing_func(x)[:self.map_size * ax0_n, :self.map_size * ax1_n]
@@ -164,4 +164,3 @@ class USRRDataManager(DataManager):
         return new_map_x
 
 
-    

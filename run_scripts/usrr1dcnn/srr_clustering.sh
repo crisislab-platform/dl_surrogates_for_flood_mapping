@@ -10,7 +10,7 @@ parallel --line-buffer CUDA_VISIBLE_DEVICES={1} python3.11 main.py srr_cluster \
   --random_state {4} \
   --n_init {5} \
   ::: 0 \
-  ::: 20 30 50 80 100 \
-  ::: 20 50 100 200 \
-  ::: 42 \
+  ::: 50  \
+  ::: 150 \
+  ::: 341 \
   ::: 10

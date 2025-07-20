@@ -4,13 +4,14 @@ from modules.models.usrr_1dcnn.reconstruction.reconstruction import reconstruct_
 import logging
 import argparse
 from datetime import datetime
-from modules.visualiser.visualiser import plot_upstream_conditions, visualise_rep_locations, plot_boundary_information, create_flood_animation, plot_extent_reference, plot_extent_prediction, plot_extents_on_same_image, visualise_area_check_map,plot_model_architecture, plot_study_area
+from modules.visualiser.visualiser import plot_upstream_conditions, visualise_rep_locations, plot_boundary_information, create_flood_animation, plot_extent_reference, plot_extent_prediction, plot_extents_on_same_image, visualise_area_check_map, plot_study_area, plot_study_area_clean
 from modules.visualiser.metrics.performance_and_footprint import plot_metrics
-from modules.visualiser.flow_analysis import find_peak_inflow_timestep
+from modules.visualiser.flow_analysis import find_peak_inflow_timestep, plot_hydrograph_clean
 # from modules.visualiser.hydrological_visuals import find_peak_inflow_timestep
 from modules.metrics_reader.metrics_reader import hyperparam_analysis
 from modules.visualiser.test_event_viz import vizualise_test_event
-
+from modules.models.usrr_1dcnn.reduction.rep_location_finder import find_representative_locations_and_clusters
+from modules.datamanager.datamanager import create_inundation_map_tensors
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("Main")
@@ -24,6 +25,7 @@ SRR_CLUSTER_COMMAND = "srr_cluster"
 SRR_RECONSTRUCTION_COMMAND = "srr_reconstruction"
 PLOT_COMMAND = "plot"
 METRICS_COMMAND = "metrics"
+SRR_LSTM_REDUCTION_COMMAND = "srr_lstm_reduction"
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -53,6 +55,9 @@ def parse_args():
     parser.add_argument('--usrr_conv_kernel', type=int, default=4, help='Directory to save run outputs')
     parser.add_argument('--usrr_pool_kernel', type=int, default=3, help='Pooling kernel size for USRR models')
     parser.add_argument('--save_model', action='store_true', help='Save the trained model checkpoint')
+    parser.add_argument('--dropout', type=float, default=0.2, help='Dropout rate for the model')
+    parser.add_argument('--output_channel_size', type=int, default=1, help='Output channel size for the model')
+    parser.add_argument('--fc_layer_size', type=int, default=64, help='Fully connected layer size for the model')
     return parser.parse_args()
 
 
@@ -89,11 +94,14 @@ def check_if_already_run(args):
             "rl_group": args.rl_group,
             "lag": args.lag,
             "horizon": args.horizon,
-            "patience": args.patience
+            "patience": args.patience,
+            "dropout": args.dropout,
+            "output_channel_size": args.output_channel_size,
+            "fc_layer_size": args.fc_layer_size
         }
 
         # Only keep keys that are relevant for comparison
-        compare_keys = ["batch_size", "learning_rate", "epochs", "patience", "lag", "horizon", "rl_group", "sampling_dist", "n_clusters", "input_time_len_h"]
+        compare_keys = ["batch_size", "learning_rate", "epochs", "patience", "lag", "horizon", "rl_group", "sampling_dist", "n_clusters", "input_time_len_h", "dropout", "output_channel_size", "fc_layer_size"]
 
     if not os.path.exists(metrics_file):
         return  # No previous runs, so continue
@@ -126,7 +134,7 @@ def check_if_already_run(args):
 if __name__ == "__main__":
     args = parse_args()
     valid_commands = [TRAIN_COMMAND, PREDICT_COMMAND,  SRR_CLUSTER_COMMAND,
-                     SRR_RECONSTRUCTION_COMMAND, PLOT_COMMAND, METRICS_COMMAND]
+                     SRR_RECONSTRUCTION_COMMAND, PLOT_COMMAND, METRICS_COMMAND, SRR_LSTM_REDUCTION_COMMAND]
     
     if args.command not in valid_commands:
         logger.error(f"Invalid command '{args.command}'")
@@ -135,6 +143,7 @@ if __name__ == "__main__":
     elif args.command == TRAIN_COMMAND:
         if args.model == "USSR_1DCNN_V1":
             check_if_already_run(args)
+            create_inundation_map_tensors()
         config = ModelConfig(
             model_name=args.model,
             lag=args.lag,
@@ -144,8 +153,10 @@ if __name__ == "__main__":
             epochs=args.epochs,
             patience=args.patience, 
             fold=args.fold,
-            save_model=args.save_model
+            save_model=args.save_model,
+            dropout=args.dropout,
         )
+        logger.info(f"Training model with configuration: {config}")
         train_model(config, args)
         
     elif args.command == SRR_CLUSTER_COMMAND:
@@ -161,6 +172,10 @@ if __name__ == "__main__":
             logger.error("Missing required arguments for SRR reconstruction")
             exit(1)
         reconstruct_and_test(args.run_id, args.sampling_dist, args.n_clusters)
+        
+    elif args.command == SRR_LSTM_REDUCTION_COMMAND:
+        from modules.models.srr_lstm.srr.srr_main import findRLS
+        findRLS()
         
     elif args.command == PLOT_COMMAND:
         if not args.plot_type:
@@ -190,7 +205,10 @@ if __name__ == "__main__":
         elif args.plot_type == "plot_metrics":
             plot_metrics()
         elif args.plot_type == "architecture":
-            plot_model_architecture()
+            # plot_model_architecture()
+            pass
+        elif args.plot_type == "study_area_clean":
+            plot_study_area_clean()
         elif args.plot_type == "flow_analysis":
             find_peak_inflow_timestep()
             # find_peak_inflow_timestep()
@@ -199,6 +217,9 @@ if __name__ == "__main__":
             
         elif args.plot_type == "test_event":
             vizualise_test_event()
+            
+        elif args.plot_type == "hydrograph_clean":
+            plot_hydrograph_clean()
         else:
             logger.error(f"Unknown plot type: {args.plot_type}")
             exit(1)

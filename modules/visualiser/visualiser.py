@@ -752,7 +752,7 @@ def plot_extents_on_same_image():
             ax.plot([scale_x, scale_x + scalebar_length_m], [scale_y, scale_y], 'k-', linewidth=2)
             ax.text(scale_x + scalebar_length_m/2, scale_y + (extent[3] - extent[2]) * 0.01, 
                     f'{scalebar_length_m}m', ha='center', va='bottom', 
-                    bbox=dict(facecolor='white', alpha=0.8))
+                    bbox=dict(facecolor='white', alpha=0.8, edgecolor='black'))
         
         # Add a single colorbar for water depth with improved styling
         cbar_ax = fig.add_axes([0.92, 0.15, 0.01, 0.7])  # [left, bottom, width, height]
@@ -907,9 +907,9 @@ def visualise_area_check_map():
 
 
   
-def plot_study_area(output_filename=None):
+def plot_study_area(output_filename=None, show_spatial_scales=True):
 
-    logger.info("Generating study area visualization")
+    logger.info("Generating study area visualization with spatial scales")
     
     if output_filename is None:
         output_filename = "carlisle_study_area.png"
@@ -924,9 +924,10 @@ def plot_study_area(output_filename=None):
             extent = [src.bounds.left, src.bounds.right, src.bounds.bottom, src.bounds.top]
             transform = src.transform
             dem_nodata = src.nodata
+            pixel_size = abs(transform[0])  # Get pixel resolution
         
         # Create figure and axis
-        fig, ax = plt.subplots(figsize=(12, 10))
+        fig, ax = plt.subplots(figsize=(14, 12))
         
         # Enhance DEM visualization with terrain colormap and hillshade effect
         # Calculate hillshade for enhanced topographic visualization
@@ -945,6 +946,53 @@ def plot_study_area(output_filename=None):
         # Display hillshade with DEM
         ax.imshow(hillshade, extent=extent, cmap='gray', alpha=0.5, origin='upper')
         dem_plot = ax.imshow(dem_data, extent=extent, cmap='terrain', alpha=0.7, origin='upper')
+        
+        # Add spatial scale information if requested
+        if show_spatial_scales:
+            # Add coordinate grid with labeled ticks
+            # Calculate nice round numbers for grid spacing
+            x_range = extent[1] - extent[0]
+            y_range = extent[3] - extent[2]
+            
+            # Set grid spacing to approximately 1km intervals
+            grid_spacing = 1000  # 1km
+            
+            # Create grid lines
+            x_ticks = np.arange(
+                np.ceil(extent[0] / grid_spacing) * grid_spacing,
+                np.floor(extent[1] / grid_spacing) * grid_spacing + 1,
+                grid_spacing
+            )
+            y_ticks = np.arange(
+                np.ceil(extent[2] / grid_spacing) * grid_spacing,
+                np.floor(extent[3] / grid_spacing) * grid_spacing + 1,
+                grid_spacing
+            )
+            
+            # Set ticks and enable grid
+            ax.set_xticks(x_ticks)
+            ax.set_yticks(y_ticks)
+            ax.grid(True, alpha=0.3, linestyle='--', color='white', linewidth=1)
+            
+            # Format tick labels to show coordinates in km
+            ax.set_xticklabels([f'{int(x/1000)}' for x in x_ticks])
+            ax.set_yticklabels([f'{int(y/1000)}' for y in y_ticks])
+            ax.set_xlabel('Easting (km)', fontsize=12, fontweight='bold')
+            ax.set_ylabel('Northing (km)', fontsize=12, fontweight='bold')
+            
+            # Add pixel resolution information
+            ax.text(0.02, 0.98, f'Pixel Resolution: {pixel_size}m', 
+                   transform=ax.transAxes, fontsize=11, fontweight='bold',
+                   bbox=dict(facecolor='white', alpha=0.8, edgecolor='black'),
+                   verticalalignment='top')
+            
+            # Add domain size information
+            domain_width_km = x_range / 1000
+            domain_height_km = y_range / 1000
+            ax.text(0.02, 0.92, f'Domain: {domain_width_km:.1f} × {domain_height_km:.1f} km', 
+                   transform=ax.transAxes, fontsize=11, fontweight='bold',
+                   bbox=dict(facecolor='white', alpha=0.8, edgecolor='black'),
+                   verticalalignment='top')
         
         # Add color bar for elevation
         cbar = fig.colorbar(dem_plot, ax=ax, shrink=0.6)
@@ -993,7 +1041,7 @@ def plot_study_area(output_filename=None):
                                       connectionstyle="arc3,rad=0.2", 
                                       shrinkA=5, 
                                       shrinkB=5,
-                                      mutation_scale=15))  # Shorter arrow with curve
+                                      mutation_scale=15))
         
         if upstream2_points:
             x, y = zip(*upstream2_points)
@@ -1010,7 +1058,7 @@ def plot_study_area(output_filename=None):
                                       connectionstyle="arc3,rad=-0.2", 
                                       shrinkA=5, 
                                       shrinkB=5,
-                                      mutation_scale=15))  # Shorter arrow with curve
+                                      mutation_scale=15))
         
         if upstream3_points:
             x, y = zip(*upstream3_points)
@@ -1019,7 +1067,7 @@ def plot_study_area(output_filename=None):
             x_ref, y_ref = upstream3_points[0]
             ax.annotate("River Caldew", 
                        xy=(x_ref, y_ref),
-                       xytext=(-120, -30),  # Moved further left from -80 to -120
+                       xytext=(-120, -30),
                        textcoords="offset points",
                        fontsize=12,
                        fontweight='bold',
@@ -1027,32 +1075,30 @@ def plot_study_area(output_filename=None):
                                       connectionstyle="arc3,rad=0.2", 
                                       shrinkA=5, 
                                       shrinkB=5,
-                                      mutation_scale=15))  # Shorter arrow with curve
+                                      mutation_scale=15))
 
         # Add specific points of interest (S₁, S₂, S₃) with adjusted positions
         points_of_interest = [
             {"name": "S₁", "easting": 342682, "northing": 557532, "desc": "Upstream1"},
-            # Move S₂ and S₃ slightly upward to make them more visible
-            {"name": "S₂", "easting": 341362, "northing": 554702 + 50, "desc": "Upstream2"}, # Added +50 to northing
-            {"name": "S₃", "easting": 339947, "northing": 554702 + 50, "desc": "Upstream3"}, # Added +50 to northing
+            {"name": "S₂", "easting": 341362, "northing": 554702 + 50, "desc": "Upstream2"},
+            {"name": "S₃", "easting": 339947, "northing": 554702 + 50, "desc": "Upstream3"},
         ]
         
         # Use the same color for all points of interest for consistency
         poi_color = '#e41a1c'  # Red color for all points
         
-        # Draw these special points LAST to ensure they're on top (zorder controls stacking)
+        # Draw these special points LAST to ensure they're on top
         for i, poi in enumerate(points_of_interest):
             ax.scatter(poi["easting"], poi["northing"], color=poi_color, s=120, 
                       marker='D', edgecolor='black', linewidth=1.5, alpha=0.9, 
                       label=f"{poi['name']}" + (f" ({poi['desc']})" if poi['desc'] else ""),
-                      zorder=10)  # Higher zorder brings to front
+                      zorder=10)
             
-            # Add label with name (also with high zorder)
-            # Customize the position for S₁
+            # Add label with name
             if poi["name"] == "S₁":
-                xytext = (10, -25)  # Move S₁ label down
+                xytext = (10, -25)
             else:
-                xytext = (10, 10)  # Default position for other labels
+                xytext = (10, 10)
                 
             ax.annotate(poi["name"], 
                        xy=(poi["easting"], poi["northing"]),
@@ -1062,34 +1108,45 @@ def plot_study_area(output_filename=None):
                        fontweight='bold',
                        color=poi_color,
                        bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="grey", alpha=0.8),
-                       zorder=11)  # Ensure labels are on top
+                       zorder=11)
         
         # Add north arrow
         ax.text(0.95, 0.05, '↑N', transform=ax.transAxes, fontsize=16, 
                 fontweight='bold', ha='center', va='center',
                 bbox=dict(facecolor='white', alpha=0.8, edgecolor='black'))
         
-        # Add scale bar
-        scalebar_length_m = 1000  # 1 km
-        scale_x = extent[0] + (extent[1] - extent[0]) * 0.05
-        scale_y = extent[2] + (extent[3] - extent[2]) * 0.05
-        ax.plot([scale_x, scale_x + scalebar_length_m], [scale_y, scale_y], 'k-', linewidth=2)
-        ax.text(scale_x + scalebar_length_m/2, scale_y - (extent[3] - extent[2]) * 0.01, 
-                f'1 km', ha='center', va='top', 
-                fontweight='bold',
-                bbox=dict(facecolor='white', alpha=0.8, edgecolor='black'))
+        # Add multiple scale bars for different scales
+        scale_bars = [
+            {"length": 500, "label": "500m", "y_offset": 0.05},
+            {"length": 1000, "label": "1km", "y_offset": 0.08},
+            {"length": 2000, "label": "2km", "y_offset": 0.11}
+        ]
         
-        # Option 1: Place legend below the plot
+        for scale in scale_bars:
+            scale_x = extent[0] + (extent[1] - extent[0]) * 0.05
+            scale_y = extent[2] + (extent[3] - extent[2]) * scale["y_offset"]
+            ax.plot([scale_x, scale_x + scale["length"]], [scale_y, scale_y], 
+                   'k-', linewidth=3, alpha=0.8)
+            ax.text(scale_x + scale["length"]/2, scale_y - (extent[3] - extent[2]) * 0.008, 
+                    scale["label"], ha='center', va='top', 
+                    fontweight='bold', fontsize=10,
+                    bbox=dict(facecolor='white', alpha=0.8, edgecolor='black'))
+        
+        # Set title with spatial information
+        ax.set_title('Carlisle Study Area - Spatial Domain and Scale Information', 
+                    fontsize=16, fontweight='bold', pad=20)
+        
+        # Add legend below the plot
         ax.legend(bbox_to_anchor=(0.5, -0.15), loc='upper center', ncol=3, 
                   framealpha=0.9, fontsize=10)
         
-        # Adjust layout to make room for the legend
+        # Adjust layout
         plt.tight_layout()
         
-        # Save figure with extra space for the legend
+        # Save figure
         os.makedirs(os.path.dirname(output_file), exist_ok=True)
         plt.savefig(output_file, dpi=300, bbox_inches='tight')
-        logger.info(f"Study area visualization saved to {output_file}")
+        logger.info(f"Study area visualization with spatial scales saved to {output_file}")
         plt.close()
         
         return output_file
@@ -1100,24 +1157,70 @@ def plot_study_area(output_filename=None):
         logger.error(traceback.format_exc())
         return None
 
-import torch
-import torch.nn as nn
+def plot_study_area_clean(output_filename=None):
+    """
+    Create a clean study area visualization without labels, text, or colorbar.
+    Suitable for presentations or publications where minimal annotation is desired.
+    """
+    logger.info("Generating clean study area visualization")
+    
+    if output_filename is None:
+        output_filename = "carlisle_study_area_clean.png"
+    
+    output_file = os.path.join(GRAPH_OUTPUT_DIR, output_filename)
+    dem_file = os.path.join(SIMULATION_DATA_DIR, "Carlisle_5m.asc")
+    
+    try:
+        # Load DEM data
+        with rasterio.open(dem_file) as src:
+            dem_data = src.read(1)
+            extent = [src.bounds.left, src.bounds.right, src.bounds.bottom, src.bounds.top]
+            transform = src.transform
+            dem_nodata = src.nodata
+        
+        # Create figure and axis
+        fig, ax = plt.subplots(figsize=(12, 10))
+        
+        # Calculate hillshade for enhanced topographic visualization
+        x, y = np.gradient(dem_data)
+        slope = np.pi/2 - np.arctan(np.sqrt(x*x + y*y))
+        aspect = np.arctan2(-x, y)
+        
+        # Light direction and intensity
+        azimuth = np.pi/4  # Light from northwest
+        altitude = np.pi/4  # 45 degree elevation
+        
+        # Calculate hillshade
+        hillshade = np.sin(altitude) * np.sin(slope) + np.cos(altitude) * np.cos(slope) * np.cos(azimuth - aspect)
+        hillshade = hillshade * 255  # Scale to 0-255
+        
+        # Display hillshade with DEM - no colorbar
+        ax.imshow(hillshade, extent=extent, cmap='gray', alpha=0.5, origin='upper')
+        ax.imshow(dem_data, extent=extent, cmap='terrain', alpha=0.7, origin='upper')
+        
+        # Remove all ticks, labels, and grid
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.set_xticklabels([])
+        ax.set_yticklabels([])
+        
+        # Remove axis spines for completely clean look
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+        
+        # Save figure with minimal whitespace
+        os.makedirs(os.path.dirname(output_file), exist_ok=True)
+        plt.savefig(output_file, dpi=300, bbox_inches='tight', pad_inches=0)
+        logger.info(f"Clean study area visualization saved to {output_file}")
+        plt.close()
+        
+        return output_file
+        
+    except Exception as e:
+        logger.error(f"Error creating clean study area visualization: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return None
+    
 
-class SimpleNet(nn.Module):
-    def __init__(self):
-        super(SimpleNet, self).__init__()
-        self.fc1 = nn.Linear(10, 20)
-        self.relu = nn.ReLU()
-        self.fc2 = nn.Linear(20, 2)
-
-    def forward(self, x):
-        x = self.fc1(x)
-        x = self.relu(x)
-        x = self.fc2(x)
-        return x
-
-def plot_model_architecture():
-    model = SimpleNet()
-    dummy_input = torch.randn(1, 10)
-    torch.onnx.export(model, dummy_input, f"{GRAPH_OUTPUT_DIR}/model.onnx", input_names=['input'], output_names=['output'])
-
+    

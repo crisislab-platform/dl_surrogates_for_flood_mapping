@@ -236,7 +236,6 @@ def gdal_writeasc(filename, arr_data, rastemp):
     
     # Remove temporary file
     os.remove(temp_tif)
-    
     return print('gdal_writeasc successful!')
 
 
@@ -303,3 +302,19 @@ def flt2tif(fltfile, target_file):
             dst.write(data, 1)
     return 0
 
+def save_to_asc(dem_file, tensor, filename):
+
+    # Ensure tensor is a numpy array
+    if not isinstance(tensor, np.ndarray):
+        tensor = np.array(tensor)
+    
+    # Extract transform and CRS from DEM file
+    with rasterio.open(dem_file) as src:
+        transform = src.transform
+        crs = src.crs
+    
+    # Write to ASCII using the existing function
+    gdal_writeasc(filename, tensor, rastemp={'transform': transform, 'crs': crs})
+    
+    logger.info(f"Data successfully written to {filename}")
+    return 0

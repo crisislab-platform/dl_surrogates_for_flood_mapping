@@ -135,11 +135,11 @@ def plot_upstream_hydrographs():
         
         display_name = ""
         if source == 'Upstream1':
-            display_name = 'Upstream 1(S₁) - River Eden'
+            display_name = 'S₁ - River Eden'
         elif source == 'Upstream2':
-            display_name = 'Upstream 2(S₂) - River Petteril'
+            display_name = 'S₂ - River Petteril'
         elif source == 'Upstream3':
-            display_name = 'Upstream 3(S₃) - River Caldew'
+            display_name = 'S₃ - River Caldew'
             
         axes[i].set_title(display_name, fontsize=14, fontweight='bold')
         axes[i].set_ylabel('Flow Rate (m³/s)', fontsize=12, fontweight='bold')
@@ -198,3 +198,78 @@ def plot_upstream_hydrographs():
 
 def find_peak_inflow_timestep():
     plot_upstream_hydrographs()
+    
+def plot_hydrograph_clean():
+    """
+    Create a clean hydrograph plot for Event 1 with all upstream sources on the same plot.
+    """
+    logger.info("Generating clean upstream hydrograph for Event 1")
+    
+    # Load Event 1 flow data
+    flow_file = os.path.join(CARLISLE_DATA_DIR, "Upstream_Flows_Run1.csv")
+    
+    if not os.path.exists(flow_file):
+        logger.error(f"Event 1 flow file not found: {flow_file}")
+        return None
+    
+    try:
+        # Read the flow data
+        df = pd.read_csv(flow_file)
+        
+        # Convert time from seconds to hours
+        if "Time" in df.columns:
+            df["TimeHours"] = df["Time"] / 3600
+            time_col = "TimeHours"
+            time_label = "Time (hours)"
+        else:
+            time_col = "Time"
+            time_label = "Time (s)"
+        
+        # Create output directory
+        os.makedirs(GRAPH_OUTPUT_DIR, exist_ok=True)
+        
+        # Create single figure with clean styling
+        fig, ax = plt.subplots(1, 1, figsize=(12, 8))
+        
+        # Define colors and labels for each upstream source
+        colors = ['#1f77b4', '#ff7f0e', '#2ca02c']  # Blue, Orange, Green
+        upstream_sources = ['Upstream1', 'Upstream2', 'Upstream3']
+        labels = ['S₁', 'S₂', 'S₃']
+        
+        # Plot all upstream sources on the same axes
+        for i, source in enumerate(upstream_sources):
+            if source in df.columns:
+                # Plot the hydrograph with clean lines and labels
+                ax.plot(df[time_col], df[source], linewidth=2.5, color=colors[i], label=labels[i])
+                
+                # Fill area under the curve with transparency
+                ax.fill_between(df[time_col], df[source], alpha=0.2, color=colors[i])
+        
+        # Clean styling - minimal labels
+        ax.set_ylabel('Flow (m³/s)', fontsize=22)
+        ax.set_xlabel(time_label, fontsize=22)
+        
+        # Add legend
+        ax.legend(loc='upper right', fontsize=22)
+        
+        # Remove top and right spines for cleaner look
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        
+        # Set y-axis to start from 0 for better visual comparison
+        ax.set_ylim(bottom=0)
+        
+        # Remove spacing and apply tight layout
+        plt.tight_layout()
+        
+        # Save the clean figure
+        output_path = os.path.join(GRAPH_OUTPUT_DIR, "upstream_hydrographs_event1_clean.png")
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        logger.info(f"Saved clean Event 1 hydrograph to {output_path}")
+        plt.close()
+        
+        return output_path
+        
+    except Exception as e:
+        logger.error(f"Error creating clean hydrograph: {e}")
+        return None

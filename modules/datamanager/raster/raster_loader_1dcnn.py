@@ -18,6 +18,7 @@ bc_data_dir = f"{CARLISLE_DATA_DIR}"
 lisflood_simulation_dir = SIMULATION_DATA_DIR
 
 class CNNRasterDataManager(DataManager):
+    
     def __init__(self, lag=8, batch_size=32, device='cpu', pinn=False, validation_event=2, tuning_mode=True):
         if tuning_mode:
             self.train_event_ids = [event for event in [2, 3, 4, 5, 6, 7, 8, 9] if event != validation_event]
@@ -309,7 +310,7 @@ class CNNRasterDataManager(DataManager):
         # Return the event IDs and their corresponding local indices
         return event_indices_map
     
-    def get_batch(self, indices):
+    def get_batch(self, indices, subset="train"):
         if self.pinn: 
             return self.get_batch_pinn(indices)
         event_indices_map = self.find_indices(indices)
