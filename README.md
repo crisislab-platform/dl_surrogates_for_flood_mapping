@@ -4,7 +4,7 @@ This project implements deep learning models to predict flood inundation pattern
 
 ## Prerequisites
 
-- LISFLOOD-FP simulator
+- LISFLOOD-FP simulator 8.1
 - Python 3.8+
 - CUDA-capable GPU
 - GNU Parallel
@@ -85,4 +85,11 @@ Training stops if no improvement is seen for 5 epochs to prevent overfitting.
 - Model checkpoints are saved in the `models/` directory
 - Simulation logs are stored in `carlisle-data/simulation.log`
 
-## License
+## Running the ConvLSTM Model
+
+The ConvLSTM model uses spatial-temporal features by preserving the grid structure and using convolutional LSTM cells. This model is more memory-efficient for large grid sizes as it uses parameter sharing.
+
+### Using the ConvLSTM model
+
+Train the ConvLSTM model:
+```
