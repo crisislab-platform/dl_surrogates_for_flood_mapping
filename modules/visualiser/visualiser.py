@@ -5,6 +5,7 @@ import numpy as np
 from modules.lib.constants import CARLISLE_DATA_DIR as DATA_DIR, OUTPUT_DIR, SIMULATION_DATA_DIR, RUN_DIR, GRAPH_OUTPUT_DIR
 import logging
 import rasterio
+from rasterio.warp import transform_bounds
 import geopandas as gpd
 from pathlib import Path
 from shapely.geometry import Point
@@ -906,7 +907,6 @@ def visualise_area_check_map():
         return None
 
 
-  
 def plot_study_area(output_filename=None, show_spatial_scales=True):
 
     logger.info("Generating study area visualization with spatial scales")
@@ -1124,7 +1124,7 @@ def plot_study_area(output_filename=None, show_spatial_scales=True):
         
         for scale in scale_bars:
             scale_x = extent[0] + (extent[1] - extent[0]) * 0.05
-            scale_y = extent[2] + (extent[3] - extent[2]) * scale["y_offset"]
+            scale_y = extent[2] + (extent[3] - extent[2]) * 0.05
             ax.plot([scale_x, scale_x + scale["length"]], [scale_y, scale_y], 
                    'k-', linewidth=3, alpha=0.8)
             ax.text(scale_x + scale["length"]/2, scale_y - (extent[3] - extent[2]) * 0.008, 
@@ -1221,6 +1221,130 @@ def plot_study_area_clean(output_filename=None):
         import traceback
         logger.error(traceback.format_exc())
         return None
-    
 
+def plot_study_area_satellite(output_filename=None):
+    """
+    Create a clean satellite view of the Carlisle study area.
+    Uses Google Maps satellite imagery without any additional markers.
+    Uses the DEM file extent for consistent coverage across visualizations.
+    """
+    logger.info("Generating clean satellite view of Carlisle study area")
     
+    try:
+        # Import cartopy 
+        import cartopy.crs as ccrs
+        from cartopy.io.img_tiles import GoogleTiles
+        from shapely.geometry import box
+    except ImportError:
+        logger.error("Required packages not found. Please install them with: pip install cartopy")
+        return None
+    
+    if output_filename is None:
+        output_filename = "carlisle_study_area_satellite.png"
+    
+    output_file = os.path.join(GRAPH_OUTPUT_DIR, output_filename)
+    dem_file = os.path.join(SIMULATION_DATA_DIR, "Carlisle_5m.asc")
+    
+        
+    points_of_interest = [
+        {"name": "S₁", "easting": 342682, "northing": 557532, "desc": "Upstream1"},
+        {"name": "S₂", "easting": 341362, "northing": 554702 + 50, "desc": "Upstream2"},
+        {"name": "S₃", "easting": 339947, "northing": 554702 + 50, "desc": "Upstream3"},
+    ]
+        
+    try:
+        # Load DEM data to get the extent
+        with rasterio.open(dem_file) as src:
+            source_crs = "EPSG:27700"
+            # Get the original bounds
+            dem_extent = src.bounds
+            logger.info(f"DEM bounds ({source_crs}): {dem_extent}")
+
+            # Define the destination CRS (WGS84)
+            dest_crs = "EPSG:4326"
+
+            # Use rasterio.warp.transform_bounds to accurately transform the bounds
+            # This handles the geometric transformations more precisely
+            lon_min, lat_min, lon_max, lat_max = transform_bounds(
+                source_crs,
+                dest_crs,
+                dem_extent.left,
+                dem_extent.bottom,
+                dem_extent.right,
+                dem_extent.top
+            )
+
+        logger.info(f"DEM bounds (WGS84): [{lon_min}, {lat_min}, {lon_max}, {lat_max}]")
+        
+        # Create figure
+        plt.figure(figsize=(12, 10))
+        
+        # Create tile source for Google satellite imagery
+        google_tiles = GoogleTiles(style='satellite')  # Use satellite style explicitly
+        
+        # Create map with appropriate projection
+        ax = plt.axes(projection=google_tiles.crs)
+        
+        # Add the satellite imagery tiles
+        ax.add_image(google_tiles, 14)  # Higher zoom level for more detail
+        
+        # Set extent to match the DEM bounds
+        # Add a small buffer (2%) around the DEM extent for better visualization
+        buffer_lon = (lon_max - lon_min) * 0.02
+        buffer_lat = (lat_max - lat_min) * 0.02
+        
+        ax.set_extent([
+            lon_min - buffer_lon, 
+            lon_max + buffer_lon, 
+            lat_min - buffer_lat, 
+            lat_max + buffer_lat
+        ], crs=ccrs.PlateCarree())
+        
+        # Add a subtle watermark/attribution in bottom right
+        plt.text(0.98, 0.02, '© Google Maps', transform=ax.transAxes,
+                fontsize=8, color='white', alpha=0.7, ha='right')
+        
+        # Remove axis ticks for a cleaner look
+        ax.set_xticks([])
+        ax.set_yticks([])
+        
+        # Add a scale bar (approximate)
+        # Calculate degrees per km at this latitude
+        center_lat = (lat_min + lat_max) / 2
+        km_per_degree = 111.32 * np.cos(np.radians(center_lat))
+        one_km_in_degrees = 1.0 / km_per_degree
+        
+        # Add scale bar at bottom left
+        scale_lon = lon_min + buffer_lon * 2
+        scale_lat = lat_min + buffer_lat * 2
+        
+        ax.plot([scale_lon, scale_lon + one_km_in_degrees], 
+                [scale_lat, scale_lat], 
+                'w-', linewidth=3, transform=ccrs.PlateCarree())
+        
+        ax.text(scale_lon + one_km_in_degrees/2, scale_lat + buffer_lat,
+                '1 km', color='white', fontweight='bold', ha='center',
+                transform=ccrs.PlateCarree(),
+                bbox=dict(facecolor='black', alpha=0.5, boxstyle="round,pad=0.2"))
+        
+        # Add north arrow (simple text arrow)
+        ax.text(0.95, 0.95, '↑\nN', transform=ax.transAxes,
+                fontsize=14, color='white', ha='center', va='center',
+                bbox=dict(facecolor='black', alpha=0.5, boxstyle="round,pad=0.3"))
+        
+        # Save figure
+        os.makedirs(os.path.dirname(output_file), exist_ok=True)
+        plt.savefig(output_file, dpi=300, bbox_inches='tight')
+        logger.info(f"Satellite view saved to {output_file}")
+        plt.close()
+        
+        return output_file
+        
+    except Exception as e:
+        logger.error(f"Error creating satellite view: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return None
+
+
+

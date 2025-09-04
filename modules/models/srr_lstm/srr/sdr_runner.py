@@ -1,11 +1,22 @@
-from modules.models.srr_lstm.srr.gdal_func import coords2rc, rc2coords, ogr, gdal
+from modules.models.srr_lstm.srr.gdal_func import coords2rc, rc2coords, gdal
 import numpy as np
 import fiona, os
+from fiona.crs import from_epsg
+from shapely.geometry import LineString, mapping
 from time import time
 from modules.models.srr_lstm.srr.find_starting_points import get_starting_pts_from_maximum_inundation_extent
 from modules.models.srr_lstm.srr.sdr_algorithm_functions import dem_checking, directory_checking, aggregate_arr
 from modules.models.srr_lstm.srr.gdal_func import gdal_asarray
 from modules.lib.constants import SIMULATION_DATA_DIR, OUTPUT_DIR
+import matplotlib.pyplot as plt
+import geopandas as gpd
+import matplotlib.colors as colors
+from matplotlib.patches import Patch
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("Traj_search")
+
 
 class Traj_search:
     """
@@ -42,7 +53,7 @@ class Traj_search:
         self.dem_dataset = gdal.Open(demfile)
         self.dem_transform = self.dem_dataset.GetGeoTransform()
         self.demarr = self.dem_dataset.GetRasterBand(1).ReadAsArray()
-        self.demarr = self.preprocess_dem(self.demarr)
+        self.demarr = self.preprocess_dem(self.demarr, stoping_categories)
         self.countline = [0]
         self.drainage_map = np.zeros(self.demarr.shape)
         self.default_search_win_size = search_win_size
@@ -57,22 +68,27 @@ class Traj_search:
         del pt_idx
 
         
-    def preprocess_dem(self, demarr):
+    def preprocess_dem(self, demarr, stopping_categories):
         #Add -555 and -666 to the demarr 
         non_flood_mask = gdal_asarray(self.non_flood_mask_file)
-        demarr = np.zeros(demarr.shape)
         
-        # Set non-flooded areas to -555
-        demarr[non_flood_mask > 0] = -555
+        if  -555 in stopping_categories:
+            # Set non-flooded areas to -555
+            demarr[non_flood_mask > 0] = -555
         
+        if -777 in stopping_categories:
+            # Set non-flooded areas to -555
+            demarr[non_flood_mask <= 0] = -777
         
-        # Find the leftmost column with flood values > 0
-        for row in range(non_flood_mask.shape[0]):
-            row_data = non_flood_mask[row, 0:5]  # Get first 5 columns of this row
-           
-            for col in range(row_data.shape[0]):  # Iterate through columns in row_data
-                if row_data[col] > 0:
-                    demarr[row, col] = -666
+        if -666 in stopping_categories:
+            # Find the leftmost column with flood values > 0 since downstream boundary is not given in Kabir Study 
+            for row in range(non_flood_mask.shape[0]):
+                row_data = non_flood_mask[row, 0:5]  # Get first 5 columns of this row
+            
+                for col in range(row_data.shape[0]):  # Iterate through columns in row_data
+                    if row_data[col] > 0:
+                        demarr[row, col] = -666
+                        
         return demarr
     
     def initial_stpts_trajs(self, search_window_size=9, save_to_shp=False, outfilename=None):
@@ -81,7 +97,7 @@ class Traj_search:
         if save_to_shp:
             if outfilename is None:
                 outfilename = f"{self.work_dir}trajs_initial_search_from_starting_points.shp"
-            self.save_to_shp_lines(trajs, outfilename)
+            # self.save_to_shp_lines(trajs, outfilename)
         print(f'The total number of initially successful trajectories: {self.countline[0]}/{len(list(trajs.keys()))}')
         return trajs
 
@@ -103,12 +119,38 @@ class Traj_search:
         # define terminate criteria test window boundaries, always 3x3
         up0, dwn0, lf0, rit0 = max(0, r - 1), min(demarr_cl.shape[0], r + 1 + 1), max(0, c - 1), min(demarr_cl.shape[1], c + 1 + 1)
         step_size = search_win_size // 2
-        # define searching window boundaries
+        
+        
+        # Define searching window boundaries
         up, dwn, lf, rit = max(0, r - step_size), min(demarr_cl.shape[0], r + step_size + 1), \
                            max(0, c - step_size), min(demarr_cl.shape[1], c + step_size + 1)
+                           
         curr_block = demarr_cl[up:dwn, lf:rit].copy()   #search window, of 9x9 size by default, with 555 in current pt
+        
+        # Add nan padding to the block to make it search_win_size x search_win_size
+        if curr_block.shape != (search_win_size, search_win_size):
+            padded_block = np.full((search_win_size, search_win_size), np.nan)
+            # Calculate the offset based on where the current point should be in the padded block
+            # The current point should be at the center of the search window
+            center_pos = search_win_size // 2
+            # Calculate where the current point is in the extracted block
+            curr_r_in_block = r - up
+            curr_c_in_block = c - lf
+            # Calculate offsets to center the current point
+            row_offset = center_pos - curr_r_in_block
+            col_offset = center_pos - curr_c_in_block
+            
+            # Ensure we don't go out of bounds
+            row_offset = max(0, min(row_offset, search_win_size - curr_block.shape[0]))
+            col_offset = max(0, min(col_offset, search_win_size - curr_block.shape[1]))
+            
+            padded_block[row_offset:row_offset + curr_block.shape[0], 
+                        col_offset:col_offset + curr_block.shape[1]] = curr_block
+            curr_block = padded_block
+            
         demarr_cl[r, c] = np.inf    # mark searched point as inf
-        while self.non_stopping_criteria(demarr_cl[up0:dwn0, lf0:rit0]):
+        
+        while self.non_stopping_criteria(demarr_cl[up0:dwn0, lf0:rit0], search_win_size):
             ri, ci = self.search_next_pt(curr_block, search_win_size)    # current point = 555
             # update current row, column no.
             r, c = r + ri, c + ci
@@ -120,8 +162,30 @@ class Traj_search:
             demarr_cl[r, c] = 555
             curr_block = demarr_cl[up:dwn, lf:rit].copy()   # with 555 in current pt
             demarr_cl[r, c] = np.inf    # mark searched point as inf
+            
+             
+            # Add nan padding to the block to make it search_win_size x search_win_size
+            if curr_block.shape != (search_win_size, search_win_size):
+                padded_block = np.full((search_win_size, search_win_size), np.nan)
+                # Calculate the offset based on where the current point should be in the padded block
+                # The current point should be at the center of the search window
+                center_pos = search_win_size // 2
+                # Calculate where the current point is in the extracted block
+                curr_r_in_block = r - up
+                curr_c_in_block = c - lf
+                # Calculate offsets to center the current point
+                row_offset = center_pos - curr_r_in_block
+                col_offset = center_pos - curr_c_in_block
+                
+                # Ensure we don't go out of bounds
+                row_offset = max(0, min(row_offset, search_win_size - curr_block.shape[0]))
+                col_offset = max(0, min(col_offset, search_win_size - curr_block.shape[1]))
+                
+                padded_block[row_offset:row_offset + curr_block.shape[0], 
+                            col_offset:col_offset + curr_block.shape[1]] = curr_block
+                curr_block = padded_block
 
-        if np.any(np.isnan(demarr_cl[up0:dwn0, lf0:rit0])):   # add the boundary cell at last if exists
+        if np.any(np.isnan(demarr_cl[up0:dwn0, lf0:rit0])):   # Add the boundary cell at last if exists
             id_bd = np.argwhere(np.isnan(demarr_cl[up0:dwn0, lf0:rit0]))[0]
             line_ls.append(rc2coords(self.dem_transform, (id_bd[0]+up0, id_bd[1]+lf0)))
             self.countline[0] += 1
@@ -129,17 +193,19 @@ class Traj_search:
             for stop_val in self.stopping_vals:
                 if np.any(demarr_cl[up0:dwn0, lf0:rit0] == stop_val):   # add the iwl cell at last if exists
                     id_iwl = np.argwhere(demarr_cl[up0:dwn0, lf0:rit0] == stop_val)[0]
+                    if stop_val == -555 or stop_val == -555.0:
+                        logger.info("The trajectory is stopped at non-flood mainstream water body area.")   
                     line_ls.append(rc2coords(self.dem_transform, (id_iwl[0]+up0, id_iwl[1]+lf0)))
                     self.countline[0] += 1
                     break
         return line_ls
 
-    def non_stopping_criteria(self, blockarr):
+    def non_stopping_criteria(self, blockarr, search_win_size):
         criterion_1 = bool(~np.isinf(np.nanmin(blockarr)))   # the min is not inf; there is at least one inf in block
-        criterion_2 = True  # not stopping
+        criterion_2 = True  # not stopping 
         for stop_val in self.stopping_vals:
             criterion_2 = criterion_2 & (~np.any(blockarr == stop_val))    # not reaching the grids with stop signs
-        criterion_3 = ~np.any(np.isnan(blockarr))    # the block is hitting the boundary of model domain; Sea-side includes
+        criterion_3 = ~np.any(np.isnan(blockarr)) # the block is hitting the boundary of model domain; Sea-side includes
         return bool(criterion_1 & criterion_2 & criterion_3)
 
     def search_next_pt(self, blockarr, search_win_size):
@@ -170,23 +236,42 @@ class Traj_search:
         return ri, ci
 
     def save_to_shp_lines(self, trajs, outfile):
-        shpDriver = ogr.GetDriverByName("ESRI Shapefile")
-        if os.path.exists(outfile):
-            shpDriver.DeleteDataSource(outfile)
-        outDataSource = shpDriver.CreateDataSource(outfile)
-        outLayer = outDataSource.CreateLayer(outfile, geom_type=ogr.wkbMultiLineString)
-        featureDefn = outLayer.GetLayerDefn()
-        for key in trajs.keys():
-            multiline = ogr.Geometry(ogr.wkbMultiLineString)
-            line = ogr.Geometry(ogr.wkbLineString)
-            line.AddPoint(key[0], key[1])
-            for pts in trajs[key]:
-                line.AddPoint(pts[0], pts[1])
-            multiline.AddGeometry(line)
-            outFeature = ogr.Feature(featureDefn)
-            outFeature.SetGeometry(multiline)
-            outLayer.CreateFeature(outFeature)
-            del multiline, line, outFeature
+        # Define the schema for the shapefile
+        schema = {
+            'geometry': 'LineString',
+            'properties': {'traj_id': 'int'}
+        }
+        
+        # Create CRS from the DEM's spatial reference
+        crs = None
+        if self.dem_dataset.GetProjection():
+            # Try to get CRS from the dataset
+            try:
+                import pyproj
+                crs = pyproj.CRS.from_wkt(self.dem_dataset.GetProjection()).to_dict()
+            except:
+                # Fallback to a common CRS if extraction fails
+                crs = from_epsg(27700)
+        else:
+            crs = from_epsg(27700)
+        
+        # Write trajectories to shapefile using fiona
+        with fiona.open(outfile, 'w', driver='ESRI Shapefile', schema=schema, crs=crs) as output:
+            for i, key in enumerate(trajs.keys()):
+                # Create coordinate list for the line
+                coords = [key]  # Start with the key point
+                coords.extend(trajs[key])  # Add all trajectory points
+                
+                # Create LineString geometry
+                if len(coords) >= 2:  # Need at least 2 points for a line
+                    line = LineString(coords)
+                    
+                    # Create feature
+                    feature = {
+                        'geometry': mapping(line),
+                        'properties': {'traj_id': i}
+                    }
+                    output.write(feature)
 
     # main post-processing function
     def read_shp_to_trajs(self, shpfile, need_failed_trajs=False):
@@ -284,8 +369,14 @@ class Traj_search:
             block_check = rcs[(rcs[:, 0] >= r - 1) & (rcs[:, 0] <= r + 1) & (rcs[:, 1] >= c - 1) & (rcs[:, 1] <= c + 1),
                           :].astype(int)
             if block_check.size / 2 < 9:  # at boundary
-                dem_arr = self.demarr[r - 1:r + 2, c - 1:c + 2].copy()
-                dem_arr[block_check[:, 0] - (r - 1), block_check[:, 1] - (c - 1)] = np.nan
+                # create a 3x3 block around the current point with NaN values for beyond boundary
+                padded_block = np.full((3, 3), np.nan)
+                padded_block[1, 1] = self.demarr[r, c]  # current point
+                for row_offset in range(-1, 2):
+                    for col_offset in range(-1, 2):
+                        if 0 <= r + row_offset < self.demarr.shape[0] and 0 <= c + col_offset < self.demarr.shape[1]:
+                            padded_block[row_offset + 1, col_offset + 1] = self.demarr[r + row_offset, c + col_offset]
+                dem_arr = padded_block
                 boundary_min_dems[i] = np.nanmin(dem_arr)
         min_rc_idx = np.where(boundary_min_dems == np.nanmin(boundary_min_dems))[0][0]
         return rcs[min_rc_idx, :]
@@ -385,7 +476,8 @@ class Traj_search:
     def define_main_river(self, print_counting_report=True):
         trajs = self.initial_stpts_trajs(save_to_shp=False)
         trajs = self.continue_failed_river_trajs(trajs)
-
+        
+        self.visualize_river(trajs)
         if print_counting_report:
             success_trajs, failed_trajs = self.sep_trajs(trajs)
             self.countline.append(len(success_trajs))
@@ -396,6 +488,9 @@ class Traj_search:
     def generate_drainage_shp(self, outshpfile, initial_trajs_saved=False):
         trajs = self.post_process_initial_trajs(read_from_shp=initial_trajs_saved)
         self.save_to_shp_lines(trajs, outshpfile)
+        
+        # Add visualization here as well. 
+        self.visualize_drainage(outshpfile, trajs)  
         return print('Successfully saved drainage network shapefile.')
 
     def generate_drainage_trajs(self, initial_trajs_saved=False):
@@ -407,8 +502,180 @@ class Traj_search:
                                                         dem_aggregate_factor, agg_func=dem_aggregate_func)
         self.demarr[np.isnan(self.demarr)] = 999
         trajs = self.define_main_river()
+        logger.info(f"Total number of main river trajectories: {len(trajs)}")
         self.save_to_shp_lines(trajs, outshpfile)
+        
+        #Also visualize the main river
+        self.visualize_river(trajs)
+        
         return print('Successfully saved main river shapefile.')
+        
+    def visualize_river(self, trajs):
+        """
+        Visualize the river network and save the visualization as a PNG file.
+        
+        Args:
+            input_data: Either a trajectory dictionary or a shapefile path
+            trajs (dict, optional): Trajectory dictionary when first parameter is a shapefile
+        """
+        vis_output = os.path.join(self.work_dir, "river_network_visualization.png")
+        try:
+           
+            # Create figure and axis
+            fig, ax = plt.subplots(figsize=(12, 10))
+            
+            # Create a DEM background for context
+            dem_masked = np.ma.masked_where(self.demarr >= 900, self.demarr)  # Mask out high values
+            dem_masked = np.ma.masked_where(dem_masked == -555, dem_masked)  # Mask non-flood areas
+            dem_masked = np.ma.masked_where(dem_masked == -666, dem_masked)  # Mask boundary areas
+            
+            # Get the extent for the plot from the DEM transform
+            x_min = self.dem_transform[0]
+            y_max = self.dem_transform[3]
+            x_max = x_min + self.dem_transform[1] * self.demarr.shape[1]
+            y_min = y_max + self.dem_transform[5] * self.demarr.shape[0]
+            
+            # Plot DEM with a colormap
+            cmap = plt.cm.terrain.copy()
+            cmap.set_bad('white', 1.0)
+            dem_plot = ax.imshow(dem_masked, extent=[x_min, x_max, y_min, y_max], 
+                                 cmap=cmap, alpha=0.7)
+            plt.colorbar(dem_plot, ax=ax, label='Elevation')
+            
+            # Plot directly from trajectory dictionary
+            logger.info("Plotting trajectories from trajectory dictionary")
+            
+            # Plot just the first trajectory if available
+            if trajs:
+                # Get the first trajectory key and points
+                first_key = list(trajs.keys())[0]
+                points = trajs[first_key]  # This is the list of points for the first trajectory
+                
+                # Include the start point as well
+                all_points = [first_key] + points
+                
+                # Extract x and y coordinates
+                xs, ys = zip(*all_points)
+                
+                # Plot the points
+                ax.scatter(xs, ys, color='blue', s=10, alpha=0.8)  # Plot points instead of lines
+            
+    
+            # Add title and legend
+            ax.set_title('River Network Visualization', fontsize=14)
+            ax.set_xlabel('X Coordinate')
+            ax.set_ylabel('Y Coordinate')
+            
+            # Create legend
+            legend_elements = [
+                Patch(facecolor='blue', edgecolor='blue', label='River'),
+            ]
+            ax.legend(handles=legend_elements, loc='best')
+            
+            # Add grid
+            ax.grid(True, linestyle='--', alpha=0.6)
+            
+            # Save figure
+            plt.tight_layout()
+            plt.savefig(vis_output, dpi=300)
+            plt.close()
+            
+            logger.info(f"River visualization saved to {vis_output}")
+            return vis_output
+        except Exception as e:
+            logger.error(f"Error creating visualization: {str(e)}")
+            return None
+
+    def visualize_drainage(self, shp_file, trajs=None):
+        """
+        Visualize the drainage network shapefile and save the visualization as a PNG file.
+        
+        Args:
+            shp_file (str): Path to the shapefile
+            trajs (dict, optional): Trajectory dictionary if already loaded
+        """
+        try:
+            logger.info("Plotting drainage network visualization")
+            # Create output filename for the visualization
+            vis_output = os.path.splitext(shp_file)[0] + '_visualization.png'
+            
+            # Create figure and axis
+            fig, ax = plt.subplots(figsize=(12, 10))
+            
+            # Create a DEM background for context
+            dem_masked = np.ma.masked_where(self.demarr >= 900, self.demarr)  # Mask out high values
+            dem_masked = np.ma.masked_where(dem_masked == -555, dem_masked)  # Mask non-flood areas
+            dem_masked = np.ma.masked_where(dem_masked == -666, dem_masked)  # Mask boundary areas
+            
+            # Get the extent for the plot from the DEM transform
+            x_min = self.dem_transform[0]
+            y_max = self.dem_transform[3]
+            x_max = x_min + self.dem_transform[1] * self.demarr.shape[1]
+            y_min = y_max + self.dem_transform[5] * self.demarr.shape[0]
+            
+            # Plot DEM with a colormap
+            cmap = plt.cm.terrain.copy()
+            cmap.set_bad('white', 1.0)
+            dem_plot = ax.imshow(dem_masked, extent=[x_min, x_max, y_min, y_max], 
+                                 cmap=cmap, alpha=0.7)
+            plt.colorbar(dem_plot, ax=ax, label='Elevation')
+            
+            # Plot drainage network trajectories
+            if trajs:
+                # Plot directly from trajectory dictionary
+                logger.info("Plotting drainage trajectories from trajectory dictionary")
+                success_pts, _ = self.sep_trajs(trajs)
+                
+                # Plot each trajectory line with a different color for better visualization
+                colors = plt.cm.jet(np.linspace(0, 1, len(success_pts)))
+                for i, start_pt in enumerate(success_pts):
+                    line_coords = [start_pt] + trajs[start_pt]
+                    xs, ys = zip(*line_coords)
+                    ax.plot(xs, ys, color=colors[i % len(colors)], linewidth=1.0, alpha=0.7)
+                
+                # Mark starting and ending points
+                start_x = [pt[0] for pt in success_pts]
+                start_y = [pt[1] for pt in success_pts]
+                ax.scatter(start_x, start_y, c='green', s=30, zorder=5, label='Starting Points')
+                
+                # Mark ending points
+                end_points = [trajs[pt][-1] for pt in success_pts]
+                end_x = [p[0] for p in end_points]
+                end_y = [p[1] for p in end_points]
+                ax.scatter(end_x, end_y, c='red', s=30, zorder=5, label='Drainage Points')
+            else:
+                # Plot from shapefile using geopandas
+                logger.info("Plotting drainage trajectories from shapefile")
+                try:
+                    gdf = gpd.read_file(shp_file)
+                    gdf.plot(ax=ax, color='blue', linewidth=1.0, alpha=0.7)
+                except Exception as e:
+                    logger.error(f"Failed to read shapefile: {str(e)}")
+            
+            # Add title and legend
+            ax.set_title('Drainage Network Visualization', fontsize=14)
+            ax.set_xlabel('X Coordinate')
+            ax.set_ylabel('Y Coordinate')
+            
+            # Create legend
+            legend_elements = [
+                Patch(facecolor='blue', edgecolor='blue', label='Drainage Network'),
+                Patch(facecolor='green', edgecolor='green', label='Starting Points'),
+                Patch(facecolor='red', edgecolor='red', label='Drainage Points')
+            ]
+            ax.legend(handles=legend_elements, loc='best')
+            
+            # Add grid
+            ax.grid(True, linestyle='--', alpha=0.6)
+            
+            # Save figure
+            plt.tight_layout()
+            plt.savefig(vis_output, dpi=300)
+            plt.close()
+            
+            logger.info(f"Drainage network visualization saved to {vis_output}")
+        except Exception as e:
+            logger.error(f"Error creating drainage visualization: {str(e)}")
 
 
 def perform_SDR(work_dir, starting_pts, dem_tif_file, out_line_shp_file, stopping_categories,

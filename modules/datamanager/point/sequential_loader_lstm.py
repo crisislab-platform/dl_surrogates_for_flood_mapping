@@ -1,29 +1,32 @@
 import os
 import pandas as pd
 import numpy as np
-from modules.lib.constants import CARLISLE_DATA_DIR, OUTPUT_DIR, SIMULATION_DATA_DIR
-from modules.models.usrr_1dcnn.lib.gdal_lib import gdal_asarray, read_shp_point, coords2rc, gdal_transform
+from modules.lib.constants import CARLISLE_DATA_DIR, OUTPUT_DIR, SIMULATION_DATA_DIR, RUN_DIR
+from modules.models.usrr_1dcnn.lib.gdal_lib import gdal_asarray, read_shp_point,gdal_transform
+from modules.models.srr_lstm.srr.gdal_func import coords2rc, ogr, gdal
 import torch
 import logging
-import glob
-from modules.utils.run_util import check_device
+
 from modules.datamanager.datamanager import DataManager, check_inundation_data_cache
-from modules.datamanager.raster.raster_loader_usrr import ReconsturctionDataManager
-import rasterio as rio
+from modules.datamanager.raster.raster_loader_lstmsrr import ReconsturctionDataManager
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("LSTMSRRDataManager")
 
 class LSTMSequentialDataManager(DataManager):
-    def __init__(self, batch_size=32, input_time_len_h=1, rl_group=1,sampling_dist=20, num_of_clusters=100, fold=1, tuning_mode=True, reconstruction_mode=False, reco_data_manager:ReconsturctionDataManager=None):
+    
+    def __init__(self, batch_size=32, input_time_len_h=1, rl_id=1, fold=1, tuning_mode=True, reconstruction_mode=False, reco_data_manager:ReconsturctionDataManager=None):
         super().__init__()
+        
         # Directories
         self.simulation_data_dir = SIMULATION_DATA_DIR
         self.dem_file = os.path.join(self.simulation_data_dir, "Carlisle_5m.asc")
+        self.dem_dataset = gdal.Open(self.dem_file)
         self.reconstruction_mode = reconstruction_mode
         self.tuning_mode = tuning_mode
-        # Prepare train, test, and validation event ids
-
+        self.rep_locattion_filepath = os.path.join(OUTPUT_DIR, "sdr_reduction_results" , "representative_locations.shp")
+        
+        # Prepare train, test, and validation event idsx
         if self.tuning_mode:
             self.all_event_ids = [1, 2, 3, 4, 5, 6, 7, 8, 9]
             validation_event = fold + 1
@@ -52,30 +55,29 @@ class LSTMSequentialDataManager(DataManager):
         self.event_seq_data = {}
         self.input_seq_length = int(input_time_len_h * 4)
         
-        # RL variables
-        self.rl_group_size = None
-        self.rl_group = rl_group
-        self.rl_filter = None
-        self.sampling_dist = sampling_dist
-        self.num_of_clusters = num_of_clusters
-        self.rl_cluster_file = self.find_cluster_file(self.rl_group, self.sampling_dist, self.num_of_clusters)
-
-        # Prepare the filter mask for representative locations considered by the RL group in the clusters
-        self.prepare_rl_filter(self.rl_group)
+        # Representaitve location variables
+        self.rep_location_id = int(rl_id)
+        self.rep_localtion = (0,0) #row, col
+        self.rep_localtion_coords = None
+        
+        # Prepare the inputs and outputs
         self.event_batch_map = {}
         self.inundation_data_cache = {}
-        self.preload_inundation_data()   
-        self.input_tensor_prep()
-        
-        self.inundation_data_cache = {}
+        self.find_rep_location_and_prepare_filter()
+
         if not self.reconstruction_mode:
-            self.prepare_batch_idxs()
+            self.preload_inundation_data() 
         else:
             self.inundation_data_cache[self.test_event_ids[0]] = self.reco_data_manager.preloaded_maps
-            
+            self.inundation_data_cache[self.test_event_ids[0]] = [self.rl_filter(tensor) for tensor in self.inundation_data_cache[self.test_event_ids[0]]]
+        
+        self.input_tensor_prep()
+        
+        if not self.reconstruction_mode:
+            self.prepare_batch_idxs()
+        
         if not self.tuning_mode:
-            test_sequences = self.test_sequences[self.test_start_index:self.test_end_index + 1]
-            #test_sequences is a tuple of ((input_tensor, output_tensor), ...)
+            test_sequences = self.test_sequences
             test_input = []
             test_output = []
             for input_tensor, output_tensor in test_sequences:
@@ -86,113 +88,6 @@ class LSTMSequentialDataManager(DataManager):
             self.test_input = test_input.cuda()
             self.test_output = test_output.cuda()
             
-    def preload_inundation_data(self):
-        """Preload all inundation data for an event into GPU memory"""
-        for event_id in self.all_event_ids:
-            if check_inundation_data_cache(event_id):
-                inundation_data = torch.load(os.path.join(OUTPUT_DIR, "preprocessed_inundation", f"event_{event_id}_inundation.pt"))
-                self.inundation_data_cache[event_id] = []
-                for i in range(len(inundation_data)):
-                    tensor = inundation_data[i].cuda() 
-                    filtered_tensor = self.rl_filter(tensor)
-                    # if event_id == 1 and torch.max(filtered_tensor).item() != 0:
-                    #     raise ValueError(f"Filtered inundation tensor for event {event_id} contains non-zero values. Check your RL filter.")
-                    self.inundation_data_cache[event_id].append(filtered_tensor)
-                logger.info(f"inundation cache size:  {inundation_data.shape}")
-                logger.info(f"Loaded inundation data for event {event_id} from cache")
-            else:
-                raise ValueError(f"Inundation data for event {event_id} not found in cache. Please run create_inundation_map_tensors() first.")
-    
-    def get_batch(self, indices, subset="train"):
-        
-        if subset == "train":
-            sequences = [self.train_sequences[idx] for idx in indices]
-        elif subset == "val":
-            sequences = [self.val_sequences[idx] for idx in indices]
-        else:
-            raise ValueError(f"Invalid subset: {subset}. Choose 'train' or 'val'.")
-        
-        input_tensors, output_tensors = zip(*sequences)
-            
-        input_tensor = torch.stack(input_tensors, dim=0).cuda()
-        output_tensor = torch.stack(output_tensors, dim=0).cuda()
-        return input_tensor, output_tensor
-        
-    def prepare_rl_filter(self, rl_group):
-        self.rl_filter = None
-        self.cluster_rls = self.find_cluster_rls(self.rl_cluster_file, rl_group)
-        self.rl_group_size = len(self.cluster_rls)
-        self.dem_map = gdal_asarray(self.dem_file)
-        self.cluster_rl_map = np.zeros(self.dem_map.shape)
-        for row, col in self.cluster_rls:
-            self.cluster_rl_map[row, col] = 1
-       
-        self.filter_mask  = self.cluster_rl_map == 1
-        self.rl_filter = lambda x: x[self.filter_mask]
-        logger.info(f"RL filter prepared.")
-    
-        # I need to visualize the representative locations on the DEM
-        # self.visualize_rls_cluster()
-        
-    def visualize_rls_cluster(self):
-        """Visualize the representative locations on the DEM map"""
-        import matplotlib.pyplot as plt
-        import matplotlib.colors as colors
-        import os
-        
-        # Create visualization directory if it doesn't exist
-        vis_dir = os.path.join(OUTPUT_DIR, "visualizations")
-        os.makedirs(vis_dir, exist_ok=True)
-        
-        # Create figure
-        plt.figure(figsize=(12, 10))
-        
-        # Plot DEM as background with terrain colormap
-        plt.imshow(self.dem_map, cmap='terrain', alpha=0.7)
-        dem_colorbar = plt.colorbar(label='Elevation (m)')
-        
-        # Create a mask where RLs are located
-        y_coords, x_coords = np.where(self.cluster_rl_map == 1)
-        
-        # Plot RL points in contrasting color
-        plt.scatter(x_coords, y_coords, c='red', s=30, marker='o', label=f'RLs (Group {self.rl_group})')
-        
-        # Add title and labels
-        plt.title(f'Representative Locations - Cluster Group {self.rl_group} (n={len(x_coords)})')
-        plt.xlabel('Column')
-        plt.ylabel('Row')
-        plt.legend(loc='upper right')
-        
-        # Save the plot
-        filename = os.path.join(vis_dir, f'rl_cluster_group_{self.rl_group}.png')
-        plt.savefig(filename, dpi=300, bbox_inches='tight')
-        plt.close()
-        
-        logger.info(f"Saved visualization of {len(x_coords)} representative locations to {filename}")
-
-    def get_representative_locations(self):
-        rl_list = pd.read_csv(self.rep_loc_file_path)
-        logger.info(f"rep loc: {rl_list.iloc[0]}")
-        rl_list = rl_list[['x', 'y']].values
-        rl_list = [tuple(x) for x in rl_list]
-        
-        transform = gdal_transform(self.dem_asc_file)
-        dem_map_np = gdal_asarray(self.dem_asc_file)
-
-        # Convert RL coordinates to row/col indices
-        self.rc_rl_points = [coords2rc(transform, rl) for rl in rl_list] 
-        transform = gdal_transform(self.dem_asc_file)
-        dem_map_np = gdal_asarray(self.dem_asc_file)
-        
-        # Convert RL coordinates to row/col indices
-        rc_rl_points = [coords2rc(transform, rl) for rl in  rl_list] 
-        rl_map_np = np.zeros(dem_map_np.shape)
-        for row, col in rc_rl_points:
-            rl_map_np[row, col] = 1
-        
-        logger.info(f"Loaded {len(rl_list)} representative locations ")
-        return rl_map_np, dem_map_np
-
     def prepare_batch_idxs(self):
         idx_expander = lambda x: self.index_expander_func(x)
         self.train_idx = idx_expander("train")
@@ -223,12 +118,25 @@ class LSTMSequentialDataManager(DataManager):
         if len(idx_batch_list) > 0:
             idx_batch_list = np.array(idx_batch_list)
             logger.info(f"Index batches shape: {idx_batch_list.shape}")
-            logger.info(f"Created mixed-event batches with data from multiple events")
             return idx_batch_list
         else:
             logger.error("No batches were created! Check your data and batch size.")
             return np.array([]) 
         
+    def get_batch(self, indices, subset="train"):
+        if subset == "train":
+            sequences = [self.train_sequences[idx] for idx in indices]
+        elif subset == "val":
+            sequences = [self.val_sequences[idx] for idx in indices]
+        else:
+            raise ValueError(f"Invalid subset: {subset}. Choose 'train' or 'val'.")
+        
+        input_tensors, output_tensors = zip(*sequences)
+            
+        input_tensor = torch.stack(input_tensors, dim=0).cuda()
+        output_tensor = torch.stack(output_tensors, dim=0).cuda()
+        return input_tensor, output_tensor
+    
     def input_tensor_prep(self):
         # First load and normalize raw inflow data for each event
         raw_inflow_data = {}
@@ -238,40 +146,39 @@ class LSTMSequentialDataManager(DataManager):
         for event_id in self.all_event_ids:
             inflow_file = os.path.join(CARLISLE_DATA_DIR, f"Upstream_Flows_Run{event_id}.csv")
             inflow_data = pd.read_csv(inflow_file)
-            # Sort by time
-            inflow_data = inflow_data.sort_values(by='Time')
+            
             inflow_data = inflow_data.iloc[8:,:] # Skip the first 8 rows
             inflow_data = inflow_data.values
             inflow_data = inflow_data[:, 1:] # Skip the first column
             input_arr = np.array(inflow_data.astype(np.float32))
             
-            # Add rate of change feature
+            # Add padding for the first few input sequences
             input_arr = np.r_['0,2', np.zeros((self.input_seq_length-1, input_arr.shape[1])), input_arr]
-            input_arr[:self.input_seq_length-1, :] = np.repeat(input_arr[self.input_seq_length-1:self.input_seq_length, :], self.input_seq_length-1, axis=0)  # Fill padding with first valid values
+            input_arr[:self.input_seq_length-1, :] = np.repeat(input_arr[self.input_seq_length-1:self.input_seq_length, :], self.input_seq_length-1, axis=0) 
             raw_inflow_data[event_id] = input_arr
             
             # Only collect training data for fitting the scaler
             if event_id in self.train_event_ids:
                 all_train_data.append(input_arr)
         
+        ## There is an scaler issue, fix it later. Need the scaler fited from all the training data. 
         # 2. Normalize the data using MinMaxScaler
         from sklearn.preprocessing import MinMaxScaler
         scaler = MinMaxScaler(feature_range=(0, 1))
-        # Fit the scaler on all training data
         all_train_data = np.vstack(all_train_data)
-        scaler.fit(all_train_data)  # Fit on all training data
+        scaler.fit(all_train_data)
         
         self.train_sequences = []
         for event_id, raw_data in raw_inflow_data.items():
-            normalized_data = scaler.transform(raw_data) # Normalize by max inflow
+            # Normalize by max inflow
+            normalized_data = scaler.transform(raw_data)
             n_samples = len(normalized_data) - self.input_seq_length + 1
-            # input_sequences = np.zeros((n_samples, self.input_seq_length, n_features))
-    
+            
+            # Input_sequences = np.zeros((n_samples, self.input_seq_length, n_features))
             input_sequences = [normalized_data[i: i + self.input_seq_length, :] for i in range(n_samples)]
             input_sequences = np.array(list(input_sequences)) 
             
             outputs = self.inundation_data_cache[event_id]
-            
             input_sequences = torch.from_numpy(input_sequences).float().cuda()
             outputs = torch.stack(outputs, dim=0).cuda()
             
@@ -279,12 +186,11 @@ class LSTMSequentialDataManager(DataManager):
                 logger.error(f"Mismatch in output length for event {event_id}. Expected: {n_samples}, Found: {len(outputs)}")
                 raise ValueError(f"Mismatch in output length for event {event_id}. Expected: {n_samples}, Found: {len(outputs)}")
            
-            #Create a pair of input and output sequences ((input_tensor, output_tensor), ...)
+            # Create a pair of input and output sequences ((input_tensor, output_tensor), ...)
             sequence_pairs = []
             for i in range(input_sequences.shape[0]):
-                # Extract one sample (time sequence) from input and its corresponding output
                 sample_input = input_sequences[i] 
-                sample_output = outputs[i]
+                sample_output = outputs[i] # Reshape to match the expected output shape.reshape(1, 1) 
                 sequence_pairs.append((sample_input, sample_output))
 
             if event_id in self.train_event_ids:
@@ -295,20 +201,85 @@ class LSTMSequentialDataManager(DataManager):
                 self.val_sequences = sequence_pairs
                 
         # Concatenate all training sequences into a single array
-        logger.info("Completed nmalization and sequence creation")
+        logger.info("Completed normalization and sequence creation")
+
+    def preload_inundation_data(self):
+        for event_id in self.all_event_ids:
+            if check_inundation_data_cache(event_id):
+                inundation_data = torch.load(os.path.join(OUTPUT_DIR, "preprocessed_inundation", f"event_{event_id}_inundation.pt"))
+                self.inundation_data_cache[event_id] = []
+                for i in range(len(inundation_data)):
+                    tensor = inundation_data[i].cuda() 
+                    filtered_tensor = self.rl_filter(tensor)
+                    self.inundation_data_cache[event_id].append(filtered_tensor)
+                logger.info(f"Inundation cache size:  {inundation_data.shape}")
+                logger.info(f"Loaded inundation data for event {event_id} from cache")
+            else:
+                raise ValueError(f"Inundation data for event {event_id} not found in cache. Please run create_inundation_map_tensors() first.")
+ 
+    def find_rep_location_and_prepare_filter(self):
+        """Find the representative location using the shapefile and representative location id"""
+
+        # Read the DEM file for reference
+        self.dem_map = gdal_asarray(self.dem_file)
         
-    def find_cluster_file(self, rl_group, sampling_dist, num_of_clusters):
-        if rl_group is None:
-            return None, None
-        cluster_file = f"{OUTPUT_DIR}/rls/clusters/clusters_ss_{sampling_dist}_{num_of_clusters}.csv"
-        if not os.path.exists(cluster_file):
-            logger.error(f"Cluster file {cluster_file} does not exist.")
-            raise ValueError(f"Cluster file {cluster_file} does not exist.")
-        return cluster_file
-    
-    def find_cluster_rls(self, cluster_file, rl_group):
-        cluster_df = pd.read_csv(cluster_file)
-        filtered_df = cluster_df[cluster_df['cluster'] == int(rl_group)]
-        row_col_list = list(zip(filtered_df['row'], filtered_df['col']))
-        logger.info(f"Found {len(row_col_list)} representative locations for cluster {rl_group}")
-        return row_col_list
+        # Use geopandas to read the shapefile with attributes
+        import geopandas as gpd
+        gdf = gpd.read_file(self.rep_locattion_filepath)
+        
+        # Find the point with the matching ID
+        matching_point = gdf[gdf["PointID"] == self.rep_location_id]
+        
+        if matching_point.empty:
+            logger.error(f"No point with ID {self.rep_location_id} found in {self.rep_locattion_filepath}")
+            exit(1)
+        
+        # Extract coordinates from the matching point
+        point_geometry = matching_point.iloc[0].geometry
+        x_coord = matching_point.iloc[0]["X_Coord"]
+        y_coord = matching_point.iloc[0]["Y_Coord"]
+        self.rep_localtion_coords = (x_coord, y_coord)
+        
+        logger.info(f"Found representative location with ID {self.rep_location_id} at coordinates: {self.rep_localtion_coords}")
+        
+        # Convert coordinates to row, col in the DEM grid
+
+        self.dem_transform = self.dem_dataset.GetGeoTransform()
+        row, col = coords2rc(self.dem_transform,(x_coord, y_coord))
+        self.rep_localtion = (row, col)
+        logger.info(f"Representative location at row={row}, col={col}")
+        
+        # Prepare the filter mask for representative locations
+        rl_mask = np.zeros_like(self.dem_map, dtype=np.float32)
+        rl_mask[self.rep_localtion[0], self.rep_localtion[1]] = 1
+        self.filter_mask  = rl_mask == 1
+        self.rl_filter = lambda x: x[self.filter_mask]
+        # self.visualise_rep_location()
+
+    def visualise_rep_location(self):
+        """Get the representative locations using the rep_location_filepath and visualize them on DEM"""
+        import matplotlib.pyplot as plt
+        
+        # Create a visualization
+        plt.figure(figsize=(12, 10))
+        
+        # Plot the DEM as background
+        plt.imshow(self.dem_map, cmap='terrain', alpha=0.7)
+        plt.colorbar(label='Elevation')
+        
+        # Plot all representative locations
+        rows_cols = [(self.rep_localtion[0], self.rep_localtion[1])]
+        rows, cols = zip(*rows_cols) if rows_cols else ([], [])
+        plt.scatter(cols, rows, c='blue', marker='x', label=f'Representaitve location {self.rep_location_id}', s=30, alpha=0.6)
+        
+        plt.title(f'Representative Locations (Cluster {self.rep_location_id})')
+        plt.legend()
+        
+        # Save the visualization
+        output_path = os.path.join(OUTPUT_DIR, "visualizations")
+        os.makedirs(output_path, exist_ok=True)
+        plt.savefig(os.path.join(output_path, f"rls_{self.rep_location_id}_plot.png"))
+        plt.close()
+        
+        logger.info(f"Visualization of representative locations saved to {output_path}")
+        

@@ -20,21 +20,18 @@ class CNN1DSequential(nn.Module):
     def __init__(self, model_structure, seq_h, convo_kernel=4, pool_kernel=3):
         super(CNN1DSequential, self).__init__()
         self.convo_1 = nn.Conv1d(in_channels=model_structure[0], out_channels=model_structure[1], 
-                                 kernel_size=convo_kernel, padding='same')
+                                 kernel_size=convo_kernel)
         self.pooling_1 = nn.MaxPool1d(pool_kernel, ceil_mode=True)
         
         self.convo_2 = nn.Conv1d(in_channels=model_structure[1],out_channels=model_structure[1], 
-                                 kernel_size=convo_kernel, padding='same')
+                                 kernel_size=convo_kernel)
         
         self.pooling_2 = nn.MaxPool1d(pool_kernel, ceil_mode=True)
         
-        self.dim_past_convo = lambda dim_in: int(np.ceil((dim_in)/pool_kernel))
+        self.dim_past_convo = lambda dim_in: int(np.ceil((dim_in - convo_kernel + 1)/pool_kernel))
+        
         flattened_dim = self.dim_past_convo(self.dim_past_convo(seq_h)) * model_structure[1]
         
-        # first_conv_out = int(((seq_h + 2*1 - convo_kernel) // stride) + 1)
-        # second_conv_out = int(((first_conv_out + 2*1 - convo_kernel) // stride) + 1)
-        # flattened_dim = int(second_conv_out * model_structure[1])
-    
         self.flatten = nn.Flatten()
         self.hidden_1 = nn.Linear(flattened_dim, model_structure[-2])
         self.lyr_out = nn.Linear(model_structure[-2], model_structure[-1])
@@ -47,20 +44,25 @@ class CNN1DSequential(nn.Module):
         
         self.dropout = nn.Dropout(0.2)
 
-        
     def forward(self, x):
         x = self.convo_1(x.transpose(1, 2))
-        x = torch.tanh(x)
+        x = self.batch_norm_1(x)
+        x = self.lrelu(x)
         x = self.pooling_1(x)
+        x = self.dropout(x)
         
         x = self.convo_2(x)
+        x = self.batch_norm_2(x)
         x = self.lrelu(x)
         x = self.pooling_2(x)
+        x = self.dropout(x)
         
         x = self.flatten(x)
         x = self.hidden_1(x)
         x = self.lrelu(x)
-        x = self.lyr_out(x).squeeze(1)
+        x = self.dropout(x)
+        x = self.lyr_out(x)
+        x = torch.relu(x)  # Ensure non-negative outputs
         return x
     
 class CNN1DModelWrapper(ModelWrapper):
@@ -102,7 +104,7 @@ class CNN1DModelWrapper(ModelWrapper):
                                     pool_kernel=self.pool_kernel).to(self.device)
         self.model.float()
         self.loss_fn = nn.MSELoss()
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.config.learning_rate, weight_decay=1e-4)
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.config.learning_rate)
         logger.info(f"Model initialized")
         return True 
         
@@ -191,3 +193,6 @@ class CNN1DModelWrapper(ModelWrapper):
         # df.to_csv(output_file, index=False)
         # logger.info(f"Prediction map saved to {output_file} with row/col coordinates")
 # 0.055 m -  RMSE should be around this
+
+    def save_predictions_at_points(self, pred, ref_out, poi_path):
+        pass

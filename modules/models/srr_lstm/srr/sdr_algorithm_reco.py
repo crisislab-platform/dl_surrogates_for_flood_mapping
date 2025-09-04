@@ -2,6 +2,11 @@ from modules.models.srr_lstm.srr.gdal_func import gdal_asarray, gdal_writetiff, 
 from scipy.interpolate import griddata
 import csv, fiona
 import numpy as np
+from modules.lib.constants import GRAPH_OUTPUT_DIR
+import logging
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 
 def read_csv(csvfile_name):
@@ -52,6 +57,7 @@ def get_tidal_coords_bank(tidal_boundary_file):
 
 def dem_cut(demfile, grd_surface):
     demarr = gdal_asarray(demfile)
+    grd_surface = grd_surface.reshape(demarr.shape)
     inundation_map = grd_surface[:,:]
     inundation_map[np.isnan(inundation_map)] = -999
     demarr[np.isnan(demarr)] = -999
@@ -81,17 +87,56 @@ def simple_rls_surface_rebuild(rls_coords, coords_bank, wls, target_xy_grids,
         for sea_pt in tidal_coords_bank:
             points.append(sea_pt)
             water_levels.append(sealvl)
-    grd_surface = griddata(np.array(points), np.array(water_levels), target_xy_grids, method='linear')
+
+    grd_surface = griddata(np.array(points), np.array(water_levels), np.array(target_xy_grids), method='linear')
+    #Assign 0 to grids with nan
+    grd_surface[np.isnan(grd_surface)] = 0
+    grd_surface[grd_surface < 0] = 0
+    #assign negative values to 0
+    # visualise_convex_hull(points, water_levels, target_xy_grids, prefix=0)
     if if_cut_dem:
         if demfile is None:
             raise TypeError('DEM file is not provided. It needs to be in .tif format and indicate boundary grids with value=1.')
-        inundation_map = dem_cut(demfile, grd_surface)
+        demarr = gdal_asarray(demfile)
+        inundation_map = grd_surface.reshape(demarr.shape)
         return inundation_map
     else:
         return grd_surface
 
+def visualise_convex_hull(points, water_levels, target_xy_grids=None, prefix=0):
+    import matplotlib.pyplot as plt
+    from scipy.spatial import ConvexHull
 
-def two_step_surface_rebuild(rls_coords, coords_bank, wls, x_coords, y_coords ,
+    points = np.array(points)
+    fig = plt.figure(figsize=(10, 8))
+    ax = fig.add_subplot(111)
+    
+    # Plot source points used for interpolation
+    ax.scatter(points[:, 0], points[:, 1], color='r', label='Source Points')
+    
+    # Compute and plot the convex hull
+    hull = ConvexHull(points)
+    for simplex in hull.simplices:
+        ax.plot(points[simplex, 0], points[simplex, 1], 'b-')
+    
+    # Plot target points if provided
+    if target_xy_grids is not None:
+        target_points = np.array(target_xy_grids)
+        ax.scatter(target_points[:, 0], target_points[:, 1], color='g', 
+                   alpha=0.2, s=10, label='Target Points')
+    
+    ax.set_xlabel('X Coordinate')
+    ax.set_ylabel('Y Coordinate')
+    ax.legend()
+    plt.title('Convex Hull of Source Points')
+    
+    # Save the plot
+    fig.savefig(GRAPH_OUTPUT_DIR + f'/convex_hull_visualization{prefix}.png')
+    logger.info(f'Convex hull visualization saved to {GRAPH_OUTPUT_DIR}/convex_hull_visualization{prefix}.png')
+    plt.close(fig)  # Close the figure to free memory
+
+
+def two_step_surface_rebuild(rls_coords, coords_bank, wls, target_xy_grid,
                              tidal_coords_bank=None, sealvl=None, demfile=None):
     full_rls_coords = rls_coords.copy()
     full_wls = wls.copy()
@@ -103,13 +148,12 @@ def two_step_surface_rebuild(rls_coords, coords_bank, wls, x_coords, y_coords ,
     full_rls_coords.extend(arl_ls)
     full_wls.extend(inundation_map_step_1)
     # build for model domain
-    grid_x, grid_y = np.meshgrid(x_coords, y_coords)
-    inundation_map_step_2 = simple_rls_surface_rebuild(full_rls_coords, coords_bank, full_wls, (grid_x, grid_y),
+    inundation_map_step_2 = simple_rls_surface_rebuild(full_rls_coords, coords_bank, full_wls, target_xy_grid,
                                                        tidal_coords_bank, sealvl, if_cut_dem=True, demfile=demfile)
     return inundation_map_step_2
 
 
-def reconstruct_flood_inundation_map(demfile, targeted_x_coords, targeted_y_coords,
+def reconstruct_flood_inundation_map(demfile, target_xy_grid,
 									 rl_shp_file, sdr_thalwegs_shp_file, water_levels_pred,
 									 tidal_boundary_file=None, sealvl=None,
 									 save_to_tif=None, reference_tif_file=None):
@@ -136,7 +180,7 @@ def reconstruct_flood_inundation_map(demfile, targeted_x_coords, targeted_y_coor
         print('Note: No downstream boundary water level was provided, proceeding without it.')
         tidal_coords_bank = None
     inundation_map_pred = two_step_surface_rebuild(rls_coords, coords_bank, water_levels_pred,
-                                                   targeted_x_coords, targeted_y_coords,
+                                                   target_xy_grid,
                                                    tidal_coords_bank, sealvl, demfile)
     if save_to_tif is None:
         return inundation_map_pred

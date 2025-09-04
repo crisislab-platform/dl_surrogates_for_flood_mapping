@@ -201,9 +201,10 @@ def find_peak_inflow_timestep():
     
 def plot_hydrograph_clean():
     """
-    Create a clean hydrograph plot for Event 1 with all upstream sources on the same plot.
+    Create a scientific-quality hydrograph plot for Event 1 with all upstream sources on the same plot.
+    Designed to meet publication standards with proper formatting and annotations.
     """
-    logger.info("Generating clean upstream hydrograph for Event 1")
+    logger.info("Generating scientific-quality upstream hydrograph for Event 1")
     
     # Load Event 1 flow data
     flow_file = os.path.join(CARLISLE_DATA_DIR, "Upstream_Flows_Run1.csv")
@@ -228,48 +229,110 @@ def plot_hydrograph_clean():
         # Create output directory
         os.makedirs(GRAPH_OUTPUT_DIR, exist_ok=True)
         
-        # Create single figure with clean styling
-        fig, ax = plt.subplots(1, 1, figsize=(12, 8))
+        # Set scientific plot style
+        plt.style.use('seaborn-v0_8-whitegrid')
         
-        # Define colors and labels for each upstream source
-        colors = ['#1f77b4', '#ff7f0e', '#2ca02c']  # Blue, Orange, Green
+        # Create figure with specific size for publication (typically 7.5 inches wide for single column)
+        fig, ax = plt.subplots(1, 1, figsize=(10, 7.5))
+        
+        # Define scientific color palette (colorblind-friendly)
+        colors = ['#0072B2', '#D55E00', '#009E73']  # Blue, Orange-Red, Green
+        
+        # Define line styles for different data series
+        line_styles = ['-', '--', '-.']
+        
+        # Define river names and markers
         upstream_sources = ['Upstream1', 'Upstream2', 'Upstream3']
-        labels = ['S₁', 'S₂', 'S₃']
+        labels = ['S₁ (Eden)', 'S₂ (Petteril)', 'S₃ (Caldew)']
+        markers = ['o', 's', '^']
         
-        # Plot all upstream sources on the same axes
+        # Plot all upstream sources with scientific styling
+        max_values = []
         for i, source in enumerate(upstream_sources):
             if source in df.columns:
-                # Plot the hydrograph with clean lines and labels
-                ax.plot(df[time_col], df[source], linewidth=2.5, color=colors[i], label=labels[i])
+                # Plot the hydrograph with publication-quality styling
+                ax.plot(df[time_col], df[source], 
+                        linestyle=line_styles[i],
+                        linewidth=2.0, 
+                        color=colors[i], 
+                        label=labels[i],
+                        marker=markers[i],
+                        markevery=int(len(df)/10),  # Show markers at intervals
+                        markersize=6)
                 
-                # Fill area under the curve with transparency
-                ax.fill_between(df[time_col], df[source], alpha=0.2, color=colors[i])
+                # Calculate and store peak values
+                max_value = df[source].max()
+                max_time = df.loc[df[source].idxmax(), time_col]
+                max_values.append((source, max_time, max_value))
         
-        # Clean styling - minimal labels
-        ax.set_ylabel('Flow (m³/s)', fontsize=22)
-        ax.set_xlabel(time_label, fontsize=22)
+        # Set labels with proper scientific formatting and LaTeX rendering
+        ax.set_ylabel('Discharge ($m^{3} s^{-1}$)', fontsize=14, fontweight='bold')
+        ax.set_xlabel(time_label, fontsize=14, fontweight='bold')
         
-        # Add legend
-        ax.legend(loc='upper right', fontsize=22)
+        # Add proper tick marks
+        ax.minorticks_on()
+        ax.tick_params(axis='both', which='major', labelsize=12, width=1.5, length=6)
+        ax.tick_params(axis='both', which='minor', width=1, length=3)
         
-        # Remove top and right spines for cleaner look
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
+        # Set grid style for scientific plots
+        ax.grid(True, which='major', linestyle='-', alpha=0.7, color='lightgray')
+        ax.grid(True, which='minor', linestyle=':', alpha=0.4, color='lightgray')
         
-        # Set y-axis to start from 0 for better visual comparison
+        # Annotate peak values with scientific notation
+        for source, max_time, max_value in max_values:
+            i = upstream_sources.index(source)
+            ax.annotate(f'$Q_{{max}} = {max_value:.1f}$ $m^{3}/s$',
+                        xy=(max_time, max_value),
+                        xytext=(10, 10),
+                        textcoords='offset points',
+                        color=colors[i],
+                        fontsize=10,
+                        bbox=dict(boxstyle="round,pad=0.3", fc="white", ec=colors[i], alpha=0.8))
+        
+        # Add legend with scientific styling
+        legend = ax.legend(loc='upper right', fontsize=12, framealpha=0.9, 
+                  edgecolor='gray', title="Monitoring Points")
+        legend.get_title().set_fontweight('bold')
+        
+        # Add light box around the plot for scientific paper style
+        for spine in ax.spines.values():
+            spine.set_linewidth(1.5)
+            
+        # Set y-axis to start from 0 for scientific accuracy in comparison
         ax.set_ylim(bottom=0)
         
-        # Remove spacing and apply tight layout
-        plt.tight_layout()
+        # Add event information text box
+        props = dict(boxstyle='round', facecolor='white', alpha=0.8)
+        textstr = '\n'.join((
+            r'$\bf{Event\ 1\ Characteristics}$',
+            f'Duration: {df[time_col].max():.1f} hours',
+            f'Peak discharge: {max(m[2] for m in max_values):.1f} $m^3/s$'
+        ))
+        ax.text(0.03, 0.97, textstr, transform=ax.transAxes, fontsize=10,
+                verticalalignment='top', bbox=props)
         
-        # Save the clean figure
-        output_path = os.path.join(GRAPH_OUTPUT_DIR, "upstream_hydrographs_event1_clean.png")
-        plt.savefig(output_path, dpi=300, bbox_inches='tight')
-        logger.info(f"Saved clean Event 1 hydrograph to {output_path}")
+        # Add figure number and caption (publication style)
+        fig.text(0.5, 0.01, 'Figure 1: Hydrograph of input boundary conditions for the three rivers in Event 1.', 
+                ha='center', fontsize=12, style='italic')
+        
+        # Apply tight layout with appropriate margins
+        plt.tight_layout(rect=[0, 0.03, 1, 0.98])
+        
+        # Save the figure with high resolution required for publication
+        output_path = os.path.join(GRAPH_OUTPUT_DIR, "upstream_hydrographs_event1_scientific.png")
+        plt.savefig(output_path, dpi=600, bbox_inches='tight', format='png')
+        
+        # Also save in vector format for publication
+        vector_output_path = os.path.join(GRAPH_OUTPUT_DIR, "upstream_hydrographs_event1_scientific.pdf")
+        plt.savefig(vector_output_path, format='pdf')
+        
+        logger.info(f"Saved scientific-quality Event 1 hydrograph to {output_path}")
         plt.close()
         
         return output_path
         
     except Exception as e:
-        logger.error(f"Error creating clean hydrograph: {e}")
+        logger.error(f"Error creating scientific hydrograph: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         return None

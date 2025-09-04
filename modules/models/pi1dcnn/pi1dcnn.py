@@ -9,6 +9,9 @@ from modules.lib.constants import PICNN1D_V1
 import time
 import json
 import numpy as np
+from torch.profiler import profile, ProfilerActivity
+from modules.utils.model_util import format_flops
+from torch.utils.flop_counter import FlopCounterMode
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("PI1DCNN_ModelWrapper")
@@ -124,10 +127,27 @@ class PICNN1DModelWrapper(ModelWrapper):
             self.model.train()
             for idx, t_indices in enumerate(self.data_manager.train_idx):
                 self.optimizer.zero_grad()
-                xt, yt, yt_minus1, yt_plus1, bct, bct_plus1  = self.data_manager.get_batch(t_indices)
-                pred = self.model(xt)
-                batch_loss = self.physics_loss_fn(pred, yt, yt_minus1, yt_plus1, bct, bct_plus1)
-                
+                if idx == 0 and epoch == 0:
+                    logger.info("Starting memory profiling for the first batch")
+                    with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], 
+                                profile_memory=True, 
+                                on_trace_ready=torch.profiler.tensorboard_trace_handler(run_dir)) as prof:
+                        
+                        
+                        xt, yt, yt_minus1, yt_plus1, bct, bct_plus1  = self.data_manager.get_batch(t_indices)
+                        pred = self.model(xt)
+                        batch_loss = self.physics_loss_fn(pred, yt, yt_minus1, yt_plus1, bct, bct_plus1)
+                        batch_loss.backward()
+                        self.optimizer.step()
+                        prof.step()
+                    self.profiler= prof
+                else:
+                    xt, yt, yt_minus1, yt_plus1, bct, bct_plus1  = self.data_manager.get_batch(t_indices)
+                    pred = self.model(xt)
+                    batch_loss = self.physics_loss_fn(pred, yt, yt_minus1, yt_plus1, bct, bct_plus1)
+                    batch_loss.backward()
+                    self.optimizer.step()
+                    
                 del pred
                 del yt_plus1
                 del yt_minus1
@@ -135,11 +155,8 @@ class PICNN1DModelWrapper(ModelWrapper):
                 del bct_plus1
                 del yt
                 del xt
-                
                 epoch_loss += batch_loss.item()
                 valid_batches += 1  # Increment valid batch counter
-                batch_loss.backward()
-                self.optimizer.step()
                 torch.cuda.empty_cache()
                 logger.info(f"Batch train loss: {batch_loss.item()}")
                 
@@ -147,6 +164,8 @@ class PICNN1DModelWrapper(ModelWrapper):
             epoch_loss = epoch_loss / valid_batches if valid_batches > 0 else float('inf')
             history["loss"].append(epoch_loss)
             
+            
+        
             # Epoch Validation
             if tuning_mode:
                 val_loss = 0
@@ -263,3 +282,26 @@ class PICNN1DModelWrapper(ModelWrapper):
         total_loss = mse_loss + 0.5 * physics_loss
         
         return total_loss
+    
+    def calculate_flops(self):
+        try:
+            t_indices = self.data_manager.train_idx[0]
+            input_batch  = self.data_manager.get_batch(t_indices)[0]
+
+            # Create a sample input for the model
+            input_batch = torch.tensor(input_batch).to(self.device)
+            sample_input = input_batch[0].unsqueeze(0)
+        
+            # Use FlopCounterMode to count FLOPS
+            with FlopCounterMode(self.model) as counter:
+                _ = self.model(sample_input)
+                
+            flops = counter.get_total_flops()
+            logger.info(f"FLOPS: {flops}")
+            flops_str = format_flops(flops)
+            logger.info(f"Model FLOPS: {flops_str}")
+            
+            return flops
+        except Exception as e:
+            logger.error(f"Error calculating FLOPS: {e}")
+            return None

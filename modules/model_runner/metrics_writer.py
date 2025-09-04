@@ -5,7 +5,7 @@ from modules.models.model_wrapper import ModelConfig
 import logging
 import pandas as pd
 import json
-from modules.lib.constants import USRR_1DCNN_V1, USRR_UNET_V1, USRR_CNN1D_COMBINED
+from modules.lib.constants import USRR_1DCNN_V1, USRR_UNET_V1, USRR_CNN1D_COMBINED, LSTM_SRR_V1, SRR_LSTM_COMBINED
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("MetricsWriter")
@@ -34,22 +34,27 @@ def save_training_metrics(run_id, history, train_time, model, model_config: Mode
         save_csv(metrics, metrics_file)
         return
     
-    if model_config.model_name == USRR_1DCNN_V1 or model_config.model_name == USRR_UNET_V1:
+    if model_config.model_name == USRR_1DCNN_V1 or model_config.model_name == USRR_UNET_V1 or model_config.model_name == LSTM_SRR_V1:
         metrics_file = os.path.join(RUN_DIR, model_config.model_name, 'final_training_metrics.csv')
     else:
         metrics_file = f'{RUN_DIR}/final_training_metrics.csv'  
+    
     memory_usage = str(history.get('memory', None))
-    nurons = 0
+    neurons = 0
     trainable_params = 0
+    
     if model is not None:
         params = get_model_parameters(model)
-        nurons = int(count_total_neurons(model))
+        neurons = int(count_total_neurons(model))
         trainable_params = int(params['trainable_params'])
+    else:
+        trainable_params = history.get('trainable_params', 0)
+        neurons = history.get('total_neurons', 0)
 
     metrics = {
         'run_id': run_id,
         'model': model_config.model_name,
-        'total_neurons': nurons,
+        'total_neurons': neurons,
         'trainable_params':trainable_params,
         'loss': loss,
         'val_loss': val_loss, 
@@ -62,7 +67,7 @@ def save_training_metrics(run_id, history, train_time, model, model_config: Mode
     
      
 def save_prediction_metrics(run_id, model_name, metrics):
-    if model_name == USRR_1DCNN_V1 or model_name == USRR_UNET_V1:
+    if model_name == USRR_1DCNN_V1 or model_name == USRR_UNET_V1 or model_name == LSTM_SRR_V1:
         metrics_file = os.path.join(RUN_DIR, model_name, 'final_performance_metrics.csv')
     else:
         metrics_file = f'{RUN_DIR}/final_performance_metrics.csv'

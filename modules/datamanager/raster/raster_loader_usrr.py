@@ -52,8 +52,8 @@ class ReconsturctionDataManager(USRRDataManager):
         return
         
     def prepare_reconstruction_test_idxs(self):
-        self.test_start_tidx = (17 * 4) - (2 * 4) - 1 
-        self.test_end_tidx = (65 * 4) - (2 * 4) - 1
+        self.test_start_tidx = 0
+        self.test_end_tidx = 265
         
         self.reconstruction_test_idxs = np.arange(self.test_end_index - self.test_start_tidx + 1)
         logger.info(f"Prepared {len(self.reconstruction_test_idxs)} timesteps with {self.batches_per_map} batches per mapeach for reconstruction testing")

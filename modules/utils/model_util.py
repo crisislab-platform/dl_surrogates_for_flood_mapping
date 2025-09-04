@@ -74,6 +74,11 @@ def profiler_analysis(key_averages):
         total_cpu_time = torch.sum(cpu_time_values).item() if len(cpu_time_values) > 0 else 0
         total_gpu_time = torch.sum(gpu_time_values).item() if len(gpu_time_values) > 0 else 0
         
+        flops_values = torch.tensor([getattr(item, 'flops', 0) for item in key_averages],
+                             dtype=torch.float32, device=device)
+        flops = torch.sum(flops_values).item() if len(flops_values) > 0 else 0
+        
+        
         # Clean up GPU memory
         torch.cuda.empty_cache()
         
@@ -91,7 +96,8 @@ def profiler_analysis(key_averages):
             "total_cuda_memory": total_cuda_memory,
             "total_cpu_memory": total_cpu_memory,
             "total_cpu_time": total_cpu_time,
-            "total_gpu_time": total_gpu_time
+            "total_gpu_time": total_gpu_time,
+            "flops": flops
         }
         
     except Exception as e:
@@ -103,6 +109,7 @@ def profiler_analysis(key_averages):
             "total_cpu_memory": 0,
             "total_cpu_time": 0,
             "total_gpu_time": 0,
+            "flops": 0,
             "error": str(e)
         }
 
@@ -136,6 +143,9 @@ def save_prediction_map(prediction_map, output_dir, idx, model_name):
     
     # Write the reshaped prediction directly to a .wd file
     with rasterio.open(out_file, 'w', **out_profile) as dst:
+        #convet to numpy if tensor
+        if isinstance(pred_reshaped, torch.Tensor):
+            pred_reshaped = pred_reshaped.cpu().numpy()
         dst.write(pred_reshaped.astype(rasterio.float32), 1)
     
     logger.info(f"Saved prediction map {idx} to {out_file}")

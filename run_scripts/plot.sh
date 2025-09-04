@@ -4,4 +4,6 @@
 
 # python main.py plot --plot_type rep_locations --run_id 20250314_141848  --file ss_300.shp
 
-python main.py metrics --plot_type plot_metrics
+# python main.py plot --plot_type hydrograph_clean
+
+python main.py plot --plot_type test_event

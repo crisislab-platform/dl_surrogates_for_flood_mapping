@@ -6,8 +6,13 @@ from modules.models.usrr_1dcnn.cnn1d import CNN1DSequential
 from modules.datamanager.raster.raster_loader_usrr import ReconsturctionDataManager
 from modules.datamanager.point.sequential_loader_1dcnn import CNNSequentialDataManager
 from modules.models.usrr_1dcnn.unet import model_name as UNET_MODEL_NAME
-from modules.lib.constants import USRR_1DCNN_V1, GRAPH_OUTPUT_DIR, SIMULATION_DATA_DIR
+from modules.lib.constants import USRR_1DCNN_V1, GRAPH_OUTPUT_DIR, SIMULATION_DATA_DIR, USRR_CNN1D_COMBINED
 from modules.model_runner.model_utils import find_model_file
+from torch.profiler import profile, ProfilerActivity
+from modules.utils.model_util import profiler_analysis, format_flops, save_prediction_map
+from torch.utils.flop_counter import FlopCounterMode
+
+
 import torch
 import torch.nn as nn
 import os
@@ -18,26 +23,16 @@ import glob
 import time
 import rasterio
 import concurrent.futures
+import psutil
 
 
 logger = logging.getLogger("ReconstructionModule")
 logger.setLevel(logging.INFO)
 
-def reconstruct_and_test(sampling_distance, cluster_size, run_dir, batch_size):
-    cnn_model_files = find_1dcnn_models(sampling_distance, cluster_size)
-    unet_model_file  = find_model_file(UNET_MODEL_NAME)
-
-    if unet_model_file is None:
-        raise ValueError(f"Model file not found for sampling distance {sampling_distance}")
-    
-    run_dir = os.path.join(run_dir)
-    os.makedirs(run_dir, exist_ok=True)
-    reco_module = ReconstructionModule(unet_model_file, cnn_model_files, sampling_distance, cluster_size, run_dir, batch_size)
-    return reco_module.reconstruct()
 
 class ReconstructionModule():
     
-    def __init__(self, uent_model_file, cnn_model_files, sampling_distance, cluster_size, run_dir, batch_size):
+    def __init__(self, sampling_distance, cluster_size, run_dir, batch_size):
         
         # Initialize directories and files
         self.dem_asc_file = os.path.join(SIMULATION_DATA_DIR, "Carlisle_5m.asc")
@@ -51,10 +46,15 @@ class ReconstructionModule():
         self.seq_h = self.input_time_len_h * 4
         self.sampling_distance = sampling_distance
         self.cluster_size = cluster_size
+        
+        #Load models
+        self.cnn_model_files, self.cnn_train_history = find_1dcnn_models(sampling_distance, cluster_size)
+        self.unet_model_file, self.unet_train_history  = find_model_file(UNET_MODEL_NAME)
 
         # Load models
-        self.unet = self.load_unet_model_from_file(uent_model_file).to(self.device)
-        self.cnn_models = self.load_cnn_models(cnn_model_files)
+        self.unet = self.load_unet_model_from_file(self.unet_model_file).to(self.device)
+        self.cnn_models = self.load_cnn_models(self.cnn_model_files)
+
         
         # Test variables
         self.test_event_ids = [1]
@@ -76,14 +76,17 @@ class ReconstructionModule():
         start_time = time.time()
         
         logger.info("Predicting depths at representative locations using CNN models")
-        pred_depths, reference_outputs, pred_time = self.predict_rl_depth()
+        pred_depths, reference_outputs, pred_time, cnn_profile = self.predict_rl_depth()
         logger.info(f"Time taken for RL depth prediction: {pred_time}")
-        
+        unet_profile = None
+        all_preds = []
+        all_reference_maps = []
         for map_i in range(len(test_idxs)):
             logger.info(f"Processing map {map_i}")           
-            pred_depths_map = pred_depths[map_i]
-            depth_map, ref_map = self.single_construct(map_i, pred_depths_map)
-            
+            pred_depths_map = reference_outputs[map_i]
+            depth_map, ref_map, prof_analysis_results = self.single_construct(map_i, pred_depths_map)
+            if map_i == 0 and prof_analysis_results is not None:
+                unet_profile = prof_analysis_results
             # ref_map_file = os.path.join(SIMULATION_DATA_DIR, f"Run1-{(map_i + 76):04d}.wd")
             # ref_map = gdal_asarray(ref_map_file)
             # ref_map = torch.from_numpy(ref_map).float().to(self.device)
@@ -94,16 +97,16 @@ class ReconstructionModule():
             logger.info(f"Reference map shape: {ref_map.shape}")       
 
             loss = self.loss_fn(depth_map, ref_map)
-            if map_i == 150:
-                self.visualise_error_distribution(depth_map, ref_map)
+            if map_i == 136:
+                self.save_predictions(depth_map)
             nse = self.nse_fn(ref_map, depth_map)
             mRMSE = self.mRMSE_fn(depth_map, ref_map)
             overall_nse += nse
             overall_mse += loss.item()
             overall_mRMSE += mRMSE
             logger.info(f"Map {map_i} MSE {loss.item()} NSE {nse} mRMSE {mRMSE} ")
-            # if map_i == 145:
-            #     self.save_depth_map(depth_map, map_i)
+            all_preds.append(depth_map)
+            all_reference_maps.append(ref_map)
                 
         end_time = time.time()
         mse = overall_mse / test_idxs.shape[0]
@@ -112,16 +115,37 @@ class ReconstructionModule():
         nse = overall_nse / test_idxs.shape[0]
         reconstruction_time = end_time - start_time
         
+        # Find max Memory Consumption out of cnn and unet models
+        if cnn_profile is not None:
+            max_cuda_memor_cnn = cnn_profile['max_cuda_memory']
+            max_cpu_memory_cnn = cnn_profile['max_cpu_memory']
+        if unet_profile is not None:
+            max_cuda_memory_unet = unet_profile['max_cuda_memory']
+            max_cpu_memory_unet = unet_profile['max_cpu_memory']
+    
+        pred_memory_usage = {
+            "max_cuda_memory": max(max_cuda_memor_cnn, max_cuda_memory_unet) if cnn_profile and unet_profile else 0,
+            "max_cpu_memory": max(max_cpu_memory_cnn, max_cpu_memory_unet) if cnn_profile and unet_profile else 0,
+            "total_cpu_time": cnn_profile['total_cpu_time'] + unet_profile['total_cpu_time'] if cnn_profile and unet_profile else 0,
+            "total_gpu_time": cnn_profile['total_gpu_time'] + unet_profile['total_gpu_time'] if cnn_profile and unet_profile else 0,
+            "total_cpu_memory": 0,
+            "total_gpu_memory": 0 
+        }
+        
         logger.info(f"Overall MSE: {mse}, RMSE: {rmse}, NSE: {nse} mRMSE: {mRMSE}")
+        flops = self.cnn_train_history['flops'] + unet_profile['reconstruct_flops']
+        logger.info(f"Total FLOPs: {format_flops(flops)}")
+        
+        # Save the prediction maps
+        self.save_predictions_at_points(all_preds, all_reference_maps)
         metrics  = {
             'mse': mse,
             'rmse': rmse,
             'mRMSE': mRMSE,
             'nse': nse,
             'pred_time': reconstruction_time,
-            'wet_rmse': None,
-            'wet_acc': None,
-            'flops': None,
+            'flops': flops,
+            "pred_memory_usage": pred_memory_usage 
         }
         return metrics
     
@@ -229,6 +253,19 @@ class ReconstructionModule():
     def predict_rl_depth(self):
         self.find_representative_locations()
         
+        #Run one of the CNN models to get memory profiling
+                # Add profiler for the parallel execution part
+        with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], profile_memory=True,
+                    record_shapes=True, with_stack=True) as prof_rl:
+            rl_group = list(self.cnn_models.keys())[0]
+            
+            model = self.cnn_models[rl_group]
+            _, _  = self.get_rl_group_predictions(rl_group, model)
+            # Log profiler results for RL depth prediction
+            logger.info("RL Depth Prediction Profiler Results:")
+            logger.info(prof_rl.key_averages().table(sort_by="cuda_memory_usage", row_limit=10))
+            prof_analsys_results = profiler_analysis(prof_rl.key_averages())
+            
         # Create copies of each tensor
         reference_output = [tensor.clone() for tensor in self.data_manager.preloaded_maps]
         
@@ -255,10 +292,6 @@ class ReconstructionModule():
                 rl_group = future_to_group[future]
                 try:
                     y_hat_np, data_manager = future.result()
-                    # rl_locations = data_manager.coords_to_cluster_rls # [(1,2), (3,4)),..]
-                    # # Get the first element of the tuple for each rl location in rl_locations
-                    # row_indices = [rl[0] for rl in rl_locations]
-                    # col_indices = [rl[1] for rl in rl_locations]
                     # Process each timestep
                     for i in range(y_hat_np.shape[0]):
                         # Initialize map for this timestep if needed
@@ -271,17 +304,21 @@ class ReconstructionModule():
                     logger.info(f"Completed predictions for RL group {rl_group}")
                 except Exception as exc:
                     logger.error(f"RL group {rl_group} generated an exception: {exc}")
+        
+
         pred_end = time.time()
         pred_time = pred_end - pred_start
         logger.info(f"Total prediction time: {pred_time:.4f} seconds")
         logger.info(f"Completed predictions for {len(all_preds)} RL groups in parallel")
-        return all_preds, reference_output, pred_time
+        return all_preds, reference_output, pred_time, prof_analsys_results
         
     def get_rl_group_predictions(self, rl_group, model):
         total_prediction_time = 0  # Initialize variable used in the method
+        flops = None
         cnn_data_manager = CNNSequentialDataManager(32, self.input_time_len_h,
                                              rl_group, self.sampling_distance, 
                                              self.cluster_size, tuning_mode=False, reconstruction_mode=True, reco_data_manager=self.data_manager)
+        
         with torch.no_grad():
             model.eval()
             test_inputs = cnn_data_manager.test_input
@@ -292,6 +329,7 @@ class ReconstructionModule():
             total_prediction_time += prediction_time
             logger.info(f"Prediction time for {rl_group}: {prediction_time:.4f} seconds")
             return y_hat, cnn_data_manager
+        
                     
     def save_depth_map(self, depth_map, map_i):
         depth_map = depth_map.detach().cpu().numpy()
@@ -357,19 +395,64 @@ class ReconstructionModule():
     def single_construct(self, map_i, pred_depths):
         with torch.no_grad():
             self.unet.eval()
-            input_batch, output_batch, reference_map = self.data_manager.get_batch(map_i, pred_depths)
-            preds = self.unet(input_batch)
-            preds = preds.squeeze(1)
-            loss = self.loss_fn(preds, output_batch)
-            logger.info(f"Map {map_i} Loss: {loss.item()}")
-            predicted_map = self.data_manager.reconstruct_full_map(preds)
+            prof_analysis_results = None
+            # Only profile the first map/timestep
+            if map_i == 0:
+                with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], profile_memory=True,
+                           record_shapes=True, with_stack=True, with_flops=True) as prof_construct:
+                    input_batch, output_batch, reference_map = self.data_manager.get_batch(map_i, pred_depths)
+                    preds = self.unet(input_batch)
+                    preds = preds.squeeze(1)
+                    loss = self.loss_fn(preds, output_batch)
+                    logger.info(f"Map {map_i} Loss: {loss.item()}")
+                    
+                    process = psutil.Process()
+                    start_cpu_time = process.cpu_times().user + process.cpu_times().system
+                    start_time = time.time()
+                    mem_before = process.memory_info().rss / (1024 * 1024)
+                    
+                    #Need to measure flops for this one
+                    predicted_map = self.data_manager.reconstruct_full_map(preds)
+                    
+                    mem_after = process.memory_info().rss / (1024 * 1024)
+                    memory_used = mem_after - mem_before
+                    logger.info(f"Memory used during UNet reconstruction: {memory_used:.2f} MB")
+                    
+                    end_time = time.time()
+                    end_cpu_time = process.cpu_times().user + process.cpu_times().system
+                    cpu_time_used = end_cpu_time - start_cpu_time
+                    wall_time = end_time - start_time
+                    
+                    # Estimate FLOPS based on CPU frequency and utilization
+                    cpu_freq = psutil.cpu_freq().current * 1e6  # Convert MHz to Hz
+                    cpu_count = psutil.cpu_count(logical=True)
+                    utilization = cpu_time_used / wall_time 
+                    estimated_flops = cpu_freq * cpu_count * utilization * wall_time
+                    logger.info(f"Estimated FLOPS for single construct: {estimated_flops:,.0f}")
+                
+                # Log profiler results for single construct
+                logger.info("Single Construct (First Timestep) Profiler Results:")
+                logger.info(prof_construct.key_averages().table(sort_by="cuda_memory_usage", row_limit=10))
+                prof_analysis_results = profiler_analysis(prof_construct.key_averages())
+                logger.info(f"Memory usage for single_construct: {prof_analysis_results['max_cpu_memory']} MB")
+                logger.info(f"CUDA Memory usage for single_construct: {prof_analysis_results['max_cuda_memory']} MB")
+                logger.info(f"FLOPs for single_construct: {format_flops(prof_analysis_results['flops'])}")
+                prof_analysis_results['reconstruct_flops'] = estimated_flops     
+                     
+            else:
+                input_batch, output_batch, reference_map = self.data_manager.get_batch(map_i, pred_depths)
+                preds = self.unet(input_batch)
+                preds = preds.squeeze(1)
+                loss = self.loss_fn(preds, output_batch)
+                logger.info(f"Map {map_i} Loss: {loss.item()}")
+                predicted_map = self.data_manager.reconstruct_full_map(preds)
+            
             torch.cuda.empty_cache()
             reference_map[reference_map < 0.3] = 0
             predicted_map[predicted_map < 0.3] = 0
             
             # predicted_map[reference_map < 0.3] = 0
-            
-            return predicted_map, reference_map
+            return predicted_map, reference_map, prof_analysis_results
         
         
     def load_unet_model_from_file(self, model_file):
@@ -402,11 +485,103 @@ class ReconstructionModule():
             cnn_models[rl_group] = cnn_model
         return cnn_models
     
+    def save_predictions(self, pred):
+        idx = 136
+        output_dir = os.path.join(RUN_DIR, "output_maps", USRR_CNN1D_COMBINED)
+        os.makedirs(output_dir, exist_ok=True)
+        logger.info(f"Saving prediction map to {output_dir}")
+        save_prediction_map(pred, output_dir, idx, USRR_CNN1D_COMBINED)
+        
+    def save_predictions_at_points(self, predictions, ground_truth):
+        """
+        Save model predictions at specific points of interest to a CSV file
+        
+        Args:
+            predictions: Model predictions tensor
+            ground_truth: Ground truth tensor
+            points_csv: Path to the CSV file containing points of interest
+        """
+        try:
+            points_csv = os.path.join(OUTPUT_DIR, "points_of_interest.csv")
+            logger.info(f"Saving predictions at points of interest from {points_csv}")
+            
+            # Read points of interest
+            poi_df = pd.read_csv(points_csv)
+            
+            # Convert tensors to numpy arrays for easier handling
+            pred_np = [pred.cpu().numpy() for pred in predictions]
+            truth_np = [truth.cpu().numpy() for truth in ground_truth]
+            
+            #convert to numpy arrays
+            pred_np = np.array(pred_np)
+            truth_np = np.array(truth_np)
+            
+            ref_file = os.path.join(SIMULATION_DATA_DIR, "Run1-0000.wd")
+            with rasterio.open(ref_file) as src:
+                height = src.height
+                width = src.width
+                profile = src.profile
+                transform = src.transform
+                crs = src.crs
+                
+            pred_np = pred_np.reshape(pred_np.shape[0],height, width)
+            truth_np = truth_np.reshape(truth_np.shape[0], height, width)
+           
+            # Extract predictions and ground truth at each point
+            results = []
+            timesteps = min(pred_np.shape[0], truth_np.shape[0])
+            
+            for _, point in poi_df.iterrows():
+                point_id = point['Point_ID']
+                row = int(point['Row'])
+                col = int(point['Column'])
+                elev = point['Elevation_m']
+                label = point['Label']
+                percentile = point['Percentile']
+                
+                # For each timestep, get the prediction and ground truth at this point
+                for t in range(timesteps):
+                    # Check if indices are in bounds
+                    if (t < pred_np.shape[0] and 
+                        row < pred_np.shape[1] and 
+                        col < pred_np.shape[2]):
+                        
+                        pred_depth = pred_np[t, row, col]
+                        true_depth = truth_np[t, row, col]
+                        
+                        results.append({
+                            'Point_ID': point_id,
+                            'Label': label,
+                            'Percentile': percentile,
+                            'Row': row,
+                            'Column': col,
+                            'Elevation_m': elev,
+                            'Timestep': t,
+                            'Predicted_Depth_m': pred_depth,
+                            'True_Depth_m': true_depth,
+                            'Error_m': pred_depth - true_depth,
+                            'Model_Name': USRR_CNN1D_COMBINED,
+                            'Run_ID': USRR_CNN1D_COMBINED
+                        })
+            
+            # Create DataFrame and save to CSV
+            results_df = pd.DataFrame(results)
+            output_path = os.path.join(RUN_DIR, USRR_CNN1D_COMBINED,  f"predictions_at_points_final.csv")
+            results_df.to_csv(output_path, index=False)
+            logger.info(f"Saved point predictions to {output_path}")
+            
+        except Exception as e:
+            logger.error(f"Error saving predictions at points: {e}")
+    
+    
 def find_1dcnn_models(sampling_distance, cluster_size):
     metrics_file = os.path.join(RUN_DIR, USRR_1DCNN_V1, "final_training_metrics.csv")
+    performance_file = os.path.join(RUN_DIR, USRR_1DCNN_V1, "final_performance_metrics.csv")
     if not os.path.exists(metrics_file):
         raise FileNotFoundError(f"Metadata file {metrics_file} not found.")
     metrics_df = pd.read_csv(metrics_file)
+    perf_df = pd.read_csv(performance_file)
+    
     
     filtered_df = metrics_df[metrics_df['hyperparameters'].apply(
         lambda x: eval(x).get('sampling_dist') == sampling_distance and 
@@ -418,12 +593,51 @@ def find_1dcnn_models(sampling_distance, cluster_size):
     
     # group by sampling_dist, cluster_size and rl_group and get the latest model file by run_id
     latest_model_files = {}
+    total_flops = 0
+    total_neurons = 0
+    total_training_time = 0
+    max_cuda_memory = 0
+    max_cpu_memory = 0
+    total_cpu_time = 0
+    total_gpu_time = 0
+    total_params = 0
     for rl_group in filtered_df['rl_group'].unique():
         group = filtered_df[filtered_df['rl_group'] == rl_group]
         latest_run_id = group['run_id'].sort_values(ascending=False).iloc[0]
         latest_model_file = group[group['run_id'] == latest_run_id]['model_file'].values[0]
+        perf_row = perf_df[perf_df['run_id'] == latest_run_id]
+        traing_row = metrics_df[metrics_df['run_id'] == latest_run_id]
+        if not perf_row.empty:
+            total_flops += perf_row['flops'].values[0]
+            total_neurons += traing_row['total_neurons'].values[0]
+            total_training_time = traing_row['train_time'].values[0]
+            total_params = traing_row['trainable_params'].values[0]
+            memory_usage = traing_row['training_memory_usage'].values[0]
+            
+            memory_usage = eval(memory_usage)
+            max_cuda_memory = max(max_cuda_memory, memory_usage['max_cuda_memory'])
+            max_cpu_memory = max(max_cpu_memory, memory_usage['max_cpu_memory'])
+            total_cpu_time += memory_usage['total_cpu_time']
+            total_gpu_time += memory_usage['total_gpu_time']
+            
         latest_model_files[rl_group] = latest_model_file
         
-    return latest_model_files
-
+    cnn_history = {
+        'flops': total_flops,
+        'num_rls': len(latest_model_files),
+        'total_neurons':total_neurons,
+        'train_time': total_training_time,
+        'memory': {
+            'max_cuda_memory': max_cuda_memory,
+            'max_cpu_memory': max_cpu_memory, 
+            'total_cpu_time': total_cpu_time, 
+            'total_gpu_time': total_gpu_time,
+            'total_cuda_memory': 0,
+            'total_cpu_memory': 0,
+        },
+        'trainable_params': total_params,
+    }
+        
+    return latest_model_files, cnn_history
+    
 

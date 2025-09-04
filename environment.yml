@@ -25,6 +25,8 @@ dependencies:
   - onnx
   - torch-scatter
   - fiona
+  - cartopy
+  - seaborn
   # Add any other pip-specific packages here
 variables:
   GDAL_DISABLE_READDIR_ON_OPEN: "EMPTY_DIR"

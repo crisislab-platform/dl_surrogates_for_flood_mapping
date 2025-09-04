@@ -131,21 +131,11 @@ def create_hdl_fm_model(config, args):
     return HDLFMModelWrapper(config)
 
 def create_lstm_srr_combined_model(config, args):
-    # Create LSTM_SRR model with combined configuration
-    config.args = {
-        'sampling_dist': args.sampling_dist,
-        'n_clusters': args.n_clusters,
-        'rl_group': args.rl_group,
-        'input_time_len_h': args.input_time_len_h,
-        'tuning_mode': args.tuning_mode
-    }
     return SRRLSTMModelWrapper(config)
 
 def create_lstm_srr_model(config, args):
     config.args = {
-        'sampling_dist': args.sampling_dist,
-        'n_clusters': args.n_clusters,
-        'rl_group': args.rl_group,
+        'rl_id': args.rl_id,
         'input_time_len_h': args.input_time_len_h,
         'tuning_mode': args.tuning_mode
     }

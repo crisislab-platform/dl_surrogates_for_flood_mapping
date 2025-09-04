@@ -12,5 +12,5 @@ parallel --line-buffer -j 1 CUDA_VISIBLE_DEVICES={1} python3.11 main.py train \
   ::: 1 \
   ::: 64 \
   ::: 0.01 \
-  ::: 50 \
-  ::: 1 0.5
+  ::: 1 \
+  ::: 0.5

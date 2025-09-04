@@ -69,12 +69,33 @@ def save_to_shp_points_for_sdr_rl(pts, outfile):
         shpDriver.DeleteDataSource(outfile)
     outDataSource = shpDriver.CreateDataSource(outfile)
     outLayer = outDataSource.CreateLayer(outfile, geom_type=ogr.wkbPoint)
+    
+    # Create ID field
+    idField = ogr.FieldDefn("PointID", ogr.OFTInteger)
+    outLayer.CreateField(idField)
+    
+    # Create X and Y fields for easier access in GIS
+    xField = ogr.FieldDefn("X_Coord", ogr.OFTReal)
+    outLayer.CreateField(xField)
+    yField = ogr.FieldDefn("Y_Coord", ogr.OFTReal)
+    outLayer.CreateField(yField)
+    
     featureDefn = outLayer.GetLayerDefn()
-    for coords in pts:
+    
+    for i, coords in enumerate(pts):
         point = ogr.Geometry(ogr.wkbPoint)
         point.AddPoint(coords[0], coords[1])
         outFeature = ogr.Feature(featureDefn)
         outFeature.SetGeometry(point)
+        
+        # Set unique ID and coordinates as attributes
+        outFeature.SetField("PointID", i + 1)  # IDs start from 1
+        outFeature.SetField("X_Coord", coords[0])
+        outFeature.SetField("Y_Coord", coords[1])
+        
         outLayer.CreateFeature(outFeature)
         del point, outFeature
+    
+    outDataSource = None  # Save and close the data source
 
+    print(f"Points saved to {outfile} with {len(pts)} points.")

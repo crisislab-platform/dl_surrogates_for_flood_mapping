@@ -3,7 +3,6 @@ import os
 import logging
 import time
 import torch
-from torch.profiler import profile, ProfilerActivity
 import numpy as np
 import time
 from torch.utils.flop_counter import FlopCounterMode
@@ -51,6 +50,7 @@ class ModelWrapper:
         self.data_manager:DataManager = None
         self.optimizer = None
         self.device = None
+        self.profiler = None
         
     def init_model(self) -> bool:
         pass
@@ -85,6 +85,9 @@ class ModelWrapper:
             valid_batches = 0
             self.model.train()
             
+            if self.config.model_name == USRR_1DCNN_V1:
+                self.data_manager.reshuffle_train_indices()
+            
             for idx, t_indices in enumerate(self.data_manager.train_idx):
                 self.optimizer.zero_grad()
                 input_batch, output_batch = self.data_manager.get_batch(t_indices, subset="train")
@@ -99,13 +102,32 @@ class ModelWrapper:
                     logger.info(f"Output batch device: {output_batch.device}")
                     logger.info(f"Output batch shape: {output_batch.shape}")
                 
-                pred = self.model(input_batch)
-                pred = pred.squeeze(1)  # Remove the channel dimension if present
-                batch_loss = self.loss_fn(pred, output_batch)
+                # Profile only the first batch ofx the first epoch
+                if idx == 0 and epoch == 0:
+                    logger.info("Starting memory profiling for the first batch")
+                    with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], 
+                                profile_memory=True, 
+                                on_trace_ready=torch.profiler.tensorboard_trace_handler(run_dir)) as prof:
+                        pred = self.model(input_batch)
+                        pred = pred.squeeze(1)  # Remove the channel dimension if present
+                        output_batch = output_batch.squeeze(1)  # Ensure output batch is also squeezed
+                        batch_loss = self.loss_fn(pred, output_batch)
+                        batch_loss.backward()
+                        self.optimizer.step()
+                    # Store profiler for later analysis
+                    self.profiler = prof
+                    logger.info("First batch profiling completed")
+                else:
+                    # Normal processing for all other batches
+                    pred = self.model(input_batch)
+                    pred = pred.squeeze(1)  # Remove the channel dimension if present
+                    output_batch = output_batch.squeeze(1)  # Ensure output batch is also squeezed
+                    batch_loss = self.loss_fn(pred, output_batch)
+                    batch_loss.backward()
+                    self.optimizer.step()
+                
                 epoch_loss += batch_loss.item()
                 valid_batches += 1  # Increment valid batch counter
-                batch_loss.backward()
-                self.optimizer.step()
                 logger.info(f"Batch train loss: {batch_loss.item()}")
                 
             # Divide by actual number of valid batches processed
@@ -179,21 +201,19 @@ class ModelWrapper:
             logger.info("Tuning mode is enabled, skipping profiling")
             return self.train_model(run_dir, tuning_mode)
 
-        if self.config.model_name == USRR_UNET_V1 or self.config.model_name == USRR_1DCNN_V1:
-            history, train_time, model_file = self.train_model(run_dir, tuning_mode)
-            history['memory'] = ""
-            logger.info("Training completed, no profiling for UNet model")
-            return history, train_time, model_file
+        logger.info("Starting model training with memory profiling for first batch")
+        history, train_time, model_file = self.train_model(run_dir, tuning_mode)
+        
+        if self.profiler is not None:
+            logger.info("Training completed, analyzing memory usage")
+            key_averages = self.profiler.key_averages()
+            analysis_results = profiler_analysis(key_averages)
+            logger.info(f"Memory profiling results: {key_averages.table(sort_by='cuda_memory_usage', row_limit=10)}")
+            logger.info(f"Profiler analysis results: {analysis_results}")
+            history['memory'] = analysis_results
+        else:
+            history['memory'] = "No profiling data available"
             
-        with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], profile_memory=True, on_trace_ready=torch.profiler.tensorboard_trace_handler(run_dir)) as prof:
-            logger.info("Starting model training with memory profiling")
-            history, train_time, model_file = self.train_model(run_dir, tuning_mode)
-
-        # logger.info("Training completed, profiling memory usage")
-        # key_averages = prof.key_averages()
-        # analysis_results = profiler_analysis(key_averages)
-        # logger.info(f"Memory profiling results: {key_averages.table(sort_by='cuda_memory_usage', row_limit=10)}")
-        # logger.info(f"Profiler analysis results: {analysis_results}")
         return history, train_time, model_file
     
     def create_hyperparameters_dict(self):
@@ -208,7 +228,6 @@ class ModelWrapper:
         return hyperparameters
     
     def test_model(self):
-        
         logger.info("Testing model")
         self.model.eval()
         
@@ -220,6 +239,9 @@ class ModelWrapper:
                 pred = self.model(input_data)
                 # If pred < 0.3 then set to 0
                 pred = torch.where(pred < 0.3, torch.tensor(0.0).to(self.device), pred)
+                ref_out = torch.where(ref_out < 0.3, torch.tensor(0.0).to(self.device), ref_out)
+                pred = pred.squeeze(1)  
+                ref_out = ref_out.squeeze(1)  # Ensure output batch is also squeezed
                 end_time = time.time()
                 loss = self.loss_fn(pred, ref_out)
                 mse = loss.item()
@@ -239,14 +261,13 @@ class ModelWrapper:
         flops = self.calculate_flops()
         self.save_predictions(pred)
                 
-        if self.config.model_name != USRR_1DCNN_V1:
-            # Save predictions at points of interest
-            poi_path = os.path.join(OUTPUT_DIR, "points_of_interest.csv")
-            if os.path.exists(poi_path):
-                self.save_predictions_at_points(pred, ref_out, poi_path)
-            else:
-                logger.warning(f"Points of interest file not found at {poi_path}")
-                
+        # Save predictions at points of interest
+        poi_path = os.path.join(OUTPUT_DIR, "points_of_interest.csv")
+        if os.path.exists(poi_path):
+            self.save_predictions_at_points(pred, ref_out, poi_path)
+        else:
+            logger.warning(f"Points of interest file not found at {poi_path}")
+            
         analysis_results = profiler_analysis(prof.key_averages())
         metrics = {
             "mse": mse,
@@ -405,8 +426,16 @@ class ModelWrapper:
             return None
         
     def save_predictions(self, pred):
-        idx = 146
+        idx = 136
         pred_max = pred.detach().cpu().numpy()[idx]
-        output_dir = os.path.join(self.config.run_dir, "output_maps")
+        output_dir = os.path.join(RUN_DIR, "output_maps", self.config.model_name)
+        os.makedirs(output_dir, exist_ok=True)
+        logger.info(f"Saving prediction map to {output_dir}")
         save_prediction_map(pred_max, output_dir, idx, self.config.model_name)
-
+        
+    def find_and_load_model(self, model_name):
+        training_metrics = os.path.join(RUN_DIR,"final_training_metrics.csv")
+        if not os.path.exists(training_metrics):
+            logger.error(f"Training metrics file not found at {training_metrics}")
+            return None
+        df = pd.read_csv(training_metrics)
