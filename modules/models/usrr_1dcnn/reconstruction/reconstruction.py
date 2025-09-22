@@ -81,9 +81,13 @@ class ReconstructionModule():
         unet_profile = None
         all_preds = []
         all_reference_maps = []
+        all_tp = 0
+        all_tn = 0
+        all_fp = 0
+        all_fn = 0  
         for map_i in range(len(test_idxs)):
             logger.info(f"Processing map {map_i}")           
-            pred_depths_map = reference_outputs[map_i]
+            pred_depths_map = pred_depths[map_i]
             depth_map, ref_map, prof_analysis_results = self.single_construct(map_i, pred_depths_map)
             if map_i == 0 and prof_analysis_results is not None:
                 unet_profile = prof_analysis_results
@@ -104,7 +108,23 @@ class ReconstructionModule():
             overall_nse += nse
             overall_mse += loss.item()
             overall_mRMSE += mRMSE
-            logger.info(f"Map {map_i} MSE {loss.item()} NSE {nse} mRMSE {mRMSE} ")
+            
+            # create confusion matrix for flood/no flood
+            threshold = 0.3
+            pred_binary = (depth_map > threshold).float()
+            ref_binary = (ref_map > threshold).float()
+            
+            tp = ((pred_binary == 1) & (ref_binary == 1)).sum().item()
+            tn = ((pred_binary == 0) & (ref_binary == 0)).sum().item()
+            fp = ((pred_binary == 1) & (ref_binary == 0)).sum().item()
+            fn = ((pred_binary == 0) & (ref_binary == 1)).sum().item()
+            
+            all_tp += tp
+            all_tn += tn
+            all_fp += fp
+            all_fn += fn
+            
+            logger.info(f"Map {map_i} MSE {loss.item()} NSE {nse} mRMSE {mRMSE} all_tp {tp} all_tn {tn} all_fp {fp} all_fn {fn}")
             all_preds.append(depth_map)
             all_reference_maps.append(ref_map)
                 
@@ -114,6 +134,16 @@ class ReconstructionModule():
         mRMSE = overall_mRMSE / test_idxs.shape[0]
         nse = overall_nse / test_idxs.shape[0]
         reconstruction_time = end_time - start_time
+        
+        # Calculate Hit Ratio and Critical Success Index (CSI)
+        hit_ratio = (all_tp + all_tn) / (all_tp + all_tn + all_fp + all_fn) if (all_tp + all_tn + all_fp + all_fn) > 0 else 0
+        csi = all_tp / (all_tp + all_fp + all_fn) if (all_tp + all_fp + all_fn) > 0 else 0
+        
+        # F2 Score
+        f2_score = (all_tp - all_fn) / (all_tp + all_fp + all_fn) if (all_tp + all_fp + all_fn) > 0 else 0
+                
+        # F3 Score
+        f3_score = (all_tp - all_fp) / (all_tp + all_fp + all_fn) if (all_tp + all_fp + all_fn) > 0 else 0
         
         # Find max Memory Consumption out of cnn and unet models
         if cnn_profile is not None:
@@ -132,7 +162,7 @@ class ReconstructionModule():
             "total_gpu_memory": 0 
         }
         
-        logger.info(f"Overall MSE: {mse}, RMSE: {rmse}, NSE: {nse} mRMSE: {mRMSE}")
+        logger.info(f"Overall MSE: {mse}, RMSE: {rmse}, NSE: {nse} mRMSE: {mRMSE} Hit Ratio: {hit_ratio}, CSI: {csi}, F2 Score: {f2_score}, F3 Score: {f3_score}")
         flops = self.cnn_train_history['flops'] + unet_profile['reconstruct_flops']
         logger.info(f"Total FLOPs: {format_flops(flops)}")
         
@@ -145,7 +175,11 @@ class ReconstructionModule():
             'nse': nse,
             'pred_time': reconstruction_time,
             'flops': flops,
-            "pred_memory_usage": pred_memory_usage 
+            "pred_memory_usage": pred_memory_usage , 
+            'hit_rate': hit_ratio,
+            'csi': csi,
+            'f2_score': f2_score,
+            'f3_score': f3_score
         }
         return metrics
     
@@ -280,7 +314,7 @@ class ReconstructionModule():
         pred_start = time.time()
         
         #Use ProcessPoolExecutor for parallel execution
-        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
             # Submit all prediction tasks
             future_to_group = {
                 executor.submit(self.get_rl_group_predictions, rl_group, model): rl_group
@@ -291,6 +325,8 @@ class ReconstructionModule():
             for future in concurrent.futures.as_completed(future_to_group):
                 rl_group = future_to_group[future]
                 try:
+                    if rl_group == 0 or rl_group == '0':
+                        logger.info(f"RL group {rl_group} has {y_hat_np.shape[0]} timesteps")
                     y_hat_np, data_manager = future.result()
                     # Process each timestep
                     for i in range(y_hat_np.shape[0]):
@@ -313,22 +349,24 @@ class ReconstructionModule():
         return all_preds, reference_output, pred_time, prof_analsys_results
         
     def get_rl_group_predictions(self, rl_group, model):
-        total_prediction_time = 0  # Initialize variable used in the method
-        flops = None
-        cnn_data_manager = CNNSequentialDataManager(32, self.input_time_len_h,
-                                             rl_group, self.sampling_distance, 
-                                             self.cluster_size, tuning_mode=False, reconstruction_mode=True, reco_data_manager=self.data_manager)
+        try: 
+            total_prediction_time = 0  # Initialize variable used in the method
+            cnn_data_manager = CNNSequentialDataManager(32, self.input_time_len_h,
+                                                rl_group, self.sampling_distance, 
+                                                self.cluster_size, tuning_mode=False, reconstruction_mode=True, reco_data_manager=self.data_manager)
+            with torch.no_grad():
+                model.eval()
+                test_inputs = cnn_data_manager.test_input
+                start_time = time.time()    
+                y_hat = model(test_inputs.float())
+                end_time = time.time()
+                prediction_time = end_time - start_time
+                total_prediction_time += prediction_time
+                logger.info(f"Prediction time for {rl_group}: {prediction_time:.4f} seconds")
+                return y_hat, cnn_data_manager
+        except Exception as exc:
+                logger.error(f"RL group {rl_group} generated an exception: {exc}")
         
-        with torch.no_grad():
-            model.eval()
-            test_inputs = cnn_data_manager.test_input
-            start_time = time.time()    
-            y_hat = model(test_inputs.float())
-            end_time = time.time()
-            prediction_time = end_time - start_time
-            total_prediction_time += prediction_time
-            logger.info(f"Prediction time for {rl_group}: {prediction_time:.4f} seconds")
-            return y_hat, cnn_data_manager
         
                     
     def save_depth_map(self, depth_map, map_i):

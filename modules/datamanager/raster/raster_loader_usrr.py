@@ -23,7 +23,7 @@ class ReconsturctionDataManager(USRRDataManager):
                  run_dir, 
                  batches_per_map=6):
         super().__init__()
-        cross_tile_dist=32
+        cross_tile_dist=28
         map_size=64
         
         # Paths

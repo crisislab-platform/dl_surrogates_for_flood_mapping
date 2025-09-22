@@ -87,14 +87,23 @@ def train_model(config: ModelConfig, args) -> str:
         pred_time = metrics.get("pred_time", 0)
         flops = metrics.get("flops", 0)
         mRMSE = metrics.get("mRMSE", 0)
+        hit_rate = metrics.get("hit_rate", 0)
+        csi = metrics.get("csi", 0)
+        f2_score = metrics.get("f2_score", 0)
+        f3_score = metrics.get("f3_score", 0)
     
 
         logger.info(f"Prediction completed in {pred_time:.2f} seconds")
         logger.info(f"Prediction MSE: {pred_mse}")
         logger.info(f"Prediction RMSE: {pred_rmse}")
         logger.info(f"Prediction mRMSE: {mRMSE}")
+        logger.info(f"Prediction Hit Rate: {hit_rate}")
+        logger.info(f"Prediction CSI: {csi}")
+        logger.info(f"Prediction F2 Score: {f2_score}")
+        logger.info(f"Prediction F3 Score: {f3_score}")
         logger.info(f"Prediction NSE: {pred_nse}")
         logger.info(f"Model FLOPS: {flops}")
+        
         
         save_prediction_metrics(
             run_id, config.model_name, metrics

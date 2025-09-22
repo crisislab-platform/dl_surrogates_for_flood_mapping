@@ -16,6 +16,8 @@ logger = logging.getLogger("CNNDataManager")
 class CNNSequentialDataManager(DataManager):
     def __init__(self, batch_size=32, input_time_len_h=1, rl_group=1,sampling_dist=20, num_of_clusters=100, fold=1, tuning_mode=True, reconstruction_mode=False, reco_data_manager:ReconsturctionDataManager=None):
         super().__init__()
+        if rl_group == 1 or rl_group == '0': 
+            logger.info("Using all representative locations (RL group 1)")
         # Directories
         self.simulation_data_dir = SIMULATION_DATA_DIR
         self.dem_file = os.path.join(self.simulation_data_dir, "Carlisle_5m.asc")

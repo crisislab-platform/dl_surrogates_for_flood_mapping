@@ -249,6 +249,33 @@ class ModelWrapper:
                 
                 # Calculate mRMSE for wet cells
                 mRMSE = self.mRMSE_fn(pred, ref_out)
+                
+                #calculate confusion matrix at 0.3m threshold
+                threshold = 0.3
+                pred_binary = (pred > threshold).float()
+                ref_binary = (ref_out > threshold).float()
+                tp = ((pred_binary == 1) & (ref_binary == 1)).sum().item()
+                tn = ((pred_binary == 0) & (ref_binary == 0)).sum().item()
+                fp = ((pred_binary == 1) & (ref_binary == 0)).sum().item()
+                fn = ((pred_binary == 0) & (ref_binary == 1)).sum().item()
+                
+                logger.info(f"Confusion Matrix at {threshold}m threshold - TP: {tp}, TN: {tn}, FP: {fp}, FN: {fn}")
+                
+                # Hit Rate
+                hit_rate = tp / (tp + fn) if (tp + fn) > 0 else 0
+                logger.info(f"Hit Rate: {hit_rate}")
+                
+                # Critical Success Index (CSI)
+                csi = tp / (tp + fp + fn) if (tp + fp + fn) > 0 else 0
+                logger.info(f"Critical Success Index (CSI): {csi}")
+                
+                # F2 Score
+                f2_score = (tp - fn) / (tp + fp + fn) if (tp + fp + fn) > 0 else 0
+                
+                # F3 Score
+                f3_score = (tp - fp) / (tp + fp + fn) if (tp + fp + fn) > 0 else 0
+                
+                
 
                 # Calculate NSE
                 observed = ref_out
@@ -274,6 +301,10 @@ class ModelWrapper:
             "rmse": rmse,
             "nse": nse,
             "mRMSE": mRMSE,
+            "hit_rate": hit_rate,
+            "csi": csi,
+            "f2_score": f2_score,
+            "f3_score": f3_score,
             "pred_time": pred_time,
             "flops": flops,
             "pred_memory_usage": analysis_results

@@ -118,11 +118,17 @@ class HDLFMModelWrapper(ModelWrapper):
         predictions =  []
         ground_truth = []
         start_time = time.time()
+        
+        
         with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], profile_memory=True, on_trace_ready=torch.profiler.tensorboard_trace_handler(self.config.run_dir)) as prof:
             with torch.no_grad():
                 total_loss = 0.0
                 total_mRMSE = 0.0
                 total_nse = 0.0
+                all_tp = 0
+                all_tn = 0
+                all_fp = 0
+                all_fn = 0
                 for index in self.data_manager.test_index:
                     input_data, ref_out = self.data_manager.get_test_batch(index)
                     pred = self.model(input_data)
@@ -138,6 +144,21 @@ class HDLFMModelWrapper(ModelWrapper):
                     # Calculate mRMSE for wet cells
                     batch_mRMSE = self.mRMSE_fn(pred, ref_out)
                     total_mRMSE += batch_mRMSE
+                    
+                    # confusion matrix components
+                     #calculate confusion matrix at 0.3m threshold
+                    threshold = 0.3
+                    pred_binary = (pred > threshold).float()
+                    ref_binary = (ref_out > threshold).float()
+                    tp = ((pred_binary == 1) & (ref_binary == 1)).sum().item()
+                    tn = ((pred_binary == 0) & (ref_binary == 0)).sum().item()
+                    fp = ((pred_binary == 1) & (ref_binary == 0)).sum().item()
+                    fn = ((pred_binary == 0) & (ref_binary == 1)).sum().item()
+                    
+                    all_tp += tp
+                    all_tn += tn
+                    all_fp += fp
+                    all_fn += fn
 
                     # Calculate NSE
                     observed = ref_out
@@ -154,11 +175,19 @@ class HDLFMModelWrapper(ModelWrapper):
                 mRMSE = total_mRMSE / len(self.data_manager.test_index)
                 nse = total_nse / len(self.data_manager.test_index)
                 rmse = np.sqrt(mse)
+                
+                # Calculate Hit Ratio and Critical Success Index (CSI)
+                hit_ratio = (all_tp + all_tn) / (all_tp + all_tn + all_fp + all_fn) if (all_tp + all_tn + all_fp + all_fn) > 0 else 0
+                csi = all_tp / (all_tp + all_fp + all_fn) if (all_tp + all_fp + all_fn) > 0 else 0
+                # F2 Score
+                f2_score = (all_tp - all_fn) / (all_tp + all_fp + all_fn) if (all_tp + all_fp + all_fn) > 0 else 0
+                # F3 Score
+                f3_score = (all_tp - all_fp) / (all_tp + all_fp + all_fn) if (all_tp + all_fp + all_fn) > 0 else 0
                
         
         end_time = time.time()
         pred_time = end_time - start_time
-        logger.info(f"Validation prediction_time:{pred_time} loss MSE: {mse} RMSE: {rmse}  NSE: {nse} mRMSE: {mRMSE}")
+        logger.info(f"Validation prediction_time:{pred_time} loss MSE: {mse} RMSE: {rmse}  NSE: {nse} mRMSE: {mRMSE} Hit Ratio: {hit_ratio} CSI: {csi} F2 Score: {f2_score} F3 Score: {f3_score}")
         
         predictions = torch.cat(predictions, dim=0)
         ground_truth = torch.cat(ground_truth, dim=0)
@@ -182,7 +211,11 @@ class HDLFMModelWrapper(ModelWrapper):
             "mRMSE": mRMSE,
             "pred_time": pred_time,
             "flops": flops,
-            "pred_memory_usage": analysis_results
+            "pred_memory_usage": analysis_results, 
+            "hit_rate": hit_ratio,
+            "csi": csi,
+            "f2_score": f2_score,
+            "f3_score": f3_score
         }
         
         logger.info(prof.key_averages().table(sort_by="cuda_memory_usage", row_limit=10))

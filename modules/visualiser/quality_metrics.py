@@ -60,13 +60,13 @@ def plot_depth_predictions_at_points():
     # Create summary comparison plot for all models
     plot_summary_comparison(model_predictions, poi_df)
     
-    # Define a consistent color scheme for models
+    # Use the same vibrant colors for each model as in performance_and_footprint.py
     model_colors = {
-        CNN1D_V1: 'crimson',
-        PICNN1D_V1: 'forestgreen',
-        USRR_CNN1D_COMBINED: 'darkorange',
-        SRR_LSTM_COMBINED: 'darkviolet',
-        HDL_FM_V1: 'dodgerblue',
+        CNN1D_V1: "#00BFA5",        # Bright teal
+        PICNN1D_V1: "#E91E63",      # Bright pink
+        USRR_CNN1D_COMBINED: "#2196F3",  # Bright blue
+        SRR_LSTM_COMBINED: "#FFC107",  # Amber/gold
+        HDL_FM_V1: "#9C27B0",       # Bright purple
         'True': 'black'  # Ground truth
     }
     
@@ -201,7 +201,13 @@ def plot_depth_predictions_at_points():
         plt.savefig(output_file, dpi=300, bbox_inches='tight')
         logger.info(f"Saved comparison plot for point {point_id} to {output_file}")
         plt.close(fig)
+        
+        
+    #for HDL-FM create a plot comparing all points
+    if HDL_FM_V1 in model_predictions:
+        create_hdl_fm_multi_point_plot(model_predictions[HDL_FM_V1], poi_df, output_path)
     
+
     logger.info(f"Completed generating point-centric comparison plots for {len(point_ids)} points")
 
 def plot_summary_comparison(model_predictions, poi_df):
@@ -707,7 +713,7 @@ def create_error_boxplot():
             display_name = model_display_names.get(model_name, model_name)
             labels.append(display_name)
             pred_data = pred_data.flatten()
-            truth_data_flatten = truth_data.flatten()
+            truth_data_flatten = truth_data.flatten();
             
             # Calculate key statistics - fix RMSE calculation
             rmse = np.sqrt(np.mean((pred_data - truth_data_flatten) **2))
@@ -793,9 +799,10 @@ def create_error_boxplot():
 def vizualise_test_event():
     # plot_upstream_hydrographs()
     # plot_flood_depth()
-    plot_depth_predictions_at_points()
-    plot_flood_maps()
-    create_error_boxplot()  # Add the box plot function
+    # plot_depth_predictions_at_points()
+    # plot_flood_maps()
+    plot_flood_extent_maps()  # Add flood extent confusion matrix maps
+    # create_error_boxplot()  # Add the box plot function# Add individual model maps generation
 
 def plot_upstream_hydrographs():
     logger.info("Generating upstream hydrograph plots")
@@ -1121,17 +1128,29 @@ def save_points_to_csv(points, labels, percentiles):
 
 def plot_flood_maps():
     """
-    Creates a comparison visualization of flood maps from all available models
-    and the ground truth LISFLOOD simulation, including error maps.
-    Each model gets a pair of plots: prediction on the left, error on the right.
+    Creates visualizations of flood maps for all available models:
+    1. Grid layout with prediction maps for all models
+    2. Grid layout with error maps for all models
+    
+    Each model gets its own row in the grid for easy comparison.
     """
-    # Use all available models in constants
+    # List of all models to process
     model_names = [CNN1D_V1, PICNN1D_V1, USRR_CNN1D_COMBINED, SRR_LSTM_COMBINED, HDL_FM_V1]
+    
+    # Create nicer display names for models
+    model_display_names = {
+        CNN1D_V1: '1DCNN',
+        PICNN1D_V1: 'PI1DCNN',
+        USRR_CNN1D_COMBINED: 'USRR-1DCNN',
+        SRR_LSTM_COMBINED: 'SRR-LSTM',
+        HDL_FM_V1: 'HDL-FM'
+    }
     
     # Timestep to use for comparison
     idx = "0145"
+    alt_idx = "0136"  # Alternative timestep if primary isn't available
     
-    # Reference LISFLOOD run
+    # Reference LISFLOOD run (ground truth)
     lf_extent_file = os.path.join(SIMULATION_DATA_DIR, f"Run1-{idx}.wd")
     if not os.path.exists(lf_extent_file):
         logger.error(f"Ground truth file doesn't exist: {lf_extent_file}")
@@ -1141,243 +1160,712 @@ def plot_flood_maps():
     with rasterio.open(lf_extent_file) as src:
         truth_data = src.read(1)
         truth_nodata = src.nodata
+        extent = [src.bounds.left, src.bounds.right, src.bounds.bottom, src.bounds.top]
     
-    # Find all available model outputs for this timestep
-    available_models = {}
+    # Load DEM data for background
+    dem_file = os.path.join(SIMULATION_DATA_DIR, "Carlisle_5m.asc")
+    with rasterio.open(dem_file) as src:
+        dem_data = src.read(1)
+        dem_nodata = src.nodata
     
+    # Create colormap for water depth visualization
+    water_colors = plt.cm.Blues(np.linspace(0, 1, 256))
+    for i in range(len(water_colors)):
+        water_colors[i, 0:3] = np.clip(water_colors[i, 0:3] * 1.3, 0, 1)
+    water_cmap = plt.matplotlib.colors.LinearSegmentedColormap.from_list('enhanced_blues', water_colors)
+    
+    # Create diverging colormap for error visualization
+    error_cmap = 'coolwarm'  # Red for over-prediction, blue for under-prediction
+    
+    # Set DEM visualization properties
+    dem_cmap = plt.cm.Greys_r
+    dem_alpha = 0.7
+    water_alpha = 1.0
+    
+    # Dictionary to collect model data
+    model_data = {}
+    available_models = []
+    
+    # Load prediction data for each model
     for model_name in model_names:
-        # Check potential file locations
+        # Try to find the prediction file
         maps_dir = os.path.join(RUN_DIR, "output_maps", model_name)
-        model_map_path = os.path.join(maps_dir, f"map_{idx}.wd")
+        primary_map_path = os.path.join(maps_dir, f"map_{idx}.wd")
+        alt_map_path = os.path.join(maps_dir, f"map_{alt_idx}.wd")
         
-        # Alternative path format
-        alt_map_path = os.path.join(maps_dir, f"map_0136.wd")
-        
-        if os.path.exists(model_map_path):
-            available_models[model_name] = model_map_path
+        model_map_path = None
+        if os.path.exists(primary_map_path):
+            model_map_path = primary_map_path
+            used_idx = idx
         elif os.path.exists(alt_map_path):
-            available_models[model_name] = alt_map_path
+            model_map_path = alt_map_path
+            used_idx = alt_idx
             logger.info(f"Using alternative timestep for {model_name}")
+        
+        if model_map_path:
+            try:
+                # Load the prediction data
+                with rasterio.open(model_map_path) as src:
+                    pred_data = src.read(1)
+                    pred_nodata = src.nodata
+                
+                # Create cleaned prediction data (values < 0.3 are considered dry)
+                pred_data_clean = pred_data.copy()
+                pred_data_clean[pred_data_clean < 0.3] = 0
+                
+                # Calculate error (prediction - reference)
+                error_data = pred_data_clean - truth_data
+                
+                # Create masked arrays for visualization
+                masked_pred = np.ma.masked_where((pred_data_clean == pred_nodata) | (pred_data_clean == 0), pred_data_clean)
+                masked_error = np.ma.masked_where((error_data == pred_nodata), error_data)
+                
+                # Calculate RMSE
+                wet_mask = (truth_data > 0.01) | (pred_data_clean > 0.01)
+                valid_mask = (truth_data != truth_nodata) & (pred_data != pred_nodata) & wet_mask
+                if np.any(valid_mask):
+                    rmse = np.sqrt(np.mean((pred_data[valid_mask] - truth_data[valid_mask]) ** 2))
+                else:
+                    rmse = 0
+                
+                # Store data in dictionary
+                model_data[model_name] = {
+                    'pred_data': pred_data_clean,
+                    'error_data': error_data,
+                    'masked_pred': masked_pred,
+                    'masked_error': masked_error,
+                    'rmse': rmse,
+                    'timestep': used_idx
+                }
+                available_models.append(model_name)
+                logger.info(f"Loaded prediction data for {model_name}, RMSE: {rmse:.3f}m")
+            except Exception as e:
+                logger.error(f"Error processing {model_name}: {str(e)}")
+        else:
+            logger.warning(f"No prediction data found for {model_name}")
     
-    if len(available_models) == 0:
-        logger.error("No model outputs found to compare with ground truth")
+    if not available_models:
+        logger.error("No model prediction data could be loaded")
         return None
     
-    logger.info(f"Creating flood map comparison with {len(available_models)} models at timestep {idx}")
-    dem_file = os.path.join(SIMULATION_DATA_DIR, "Carlisle_5m.asc")
-    output_file = os.path.join(OUTPUT_DIR, "quality_metrics", f"flood_map_error_comparison_{idx}.png")
-    os.makedirs(os.path.dirname(output_file), exist_ok=True)
+    logger.info(f"Creating flood map comparison at timestep {idx} for {len(available_models)} models")
+    
+    # Define output filenames
+    output_dir = os.path.join(OUTPUT_DIR, "quality_metrics")
+    os.makedirs(output_dir, exist_ok=True)
+    predictions_file = os.path.join(output_dir, f"all_models_predictions_{idx}.png")
+    errors_file = os.path.join(output_dir, f"all_models_errors_{idx}.png")
+    output_file = os.path.join(output_dir, f"flood_map_error_comparison_{idx}.png")
+    
+    # Create masked array for reference truth data (once, for comparison to all models)
+    masked_truth = np.ma.masked_where((truth_data == truth_nodata) | (truth_data < 0.01), truth_data)
+    
+    # Calculate global error range for consistent colormaps across all models
+    all_error_values = []
+    for model in available_models:
+        all_error_values.extend(model_data[model]['masked_error'].compressed())
+    if all_error_values:
+        p95 = np.percentile(np.abs(all_error_values), 95)
+        global_error_max = min(p95 * 1.5, max(abs(np.nanmin(all_error_values)), abs(np.nanmax(all_error_values))))
+    else:
+        global_error_max = 1.0
     
     try:
-        # Create a figure with 1+N rows (LISFLOOD reference + each model)
-        # Each row has 2 columns (prediction + error map)
+        # Create a single figure with predictions and errors side by side
         n_models = len(available_models)
-        fig = plt.figure(figsize=(16, 6 + 5*n_models))  # Width for 2 plots, height scales with models
+        # Calculate figure size - more compact and scientific
+        fig_width = 16  # Fixed width for consistency
+        fig_height = 12  # Reduced row height for more compact layout
+        fig_combined = plt.figure(figsize=(fig_width, fig_height))
+    
+        # Generate individual model maps
+        for model in available_models:
+            model_info = model_data[model]
+            display_name = model_display_names.get(model, model)
+            output_file = os.path.join(output_dir, f"{model}_maps.png")
+            
+            # Create side-by-side prediction and error maps
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 8))
+            
+            # Left plot: Prediction map
+            ax1.imshow(dem_data, extent=extent, cmap=dem_cmap, alpha=dem_alpha, origin='upper')
+            im1 = ax1.imshow(model_info['masked_pred'], extent=extent, cmap=water_cmap, alpha=water_alpha, 
+                            vmin=0, vmax=3.0, origin='upper')
+            ax1.set_title(f'{display_name} - Prediction', fontsize=14, fontweight='bold')
+            ax1.set_xticks([])
+            ax1.set_yticks([])
+            
+            # Add scale bar and north arrow to prediction
+            ax1.text(0.95, 0.05, '↑N', transform=ax1.transAxes, fontsize=12, 
+                    fontweight='bold', ha='center', bbox=dict(facecolor='white', alpha=0.8))
+            
+            scalebar_length_m = 500
+            scale_x = extent[0] + (extent[1] - extent[0]) * 0.05
+            scale_y = extent[2] + (extent[3] - extent[2]) * 0.05
+            ax1.plot([scale_x, scale_x + scalebar_length_m], [scale_y, scale_y], 'k-', linewidth=2)
+            ax1.text(scale_x + scalebar_length_m/2, scale_y + (extent[3] - extent[2]) * 0.01, 
+                    f'{scalebar_length_m}m', ha='center', va='bottom', 
+                    bbox=dict(facecolor='white', alpha=0.8, edgecolor='black'))
+            
+            # Right plot: Error map
+            ax2.imshow(dem_data, extent=extent, cmap=dem_cmap, alpha=0.15, origin='upper')
+            im2 = ax2.imshow(model_info['masked_error'], extent=extent, cmap=error_cmap,
+                            vmin=-global_error_max, vmax=global_error_max, alpha=1.0, origin='upper')
+            ax2.set_title(f'{display_name} - Error (RMSE: {model_info["rmse"]:.3f}m)', fontsize=14, fontweight='bold')
+            ax2.set_xticks([])
+            ax2.set_yticks([])
+            
+            # Calculate and display error statistics
+            error_compressed = model_info['masked_error'].compressed()
+            if len(error_compressed) > 0:
+                over_pred = np.sum(error_compressed > 0.1) / len(error_compressed) * 100
+                under_pred = np.sum(error_compressed < -0.1) / len(error_compressed) * 100
+                
+                stats_text = (f"Over-prediction: {over_pred:.1f}%\n"
+                             f"Under-prediction: {under_pred:.1f}%")
+                
+                ax2.text(0.02, 0.98, stats_text, transform=ax2.transAxes, fontsize=10,
+                        verticalalignment='top', horizontalalignment='left',
+                        bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.9, edgecolor='gray'))
+            
+            plt.tight_layout()
+            plt.savefig(output_file, dpi=300, bbox_inches='tight', facecolor='white')
+            logger.info(f"Saved {display_name} maps to {output_file}")
+            plt.close()
         
-        # Create nice title
-        # fig.suptitle('Flood Prediction and Error Analysis', fontsize=20, fontweight='bold', y=0.98)
+        # Generate separate colorbar images
+        logger.info("Generating separate colorbar images")
         
-        # Create grid layout - 1 row for reference + N rows for models, 2 columns for pred/error
-        gs = fig.add_gridspec(n_models+1, 2, wspace=0.1, hspace=0.15)  # Reduced hspace from 0.3 to 0.15
+        # Water depth colorbar
+        fig, ax = plt.subplots(figsize=(8, 2))
+        ax.axis('off')
         
-        # Process DEM data
-        with rasterio.open(dem_file) as src:
-            dem_data = src.read(1)
-            extent = [src.bounds.left, src.bounds.right, src.bounds.bottom, src.bounds.top]
-            dem_nodata = src.nodata
+        cax = fig.add_axes([0.1, 0.4, 0.8, 0.2])
+        norm = plt.Normalize(0, 3.0)
+        cb = plt.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=water_cmap), 
+                         cax=cax, orientation='horizontal')
+        cb.set_label('Water Depth (m)', fontsize=14, fontweight='bold')
+        cb.ax.tick_params(labelsize=12)
         
-        # Create enhanced water colormap
-        water_colors = plt.cm.Blues(np.linspace(0, 1, 256))
-        for i in range(len(water_colors)):
-            water_colors[i, 0:3] = np.clip(water_colors[i, 0:3] * 1.3, 0, 1)
-        water_cmap = plt.matplotlib.colors.LinearSegmentedColormap.from_list('enhanced_blues', water_colors)
+        ax.text(0.5, 0.8, 'Water Depth Scale', transform=ax.transAxes, 
+               fontsize=16, fontweight='bold', ha='center')
         
-        # Create color map for error visualization
-        error_cmap = plt.cm.Reds  # Changed from coolwarm to pink/red colormap
+        plt.tight_layout()
+        depth_cbar_file = os.path.join(output_dir, "depth_colorbar.png")
+        plt.savefig(depth_cbar_file, dpi=300, bbox_inches='tight', facecolor='white')
+        logger.info(f"Saved depth colorbar to {depth_cbar_file}")
+        plt.close()
         
-        # Use terrain colormap for DEM
-        dem_cmap = plt.cm.Greys_r
-        dem_alpha = 0.7
-        water_alpha = 1.0
+        # Error colorbar
+        fig, ax = plt.subplots(figsize=(8, 2))
+        ax.axis('off')
         
-        # Get normalized DEM
-        dem_min, dem_max = np.percentile(dem_data, [5, 95])
-        normalized_dem = dem_data
+        cax = fig.add_axes([0.1, 0.4, 0.8, 0.2])
+        norm = plt.Normalize(-global_error_max, global_error_max)
+        cb = plt.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=error_cmap), 
+                         cax=cax, orientation='horizontal')
+        cb.set_label('Error (m)', fontsize=14, fontweight='bold')
+        cb.ax.tick_params(labelsize=12)
         
-        # First row: Reference LISFLOOD model
-        ax_ref = fig.add_subplot(gs[0, 0])
+        ax.text(0.5, 0.8, 'Error Scale', transform=ax.transAxes, 
+               fontsize=16, fontweight='bold', ha='center')
+        # ax.text(0.5, 0.1, 'Blue: Under-prediction (Model < Reference)  |  Red: Over-prediction (Model > Reference)', 
+        #        transform=ax.transAxes, fontsize=12, ha='center',
+        #        bbox=dict(boxstyle='round,pad=0.3', facecolor='lightgray', alpha=0.7))
         
-        # Create masked array for LISFLOOD truth data
-        masked_truth = np.ma.masked_where((truth_data == truth_nodata) | (truth_data < 0.01), truth_data)
+        plt.tight_layout()
+        error_cbar_file = os.path.join(output_dir, "error_colorbar.png")
+        plt.savefig(error_cbar_file, dpi=300, bbox_inches='tight', facecolor='white')
+        logger.info(f"Saved error colorbar to {error_cbar_file}")
+        plt.close()
         
-        # Plot LISFLOOD reference
-        ax_ref.imshow(normalized_dem, extent=extent, cmap=dem_cmap, alpha=dem_alpha, origin='upper')
-        im_ref = ax_ref.imshow(masked_truth, extent=extent, cmap=water_cmap, alpha=water_alpha, 
-                           vmin=0, vmax=3.0, origin='upper')
+        # Generate reference map
+        logger.info("Generating reference (LISFLOOD) map")
+        fig, ax = plt.subplots(figsize=(10, 8))
+        ax.imshow(dem_data, extent=extent, cmap=dem_cmap, alpha=dem_alpha, origin='upper')
+        ax.imshow(masked_truth, extent=extent, cmap=water_cmap, alpha=water_alpha, 
+                  vmin=0, vmax=3.0, origin='upper')
         
-        # Add label and title to reference
-        ax_ref.text(0.05, 0.95, 'A', transform=ax_ref.transAxes, fontsize=16, 
-                   fontweight='bold', bbox=dict(facecolor='white', alpha=0.8))
-        ax_ref.set_title('LISFLOOD Reference Simulation', fontsize=14, fontweight='bold', pad=10)
+        ax.set_title('Reference (LISFLOOD)', fontsize=16, fontweight='bold', pad=15)
+        ax.set_xticks([])
+        ax.set_yticks([])
         
-        # Style reference plot
-        ax_ref.grid(True, alpha=0.3, linestyle='--', color='black')
-        ax_ref.set_xticklabels([])
-        ax_ref.set_yticklabels([])
-        for spine in ax_ref.spines.values():
-            spine.set_visible(True)
-            spine.set_linewidth(1.0)
-        
-        # Add error map for LISFLOOD reference
-        ax_error_ref = fig.add_subplot(gs[0, 1])
-        
-        # Create zero error map for LISFLOOD reference (truth - truth = 0)
-        zero_error = np.zeros_like(truth_data)
-        masked_zero_error = np.ma.masked_where(~(truth_data > 0.01), zero_error)
-        im_ref_error = ax_error_ref.imshow(masked_zero_error, extent=extent, cmap=error_cmap, 
-                                     vmin=0, vmax=0.1, alpha=1.0, origin='upper')
-        
-        # Add label and title to reference error
-        ax_error_ref.text(0.05, 0.95, 'B', transform=ax_error_ref.transAxes, fontsize=16, 
-                        fontweight='bold', bbox=dict(facecolor='white', alpha=0.8))
-        ax_error_ref.set_title('LISFLOOD Error', fontsize=14, fontweight='bold', pad=10)
-        
-        # Style reference error plot
-        ax_error_ref.grid(True, alpha=0.3, linestyle='--', color='black')
-        ax_error_ref.set_xticklabels([])
-        ax_error_ref.set_yticklabels([])
-        for spine in ax_error_ref.spines.values():
-            spine.set_visible(True)
-            spine.set_linewidth(1.0)
-        
-        # Add scale and north arrow to reference
-        ax_ref.text(0.95, 0.05, '↑N', transform=ax_ref.transAxes, fontsize=14, 
-                   fontweight='bold', ha='center', bbox=dict(facecolor='white', alpha=0.8))
+        # Add scale bar and north arrow
+        ax.text(0.95, 0.05, '↑N', transform=ax.transAxes, fontsize=14, 
+               fontweight='bold', ha='center', bbox=dict(facecolor='white', alpha=0.8))
         
         scalebar_length_m = 500
         scale_x = extent[0] + (extent[1] - extent[0]) * 0.05
         scale_y = extent[2] + (extent[3] - extent[2]) * 0.05
-        ax_ref.plot([scale_x, scale_x + scalebar_length_m], [scale_y, scale_y], 'k-', linewidth=2)
-        ax_ref.text(scale_x + scalebar_length_m/2, scale_y + (extent[3] - extent[2]) * 0.01, 
-                   f'{scalebar_length_m}m', ha='center', va='bottom', 
-                   bbox=dict(facecolor='white', alpha=0.8, edgecolor='black'))
-       
+        ax.plot([scale_x, scale_x + scalebar_length_m], [scale_y, scale_y], 'k-', linewidth=2)
+        ax.text(scale_x + scalebar_length_m/2, scale_y + (extent[3] - extent[2]) * 0.01, 
+               f'{scalebar_length_m}m', ha='center', va='bottom', 
+               bbox=dict(facecolor='white', alpha=0.8, edgecolor='black'))
         
-        # Plot each model with its error map
-        for i, (model_name, map_path) in enumerate(available_models.items(), start=1):
-            # Left plot: Model prediction
-            ax_pred = fig.add_subplot(gs[i, 0])
+        plt.tight_layout()
+        ref_file = os.path.join(output_dir, f"reference_lisflood_{idx}.png")
+        plt.savefig(ref_file, dpi=300, bbox_inches='tight', facecolor='white')
+        logger.info(f"Saved reference map to {ref_file}")
+        plt.close()
+        
+        logger.info(f"Generated maps for {len(available_models)} models, 1 reference map, and 2 colorbar images")
+        return output_dir
             
-            # Right plot: Error map
-            ax_error = fig.add_subplot(gs[i, 1])
+    except Exception as e:
+        logger.error(f"Error generating individual model maps: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return None
+
+def create_hdl_fm_multi_point_plot(hdl_fm_predictions, poi_df, output_path):
+    """
+    Creates a single plot showing HDL-FM predictions across all points of interest
+    Args:
+        hdl_fm_predictions: DataFrame containing HDL-FM model predictions
+        poi_df: DataFrame containing point of interest metadata
+        output_path: Directory to save the output plot
+    """
+    logger.info("Creating multi-point comparison plot for HDL-FM model")
+    
+    # Get unique point IDs
+    point_ids = sorted(hdl_fm_predictions['Point_ID'].unique())
+    if len(point_ids) == 0:
+        logger.warning("No points found for HDL-FM model")
+        return
+    
+    # Create figure with adequate size
+    fig, ax = plt.subplots(figsize=(14, 10))
+    
+    # Get elevations for labeling but use distinct colors
+    elevations = []
+    for point_id in point_ids:
+        point_meta = poi_df[poi_df['Point_ID'] == point_id]
+        if len(point_meta) > 0:
+            elevations.append(point_meta.iloc[0]['Elevation_m'])
+        else:
+            elevations.append(0)
+    
+    # Use distinct colors from a vibrant palette for better differentiation
+    distinct_colors = [
+        "#2196F3",  # Bright blue
+        "#E91E63",  # Bright pink
+        "#FFC107",  # Amber/gold
+        "#00BFA5",  # Bright teal
+        "#9C27B0",  # Bright purple
+        "#FF5722",  # Deep orange
+        "#4CAF50",  # Green
+        "#3F51B5",  # Indigo
+        "#FF9800",  # Orange
+        "#795548",  # Brown
+        "#607D8B",  # Blue grey
+        "#9E9E9E",  # Grey
+    ]
+    
+    # Ensure we have enough colors by cycling if necessary
+    colors = [distinct_colors[i % len(distinct_colors)] for i in range(len(point_ids))]
+    
+    # Line styles to alternate between points
+    line_styles = ['-', '--', '-.', ':', (0, (3, 1, 1, 1))]
+    
+    # Plot predictions for each point
+    truth_lines = []
+    pred_lines = []
+    
+    for i, point_id in enumerate(point_ids):
+        # Filter data for this point
+        point_data = hdl_fm_predictions[hdl_fm_predictions['Point_ID'] == point_id]
+        if len(point_data) == 0:
+            continue
+        
+        # Sort by time
+        point_data = point_data.sort_values('TimeHours')
+        
+        # Get point metadata
+        point_meta = poi_df[poi_df['Point_ID'] == point_id]
+        if len(point_meta) > 0:
+            point_meta = point_meta.iloc[0]
+            point_label = point_meta['Label']
+            point_elev = f"{point_meta['Elevation_m']:.1f}m"
+        else:
+            point_label = f"Point {point_id}"
+            point_elev = "Unknown"
+        
+        # Calculate RMSE
+        rmse = np.sqrt(np.mean((point_data['True_Depth_m'] - point_data['Predicted_Depth_m'])**2))
+        
+        # Plot ground truth
+        true_line, = ax.plot(point_data['TimeHours'], point_data['True_Depth_m'],
+                          color=colors[i], linewidth=2.5, linestyle='-',
+                          label=f"{point_id}: True ({point_elev})")
+        
+        # Plot prediction
+        pred_line, = ax.plot(point_data['TimeHours'], point_data['Predicted_Depth_m'],
+                          color=colors[i], linewidth=2.0, linestyle=line_styles[i % len(line_styles)],
+                          alpha=0.7, label=f"{point_id}: HDL-FM (RMSE: {rmse:.3f}m)")
+        
+        truth_lines.append(true_line)
+        pred_lines.append(pred_line)
+        
+        # Find and annotate peaks if significant
+        if point_data['True_Depth_m'].max() > 0.1:
+            true_max_idx = point_data['True_Depth_m'].idxmax()
+            true_peak_hour = point_data.loc[true_max_idx, 'TimeHours']
+            true_peak_depth = point_data.loc[true_max_idx, 'True_Depth_m']
             
-            # Process model prediction data
-            with rasterio.open(map_path) as src:
+            ax.scatter(true_peak_hour, true_peak_depth, 
+                     color=colors[i], marker='o', s=60, zorder=10)
+            
+            # Add annotation if there's enough space
+            if i % 2 == 0:  # Alternate annotation positions
+                ax.annotate(f'P{i+1}: {true_peak_depth:.2f}m',
+                          xy=(true_peak_hour, true_peak_depth),
+                          xytext=(10, 10 + (i % 3) * 10),  # Vary vertical offset
+                          textcoords='offset points',
+                          fontsize=9,
+                          fontweight='bold',
+                          color=colors[i],
+                          bbox=dict(boxstyle="round,pad=0.2", fc="white", ec=colors[i], alpha=0.8),
+                          arrowprops=dict(arrowstyle="->", connectionstyle="arc3,rad=.2", color=colors[i]))
+    
+    # First create legend for true values
+    legend1 = ax.legend(handles=truth_lines, 
+                      loc='upper left', 
+                      title="Ground Truth",
+                      fontsize=18,  # Increased from 9 to 12
+                      title_fontsize=18,  # Added title font size
+                      framealpha=0.95,   # Increased opacity
+                      borderpad=1.0)  # Add padding
+    
+    # Add the legend for predictions
+    ax.add_artist(legend1)
+    ax.legend(handles=pred_lines, 
+            loc='upper right',
+            title="HDL-FM Predictions",
+            fontsize=18,  # Increased from 9 to 12
+            title_fontsize=18,  # Added title font size
+            framealpha=0.95,  # Increased opacity
+            borderpad=1.0)  # Add padding
+    
+    # Customize plot
+    ax.set_title("HDL-FM Model Performance Across All Monitoring Points", fontsize=14, fontweight='bold')
+    ax.set_xlabel("Time (hours)", fontsize=15)
+    ax.set_ylabel("Water Depth (m)", fontsize=15)
+    ax.grid(True, alpha=0.3)
+    ax.axhline(y=0, color='gray', linestyle='-', alpha=0.3)
+    
+    # Format x-axis ticks
+    import matplotlib.ticker as ticker
+    ax.xaxis.set_major_locator(ticker.MultipleLocator(3))
+    
+    def hour_formatter(x, pos):
+        return f"{int(x)}h" if x == int(x) else ""
+    
+    ax.xaxis.set_major_formatter(ticker.FuncFormatter(hour_formatter))
+    
+    # Save the figure
+    plt.tight_layout()
+    plt.subplots_adjust(bottom=0.1)  # Make room for explanation text
+    output_file = os.path.join(output_path, "hdl_fm_all_points_comparison.png")
+    plt.savefig(output_file, dpi=300, bbox_inches='tight')
+    logger.info(f"Saved HDL-FM multi-point comparison plot to {output_file}")
+    plt.close(fig)
+
+
+
+def plot_flood_extent_maps():
+    """
+    Creates confusion matrix maps for flood extent predictions showing:
+    A: Hits (TP) - correctly predicted flooded areas
+    B: Overpredictions (FP) - predicted flood where none exists
+    C: Misses (FN) - missed flooded areas (underpredictions)
+    D: True Negatives (TN) - correctly predicted dry areas
+    
+    Uses a threshold of 0.3m to classify flooded vs dry areas.
+    """
+    logger.info("Creating flood extent confusion matrix maps")
+    
+    # List of all models to process
+    model_names = [CNN1D_V1, PICNN1D_V1, USRR_CNN1D_COMBINED, SRR_LSTM_COMBINED, HDL_FM_V1]
+    
+    # Create nicer display names for models
+    model_display_names = {
+        CNN1D_V1: '1DCNN',
+        PICNN1D_V1: 'PI1DCNN',
+        USRR_CNN1D_COMBINED: 'USRR-1DCNN',
+        HDL_FM_V1: 'HDL-FM'
+    }
+    
+    # Timestep to use for comparison
+    idx = "0145"
+    alt_idx = "0136"  # Alternative timestep if primary isn't available
+    
+    # Define the flood threshold
+    flood_threshold = 0.3
+    
+    # Reference LISFLOOD run (ground truth)
+    lf_extent_file = os.path.join(SIMULATION_DATA_DIR, f"Run1-{idx}.wd")
+    if not os.path.exists(lf_extent_file):
+        logger.error(f"Ground truth file doesn't exist: {lf_extent_file}")
+        return None
+    
+    # Load the reference LISFLOOD data
+    with rasterio.open(lf_extent_file) as src:
+        truth_data = src.read(1)
+        truth_nodata = src.nodata
+        extent = [src.bounds.left, src.bounds.right, src.bounds.bottom, src.bounds.top]
+    
+    # Load DEM data for background
+    dem_file = os.path.join(SIMULATION_DATA_DIR, "Carlisle_5m.asc")
+    with rasterio.open(dem_file) as src:
+        dem_data = src.read(1)
+        dem_nodata = src.nodata
+    
+    # Create binary truth mask (1 = flooded, 0 = dry)
+    truth_binary = np.where(truth_data >= flood_threshold, 1, 0)
+    
+    # Define output directory
+    output_dir = os.path.join(OUTPUT_DIR, "quality_metrics", "confusion_matrix_maps")
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Define colors for confusion matrix categories
+    confusion_colors = {
+        0: "#ffffff",  # True Negatives (TN) - White (correct dry)
+        1: "#808080",  # True Positives (TP) - Grey (hits - correct flood)
+        2: "#FF8C00",  # False Positives (FP) - Dark orange (overpredictions)
+        3: "#FF0000",  # False Negatives (FN) - Red (misses - underpredictions)
+    }
+    
+    # Create custom colormap
+    from matplotlib.colors import ListedColormap
+    colors_list = [confusion_colors[i] for i in range(4)]
+    confusion_cmap = ListedColormap(colors_list)
+    
+    # Process each model
+    available_models = []
+    model_stats = {}
+    
+    for model_name in model_names:
+        # Try to find the prediction file
+        maps_dir = os.path.join(RUN_DIR, "output_maps", model_name)
+        primary_map_path = os.path.join(maps_dir, f"map_{idx}.wd")
+        alt_map_path = os.path.join(maps_dir, f"map_{alt_idx}.wd")
+        
+        model_map_path = None
+        if os.path.exists(primary_map_path):
+            model_map_path = primary_map_path
+            used_idx = idx
+        elif os.path.exists(alt_map_path):
+            model_map_path = alt_map_path
+            used_idx = alt_idx
+            logger.info(f"Using alternative timestep for {model_name}")
+        
+        if not model_map_path:
+            logger.warning(f"No prediction data found for {model_name}")
+            continue
+        
+        try:
+            # Load the prediction data
+            with rasterio.open(model_map_path) as src:
                 pred_data = src.read(1)
                 pred_nodata = src.nodata
             
-            # Create masked array for prediction (values < 0.03 are considered dry)
-            pred_data_clean = pred_data.copy()
-            pred_data_clean[pred_data_clean < 0.3] = 0
-            masked_pred = np.ma.masked_where((pred_data_clean == pred_nodata) | (pred_data_clean == 0), pred_data_clean)
+            # Create binary prediction mask (1 = flooded, 0 = dry)
+            pred_binary = np.where(pred_data >= flood_threshold, 1, 0)
             
-            # Calculate error (prediction - reference)
-            error_data = pred_data_clean - truth_data
+            # Create confusion matrix map
+            # 0: TN (both dry), 1: TP (both flooded), 2: FP (pred flood, truth dry), 3: FN (pred dry, truth flood)
+            confusion_map = np.zeros_like(truth_binary)
             
-            # Create masked array for error (only show where either truth or pred has water)
-            wet_mask = (truth_data > 0.01) | (pred_data_clean > 0.01)
-            masked_error = np.ma.masked_where(~wet_mask | (error_data == pred_nodata), error_data)
+            # True Negatives (TN) - both predict and truth are dry
+            tn_mask = (pred_binary == 0) & (truth_binary == 0)
+            confusion_map[tn_mask] = 0
             
-            # Determine error range for symmetric colormap
-            error_max = max(abs(np.nanmin(masked_error)), abs(np.nanmax(masked_error)))
-            if error_max == 0:  # Handle case where there's no error
-                error_max = 0.1
+            # True Positives (TP) - both predict and truth are flooded
+            tp_mask = (pred_binary == 1) & (truth_binary == 1)
+            confusion_map[tp_mask] = 1
             
-            # Plot model prediction with DEM background
-            ax_pred.imshow(normalized_dem, extent=extent, cmap=dem_cmap, alpha=dem_alpha, origin='upper')
-            im_pred = ax_pred.imshow(masked_pred, extent=extent, cmap=water_cmap, alpha=water_alpha, 
-                               vmin=0, vmax=3.0, origin='upper')
+            # False Positives (FP) - predict flooded but truth is dry (overpredictions)
+            fp_mask = (pred_binary == 1) & (truth_binary == 0)
+            confusion_map[fp_mask] = 2
             
-            # Plot error map WITHOUT DEM background for clearer error visualization
-            im_error = ax_error.imshow(masked_error, extent=extent, cmap=error_cmap, 
-                                vmin=0, vmax=error_max, alpha=1.0, origin='upper')  # Changed to use vmin=0 for sequential colormap
+            # False Negatives (FN) - predict dry but truth is flooded (misses/underpredictions)
+            fn_mask = (pred_binary == 0) & (truth_binary == 1)
+            confusion_map[fn_mask] = 3
             
-            # Format model name for display
-            display_name = model_name
-            if model_name == USRR_CNN1D_COMBINED:
-                display_name = "USRR-1DCNN"
-            elif model_name == SRR_LSTM_COMBINED:
-                display_name = "SRR-LSTM"
+            # Calculate confusion matrix statistics
+            tp_count = np.sum(tp_mask)
+            tn_count = np.sum(tn_mask)
+            fp_count = np.sum(fp_mask)
+            fn_count = np.sum(fn_mask)
             
-            # Calculate error metrics for the title
-            valid_mask = (truth_data != truth_nodata) & (pred_data != pred_nodata) & wet_mask
-            if np.any(valid_mask):
-                rmse = np.sqrt(np.mean((pred_data[valid_mask] - truth_data[valid_mask]) ** 2))
-                mae = np.mean(np.abs(pred_data[valid_mask] - truth_data[valid_mask]))
-            else:
-                rmse = mae = 0
+            # Calculate metrics
+            hit_rate = tp_count / (tp_count + fn_count) if (tp_count + fn_count) > 0 else 0
+            csi = tp_count / (tp_count + fn_count + fp_count) if (tp_count + fn_count + fp_count) > 0 else 0
+            f2_score = (tp_count - fn_count)/ (tp_count + fn_count + fp_count) if (tp_count + fn_count + fp_count) > 0 else 0
+            f3_score  = (tp_count - fp_count) / (tp_count + fn_count + fp_count) if (tp_count + fn_count + fp_count) > 0 else 0
             
-            # Add labels and titles using sequential letters
-            letter = chr(67 + 2*(i-1))  # C, E, G, I, K for predictions (shifted by 1)
-            ax_pred.text(0.05, 0.95, letter, transform=ax_pred.transAxes, fontsize=16, 
-                       fontweight='bold', bbox=dict(facecolor='white', alpha=0.8))
-            ax_pred.set_title(f'{display_name} Prediction', fontsize=14, fontweight='bold', pad=10)
+            # Store statistics
+            display_name = model_display_names.get(model_name, model_name)
+            model_stats[display_name] = {
+                'tp': tp_count, 'tn': tn_count, 'fp': fp_count, 'fn': fn_count,
+                'hit_rate': hit_rate, 'csi': csi, 'f2_score': f2_score, 'f3_score': f3_score
+            }
             
-            letter_error = chr(67 + 2*(i-1) + 1)  # D, F, H, J, L for errors (shifted by 1)
-            ax_error.text(0.05, 0.95, letter_error, transform=ax_error.transAxes, fontsize=16, 
-                        fontweight='bold', bbox=dict(facecolor='white', alpha=0.8))
-            ax_error.set_title(f'{display_name} Error (RMSE: {rmse:.3f}m)', fontsize=14, fontweight='bold', pad=10)
+            # Create the visualization
+            fig, ax = plt.subplots(figsize=(12, 10))
             
-            # Style both plots
-            for ax in [ax_pred, ax_error]:
-                ax.grid(True, alpha=0.3, linestyle='--', color='black')
-                ax.set_xticklabels([])
-                ax.set_yticklabels([])
-                for spine in ax.spines.values():
-                    spine.set_visible(True)
-                    spine.set_linewidth(1.0)
+            # Plot DEM as background (very light)
+            dem_masked = np.ma.masked_equal(dem_data, dem_nodata)
+            ax.imshow(dem_masked, extent=extent, cmap='terrain', alpha=0.8, origin='upper')
+            
+            # Plot confusion matrix map
+            im = ax.imshow(confusion_map, extent=extent, cmap=confusion_cmap, 
+                          alpha=0.8, origin='upper', vmin=0, vmax=3)
+       
+            
+            # Set title with statistics
+            ax.set_title(f'({chr(97 + len(available_models))}) {display_name} - Flood Extent Confusion Matrix', 
+                        fontsize=14)
         
-        # Add shared colorbars at the top of the figure (centered)
-        # Colorbar for water depth predictions
-        cbar_pred_ax = fig.add_axes([0.15, 0.96, 0.25, 0.015])  # [left, bottom, width, height]
-        cbar_pred = fig.colorbar(im_pred, cax=cbar_pred_ax, orientation='horizontal')
-        cbar_pred.set_label('Water Depth (m)', fontsize=12, fontweight='bold')
-        
-        # Colorbar for error maps
-        cbar_error_ax = fig.add_axes([0.60, 0.96, 0.25, 0.015])  # [left, bottom, width, height]
-        cbar_error_shared = fig.colorbar(im_error, cax=cbar_error_ax, orientation='horizontal')
-        cbar_error_shared.set_label('Absolute Error (m)', fontsize=12, fontweight='bold')
-        
-        # Adjust layout and save figure
-        plt.tight_layout()
-        fig.subplots_adjust(bottom=0.08, top=0.93, hspace=0.15)  # Adjusted top margin for colorbar at top
-        
-        # Save the figure
-        plt.savefig(output_file, dpi=300, bbox_inches='tight')
-        logger.info(f"Comparison map with error analysis saved to {output_file}")
-        plt.close()
-        
-        return output_file
-        
-    except Exception as e:
-        logger.error(f"Error creating comparison map: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
+            # f'Hit-rate: {hit_rate:.2f}, CSI: {csi:.2f}, F2: {f2_score:.2f}, F3: {f3_score:.2f}'
+            
+            ax.set_xticks([])
+            ax.set_yticks([])
+            
+            # Add scale bar and north arrow
+            ax.text(0.95, 0.05, '↑N', transform=ax.transAxes, fontsize=12, 
+                   fontweight='bold', ha='center', bbox=dict(facecolor='white', alpha=0.8))
+            
+            scalebar_length_m = 500
+            scale_x = extent[0] + (extent[1] - extent[0]) * 0.05
+            scale_y = extent[2] + (extent[3] - extent[2]) * 0.05
+            ax.plot([scale_x, scale_x + scalebar_length_m], [scale_y, scale_y], 'k-', linewidth=2)
+            ax.text(scale_x + scalebar_length_m/2, scale_y + (extent[3] - extent[2]) * 0.01, 
+                   f'{scalebar_length_m}m', ha='center', va='bottom', 
+                   bbox=dict(facecolor='white', alpha=0.8, edgecolor='black'))
+            
+            # Add statistics text box
+            stats_text = (f"Hits(A): {tp_count:,}\n"
+                         f"Overpredications/Flase Alarms(B): {fp_count:,}\n"
+                         f"Misses/Underprediction(C): {fn_count:,}\n"
+                         f"Correct Dry(D): {tn_count:,}")
+            
+            ax.text(0.02, 0.98, stats_text, transform=ax.transAxes, fontsize=12,
+                   verticalalignment='top', horizontalalignment='left',
+                   bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.9, edgecolor='gray'))
+            
+            plt.tight_layout()
+            
+            # Save individual model confusion matrix map
+            output_file = os.path.join(output_dir, f"{display_name}_confusion_matrix.png")
+            plt.savefig(output_file, dpi=300, bbox_inches='tight', facecolor='white')
+            logger.info(f"Saved {display_name} confusion matrix map to {output_file}")
+            plt.close()
+            
+            available_models.append(display_name)
+            
+        except Exception as e:
+            logger.error(f"Error processing {model_name}: {str(e)}")
+            continue
+    
+    if not available_models:
+        logger.error("No model prediction data could be loaded")
         return None
-        
-    except Exception as e:
-        logger.error(f"Error creating comparison map: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
-        return None
-        
-    except Exception as e:
-        logger.error(f"Error creating comparison map: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
-        return None
-    except Exception as e:
-        logger.error(f"Error creating comparison map: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
-        return None
+    
+    # Create legend figure
+    fig, ax = plt.subplots(figsize=(8, 4))
+    ax.axis('off')
+    
+    # Create legend patches
+    from matplotlib.patches import Patch
+    legend_elements = [
+        Patch(facecolor=confusion_colors[0], edgecolor='black', 
+              label='True Negatives (Correct Dry)'),
+        Patch(facecolor=confusion_colors[1], edgecolor='black', 
+              label='True Positives (Hits)'),
+        Patch(facecolor=confusion_colors[2], edgecolor='black', 
+              label='False Positives (Overpredictions)'),
+        Patch(facecolor=confusion_colors[3], edgecolor='black', 
+              label='False Negatives (Misses/Underpredictions)')
+    ]
+    
+    ax.legend(handles=legend_elements, loc='center', fontsize=14, 
+             title=f"Flood Extent Classification (Threshold: {flood_threshold}m)",
+             title_fontsize=16, frameon=True, fancybox=True, shadow=True)
+    
+    plt.tight_layout()
+    legend_file = os.path.join(output_dir, "confusion_matrix_legend.png")
+    plt.savefig(legend_file, dpi=300, bbox_inches='tight', facecolor='white')
+    logger.info(f"Saved confusion matrix legend to {legend_file}")
+    plt.close()
+    
+    # Create summary statistics table and save as image
+    create_confusion_matrix_summary(model_stats, output_dir)
+    
+    logger.info(f"Generated confusion matrix maps for {len(available_models)} models")
+    logger.info("Summary statistics:")
+    
+    return output_dir
+
+def create_confusion_matrix_summary(model_stats, output_dir):
+    """Create a summary table of confusion matrix statistics for all models."""
+    import pandas as pd
+    
+    # Convert stats to DataFrame
+    stats_data = []
+    for model, stats in model_stats.items():
+        stats_data.append({
+            'Model': model,
+            'True Positives': stats['tp'],
+            'False Positives': stats['fp'], 
+            'False Negatives': stats['fn'],
+            'True Negatives': stats['tn'],
+            'Hit Rate': f"{stats['hit_rate']:.2f}",
+            'CSI': f"{stats['csi']:.2f}",
+            'F2 Score': f"{stats['f2_score']:.2f}",
+            'F3 Score': f"{stats['f3_score']:.2f}"
+        })
+    
+    df = pd.DataFrame(stats_data)
+    
+    # Save as CSV
+    csv_file = os.path.join(output_dir, "confusion_matrix_summary.csv")
+    df.to_csv(csv_file, index=False)
+    logger.info(f"Saved confusion matrix summary to {csv_file}")
+    
+    # Create visualization of the summary table
+    fig, ax = plt.subplots(figsize=(14, len(model_stats) * 0.8 + 2))
+    ax.axis('tight')
+    ax.axis('off')
+    
+    # Create table
+    table = ax.table(cellText=df.values, colLabels=df.columns,
+                    cellLoc='center', loc='center',
+                    colWidths=[0.12, 0.11, 0.11, 0.11, 0.11, 0.11, 0.11, 0.11, 0.11])
+    
+    # Style the table
+    table.auto_set_font_size(False)
+    table.set_fontsize(10)
+    table.scale(1, 2)
+    
+    # Color header row
+    for i in range(len(df.columns)):
+        table[(0, i)].set_facecolor('#4CAF50')
+        table[(0, i)].set_text_props(weight='bold', color='white')
+    
+    # Color model names
+    for i in range(1, len(df) + 1):
+        table[(i, 0)].set_facecolor('#E3F2FD')
+        table[(i, 0)].set_text_props(weight='bold')
+    
+    plt.title('Flood Extent Prediction - Confusion Matrix Summary\n(Threshold: 0.3m)', 
+             fontsize=16, fontweight='bold', pad=20)
+    
+    plt.tight_layout()
+    summary_file = os.path.join(output_dir, "confusion_matrix_summary_table.png")
+    plt.savefig(summary_file, dpi=300, bbox_inches='tight', facecolor='white')
+    logger.info(f"Saved confusion matrix summary table to {summary_file}")
+    plt.close()
+    
+    return df
+    
