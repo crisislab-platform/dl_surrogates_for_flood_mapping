@@ -981,18 +981,11 @@ def plot_study_area(output_filename=None, show_spatial_scales=True):
             ax.set_ylabel('Northing (km)', fontsize=12, fontweight='bold')
             
             # Add pixel resolution information
-            ax.text(0.02, 0.98, f'Pixel Resolution: {pixel_size}m', 
-                   transform=ax.transAxes, fontsize=11, fontweight='bold',
+            ax.text(0.02, 0.98, f'Resolution: {pixel_size}m', 
+                   transform=ax.transAxes, fontsize=15, fontweight='bold',
                    bbox=dict(facecolor='white', alpha=0.8, edgecolor='black'),
                    verticalalignment='top')
             
-            # Add domain size information
-            domain_width_km = x_range / 1000
-            domain_height_km = y_range / 1000
-            ax.text(0.02, 0.92, f'Domain: {domain_width_km:.1f} × {domain_height_km:.1f} km', 
-                   transform=ax.transAxes, fontsize=11, fontweight='bold',
-                   bbox=dict(facecolor='white', alpha=0.8, edgecolor='black'),
-                   verticalalignment='top')
         
         # Add color bar for elevation
         cbar = fig.colorbar(dem_plot, ax=ax, shrink=0.6)
@@ -1033,7 +1026,7 @@ def plot_study_area(output_filename=None, show_spatial_scales=True):
             x_ref, y_ref = upstream1_points[0]
             ax.annotate("River Eden", 
                        xy=(x_ref, y_ref),
-                       xytext=(30, 30),
+                       xytext=(-120, 10),
                        textcoords="offset points",
                        fontsize=12,
                        fontweight='bold',
@@ -1050,7 +1043,7 @@ def plot_study_area(output_filename=None, show_spatial_scales=True):
             x_ref, y_ref = upstream2_points[0]
             ax.annotate("River Petteril", 
                        xy=(x_ref, y_ref),
-                       xytext=(30, -30),
+                       xytext=(30, 40),
                        textcoords="offset points",
                        fontsize=12,
                        fontweight='bold',
@@ -1067,7 +1060,7 @@ def plot_study_area(output_filename=None, show_spatial_scales=True):
             x_ref, y_ref = upstream3_points[0]
             ax.annotate("River Caldew", 
                        xy=(x_ref, y_ref),
-                       xytext=(-120, -30),
+                       xytext=(-120, 50),
                        textcoords="offset points",
                        fontsize=12,
                        fontweight='bold',
@@ -1117,9 +1110,9 @@ def plot_study_area(output_filename=None, show_spatial_scales=True):
         
         # Add multiple scale bars for different scales
         scale_bars = [
-            {"length": 500, "label": "500m", "y_offset": 0.05},
-            {"length": 1000, "label": "1km", "y_offset": 0.08},
-            {"length": 2000, "label": "2km", "y_offset": 0.11}
+            # {"length": 500, "label": "500m", "y_offset": 0.05},
+            {"length": 1000, "label": "1km", "y_offset": 0.08}
+            # {"length": 2000, "label": "2km", "y_offset": 0.11}
         ]
         
         for scale in scale_bars:
@@ -1133,12 +1126,100 @@ def plot_study_area(output_filename=None, show_spatial_scales=True):
                     bbox=dict(facecolor='white', alpha=0.8, edgecolor='black'))
         
         # Set title with spatial information
-        ax.set_title('Carlisle Study Area - Spatial Domain and Scale Information', 
-                    fontsize=16, fontweight='bold', pad=20)
+        # ax.set_title('Carlisle Study Area - Spatial Domain and Scale Information', 
+        #             fontsize=16, fontweight='bold', pad=20)
         
-        # Add legend below the plot
-        ax.legend(bbox_to_anchor=(0.5, -0.15), loc='upper center', ncol=3, 
-                  framealpha=0.9, fontsize=10)
+        # Add legend at the top of the plot in two rows with centered second row
+        legend = ax.legend(bbox_to_anchor=(0.7, 1.06), loc='lower center', ncol=3, 
+                          framealpha=0.9, fontsize=15, columnspacing=2.0)
+        
+        # Add UK context inset map with real geographical data
+        try:
+            # Import cartopy for real map data
+            import cartopy.crs as ccrs
+            import cartopy.feature as cfeature
+            from cartopy.io.img_tiles import OSM, GoogleTiles
+            
+            # Create inset with cartopy projection
+            inset_ax = fig.add_axes([0.02, 0.65, 0.25, 0.25], projection=ccrs.PlateCarree())
+            
+            # UK bounds for the inset map
+            uk_west, uk_east = -8.0, 2.0
+            uk_south, uk_north = 49.5, 59.0
+            
+            # Set the extent to cover the UK
+            inset_ax.set_extent([uk_west, uk_east, uk_south, uk_north], crs=ccrs.PlateCarree())
+            
+            # Add real geographical features
+            inset_ax.add_feature(cfeature.COASTLINE, linewidth=0.5, color='black', alpha=0.6)
+            inset_ax.add_feature(cfeature.BORDERS, linewidth=0.5, color='black', alpha=0.6)
+            inset_ax.add_feature(cfeature.LAND, facecolor='lightgray', alpha=0.5)
+            inset_ax.add_feature(cfeature.OCEAN, facecolor='lightblue', alpha=0.5)
+            inset_ax.add_feature(cfeature.LAKES, facecolor='lightblue', alpha=0.5)
+            
+            # Try to add satellite or terrain tiles for more detail
+            try:
+                # Use OpenStreetMap tiles for a realistic base map
+                osm_tiles = OSM()
+                inset_ax.add_image(osm_tiles, 6)  # Lower zoom level for UK overview
+            except:
+                # Fallback to basic features if tiles fail
+                inset_ax.add_feature(cfeature.RIVERS, linewidth=0.3, color='blue', alpha=0.6)
+            
+            # Carlisle coordinates
+            carlisle_lon = -2.9336
+            carlisle_lat = 54.8951
+            
+            # Mark Carlisle on inset with location pin marker
+            inset_ax.plot(carlisle_lon, carlisle_lat, marker='o', color='red', 
+                         markersize=14, markeredgecolor='black', markeredgewidth=1.5, 
+                         transform=ccrs.PlateCarree(), zorder=10)
+            
+            # Add Carlisle annotation next to the marker
+            inset_ax.text(carlisle_lon + 0.6, carlisle_lat, 'Carlisle', 
+                         transform=ccrs.PlateCarree(), fontsize=9, fontweight='bold',
+                         ha='left', va='center', color='black',
+                         bbox=dict(boxstyle="round,pad=0.2", facecolor='white', 
+                                  edgecolor='black', alpha=0.6))
+            
+            # # Add major UK cities for context
+            # major_cities = [
+            #     {'name': 'London', 'lon': -0.13, 'lat': 51.51},
+            #     {'name': 'Edinburgh', 'lon': -3.19, 'lat': 55.95},
+            #     {'name': 'Manchester', 'lon': -2.24, 'lat': 53.48}
+            # ]
+            
+            # for city in major_cities:
+            #     inset_ax.plot(city['lon'], city['lat'], marker='s', color='blue', 
+            #                  markersize=4, markeredgecolor='black', markeredgewidth=0.5, 
+            #                  transform=ccrs.PlateCarree(), zorder=8)
+            
+            # Add country labels
+            # inset_ax.text(-1.5, 52.5, 'ENGLAND', fontsize=7, fontweight='bold', 
+            #              ha='center', alpha=0.8, transform=ccrs.PlateCarree())
+            # inset_ax.text(-4.0, 56.0, 'SCOTLAND', fontsize=7, fontweight='bold', 
+            #              ha='center', alpha=0.8, transform=ccrs.PlateCarree())
+            
+            # Remove ticks and labels from inset for cleaner look
+            inset_ax.set_xticks([])
+            inset_ax.set_yticks([])
+            
+            # Add border to inset
+            for spine in inset_ax.spines.values():
+                spine.set_visible(True)
+                spine.set_linewidth(1.5)
+                spine.set_edgecolor('black')
+            
+            # Add inset title
+            # inset_ax.set_title('', fontsize=10, fontweight='bold', pad=5)
+            
+            logger.info("Added realistic UK context inset with geographical data")
+            
+        except ImportError:
+            logger.warning("Cartopy not available, using simplified UK context inset")
+            # 
+        except Exception as e:
+            logger.warning(f"Could not add UK context inset: {e}")
         
         # Adjust layout
         plt.tight_layout()
@@ -1342,6 +1423,282 @@ def plot_study_area_satellite(output_filename=None):
         
     except Exception as e:
         logger.error(f"Error creating satellite view: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return None
+
+def plot_uk_context_map(output_filename=None):
+    """
+    Create a map showing Carlisle's location within the UK context.
+    This provides geographical context for the study area.
+    """
+    logger.info("Generating UK context map showing Carlisle location")
+    
+    try:
+        # Import required packages for mapping
+        import cartopy.crs as ccrs
+        import cartopy.feature as cfeature
+        from cartopy.io.img_tiles import OSM
+        import matplotlib.patches as mpatches
+    except ImportError:
+        logger.error("Required packages not found. Please install them with: pip install cartopy")
+        return None
+    
+    if output_filename is None:
+        output_filename = "carlisle_uk_context.png"
+    
+    output_file = os.path.join(GRAPH_OUTPUT_DIR, output_filename)
+    
+    try:
+        # Carlisle coordinates (approximate city center)
+        carlisle_lon = -2.9336  # Longitude
+        carlisle_lat = 54.8951  # Latitude
+        
+        # UK bounds for the map
+        uk_west, uk_east = -8.0, 2.0
+        uk_south, uk_north = 49.5, 59.0
+        
+        # Create figure and axis
+        fig, ax = plt.subplots(figsize=(10, 12), 
+                              subplot_kw={'projection': ccrs.PlateCarree()})
+        
+        # Set the extent to cover the UK
+        ax.set_extent([uk_west, uk_east, uk_south, uk_north], crs=ccrs.PlateCarree())
+        
+        # Add map features
+        ax.add_feature(cfeature.COASTLINE, linewidth=0.8, color='black')
+        ax.add_feature(cfeature.BORDERS, linewidth=0.8, color='black')
+        ax.add_feature(cfeature.LAND, facecolor='lightgray', alpha=0.7)
+        ax.add_feature(cfeature.OCEAN, facecolor='lightblue', alpha=0.7)
+        ax.add_feature(cfeature.LAKES, facecolor='lightblue', alpha=0.7)
+        ax.add_feature(cfeature.RIVERS, linewidth=0.5, color='blue', alpha=0.6)
+        
+        # Add a subtle grid
+        gl = ax.gridlines(draw_labels=True, alpha=0.3, linestyle='--')
+        gl.top_labels = False
+        gl.right_labels = False
+        
+        # Mark Carlisle with a prominent marker
+        ax.plot(carlisle_lon, carlisle_lat, marker='o', color='red', 
+               markersize=12, markeredgecolor='black', markeredgewidth=2,
+               transform=ccrs.PlateCarree(), zorder=10)
+        
+        # Add Carlisle label with an arrow
+        ax.annotate('Carlisle\nStudy Area', 
+                   xy=(carlisle_lon, carlisle_lat),
+                   xytext=(carlisle_lon + 1.5, carlisle_lat + 1.0),
+                   transform=ccrs.PlateCarree(),
+                   fontsize=14,
+                   fontweight='bold',
+                   ha='center',
+                   bbox=dict(boxstyle="round,pad=0.5", facecolor='white', 
+                            edgecolor='red', alpha=0.9),
+                   arrowprops=dict(arrowstyle="->", 
+                                  connectionstyle="arc3,rad=0.2", 
+                                  color='red',
+                                  lw=2))
+        
+        # Add major UK cities for context
+        major_cities = [
+            {'name': 'London', 'lon': -0.1278, 'lat': 51.5074},
+            {'name': 'Manchester', 'lon': -2.2426, 'lat': 53.4808},
+            {'name': 'Edinburgh', 'lon': -3.1883, 'lat': 55.9533},
+            {'name': 'Glasgow', 'lon': -4.2518, 'lat': 55.8642},
+            {'name': 'Newcastle', 'lon': -1.6131, 'lat': 54.9783},
+            {'name': 'Birmingham', 'lon': -1.8904, 'lat': 52.4862}
+        ]
+        
+        for city in major_cities:
+            ax.plot(city['lon'], city['lat'], marker='s', color='blue', 
+                   markersize=6, markeredgecolor='black', markeredgewidth=1,
+                   transform=ccrs.PlateCarree(), zorder=8)
+            
+            # Add city labels (smaller and less prominent than Carlisle)
+            ax.text(city['lon'], city['lat'] - 0.3, city['name'],
+                   transform=ccrs.PlateCarree(),
+                   fontsize=10,
+                   ha='center',
+                   bbox=dict(boxstyle="round,pad=0.2", facecolor='white', 
+                            alpha=0.7, edgecolor='none'))
+        
+        # Add country labels
+        ax.text(-1.0, 53.0, 'ENGLAND', transform=ccrs.PlateCarree(),
+               fontsize=16, fontweight='bold', ha='center', alpha=0.6)
+        ax.text(-4.0, 56.5, 'SCOTLAND', transform=ccrs.PlateCarree(),
+               fontsize=16, fontweight='bold', ha='center', alpha=0.6)
+        ax.text(-3.5, 52.0, 'WALES', transform=ccrs.PlateCarree(),
+               fontsize=16, fontweight='bold', ha='center', alpha=0.6)
+        
+        # Add a compass rose (north arrow)
+        ax.text(0.95, 0.95, '↑\nN', transform=ax.transAxes,
+               fontsize=16, fontweight='bold', ha='center', va='center',
+               bbox=dict(boxstyle="round,pad=0.3", facecolor='white', 
+                        edgecolor='black', alpha=0.9))
+        
+        # Add scale bar (approximate)
+        scale_bar_length = 1.0  # degrees (approximately 100km at this latitude)
+        scale_x = uk_west + 0.5
+        scale_y = uk_south + 0.5
+        
+        ax.plot([scale_x, scale_x + scale_bar_length], 
+               [scale_y, scale_y], 
+               'k-', linewidth=3, transform=ccrs.PlateCarree())
+        
+        ax.text(scale_x + scale_bar_length/2, scale_y - 0.3,
+               '~100 km', ha='center', va='top', fontweight='bold',
+               transform=ccrs.PlateCarree(),
+               bbox=dict(boxstyle="round,pad=0.2", facecolor='white', 
+                        alpha=0.8, edgecolor='black'))
+        
+        # Create a legend
+        legend_elements = [
+            mpatches.Patch(color='red', label='Carlisle Study Area'),
+            mpatches.Patch(color='blue', label='Major UK Cities'),
+            mpatches.Patch(color='lightgray', label='Land'),
+            mpatches.Patch(color='lightblue', label='Water Bodies')
+        ]
+        
+        ax.legend(handles=legend_elements, loc='upper left', 
+                 bbox_to_anchor=(0.02, 0.98), framealpha=0.9,
+                 fontsize=12)
+        
+        # Set title
+        ax.set_title('Carlisle Location within the United Kingdom', 
+                    fontsize=18, fontweight='bold', pad=20)
+        
+        # Add inset showing study area detail (optional small box)
+        # Create a small rectangle around Carlisle area
+        from matplotlib.patches import Rectangle
+        study_area_box = Rectangle((carlisle_lon - 0.15, carlisle_lat - 0.1), 
+                                  0.3, 0.2,
+                                  linewidth=2, edgecolor='red', facecolor='none',
+                                  linestyle='--', alpha=0.8,
+                                  transform=ccrs.PlateCarree())
+        ax.add_patch(study_area_box)
+        
+        # Save the figure
+        os.makedirs(os.path.dirname(output_file), exist_ok=True)
+        plt.tight_layout()
+        plt.savefig(output_file, dpi=300, bbox_inches='tight', facecolor='white')
+        logger.info(f"UK context map saved to {output_file}")
+        plt.close()
+        
+        return output_file
+        
+    except Exception as e:
+        logger.error(f"Error creating UK context map: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return None
+
+def plot_uk_context_simple(output_filename=None):
+    """
+    Create a simplified UK context map without cartopy dependency.
+    Shows Carlisle's location using basic matplotlib plotting.
+    """
+    logger.info("Generating simplified UK context map showing Carlisle location")
+    
+    if output_filename is None:
+        output_filename = "carlisle_uk_context_simple.png"
+    
+    output_file = os.path.join(GRAPH_OUTPUT_DIR, output_filename)
+    
+    try:
+        # Create figure
+        fig, ax = plt.subplots(figsize=(8, 10))
+        
+        # Simplified UK outline coordinates (rough approximation)
+        # These are very simplified coordinates for illustration
+        uk_outline_lon = [-5.5, -5.0, -4.5, -3.0, -2.0, -1.0, 0.5, 1.0, 1.5, 
+                         1.0, 0.5, -0.5, -1.0, -2.0, -3.0, -4.0, -5.0, -5.5, -5.5]
+        uk_outline_lat = [50.0, 49.8, 50.2, 50.5, 51.0, 51.5, 51.3, 51.8, 52.5,
+                         53.5, 54.5, 55.0, 55.8, 56.5, 57.0, 56.0, 54.0, 52.0, 50.0]
+        
+        # Plot UK outline
+        ax.fill(uk_outline_lon, uk_outline_lat, color='lightgray', alpha=0.7, 
+               edgecolor='black', linewidth=1.5)
+        
+        # Carlisle coordinates
+        carlisle_lon = -2.9336
+        carlisle_lat = 54.8951
+        
+        # Mark Carlisle
+        ax.plot(carlisle_lon, carlisle_lat, marker='o', color='red', 
+               markersize=15, markeredgecolor='black', markeredgewidth=2, zorder=10)
+        
+        # Add Carlisle label
+        ax.annotate('Carlisle\nStudy Area', 
+                   xy=(carlisle_lon, carlisle_lat),
+                   xytext=(carlisle_lon + 1.5, carlisle_lat + 1.0),
+                   fontsize=14,
+                   fontweight='bold',
+                   ha='center',
+                   bbox=dict(boxstyle="round,pad=0.5", facecolor='white', 
+                            edgecolor='red', alpha=0.9),
+                   arrowprops=dict(arrowstyle="->", 
+                                  connectionstyle="arc3,rad=0.2", 
+                                  color='red', lw=2))
+        
+        # Add some major cities for context
+        cities = [
+            {'name': 'London', 'lon': -0.13, 'lat': 51.51},
+            {'name': 'Edinburgh', 'lon': -3.19, 'lat': 55.95},
+            {'name': 'Manchester', 'lon': -2.24, 'lat': 53.48}
+        ]
+        
+        for city in cities:
+            ax.plot(city['lon'], city['lat'], marker='s', color='blue', 
+                   markersize=8, markeredgecolor='black', markeredgewidth=1, zorder=8)
+            ax.text(city['lon'], city['lat'] - 0.4, city['name'],
+                   fontsize=10, ha='center',
+                   bbox=dict(boxstyle="round,pad=0.2", facecolor='white', alpha=0.7))
+        
+        # Add country labels
+        ax.text(-1.5, 52.5, 'ENGLAND', fontsize=14, fontweight='bold', 
+               ha='center', alpha=0.6)
+        ax.text(-4.0, 56.0, 'SCOTLAND', fontsize=14, fontweight='bold', 
+               ha='center', alpha=0.6)
+        
+        # Set map properties
+        ax.set_xlim(-6, 2)
+        ax.set_ylim(49, 59)
+        ax.set_aspect('equal')
+        ax.grid(True, alpha=0.3, linestyle='--')
+        ax.set_xlabel('Longitude', fontsize=12)
+        ax.set_ylabel('Latitude', fontsize=12)
+        
+        # Add north arrow
+        ax.text(0.95, 0.95, '↑\nN', transform=ax.transAxes,
+               fontsize=14, fontweight='bold', ha='center', va='center',
+               bbox=dict(boxstyle="round,pad=0.3", facecolor='white', 
+                        edgecolor='black', alpha=0.9))
+        
+        # Set title
+        ax.set_title('Carlisle Location within the United Kingdom', 
+                    fontsize=16, fontweight='bold', pad=20)
+        
+        # Create simple legend
+        from matplotlib.lines import Line2D
+        legend_elements = [
+            Line2D([0], [0], marker='o', color='w', markerfacecolor='red', 
+                   markersize=12, markeredgecolor='black', label='Carlisle Study Area'),
+            Line2D([0], [0], marker='s', color='w', markerfacecolor='blue', 
+                   markersize=8, markeredgecolor='black', label='Major UK Cities')
+        ]
+        
+        ax.legend(handles=legend_elements, loc='upper left', framealpha=0.9, fontsize=11)
+        
+        # Save the figure
+        os.makedirs(os.path.dirname(output_file), exist_ok=True)
+        plt.tight_layout()
+        plt.savefig(output_file, dpi=300, bbox_inches='tight', facecolor='white')
+        logger.info(f"Simple UK context map saved to {output_file}")
+        plt.close()
+        
+        return output_file
+        
+    except Exception as e:
+        logger.error(f"Error creating simple UK context map: {e}")
         import traceback
         logger.error(traceback.format_exc())
         return None

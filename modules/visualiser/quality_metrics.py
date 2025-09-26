@@ -1732,6 +1732,12 @@ def plot_flood_extent_maps():
             ax.set_xticks([])
             ax.set_yticks([])
             
+            # Add border to the subplot
+            for spine in ax.spines.values():
+                spine.set_visible(True)
+                spine.set_linewidth(2.0)
+                spine.set_edgecolor('black')
+            
             # Add scale bar and north arrow
             ax.text(0.95, 0.05, '↑N', transform=ax.transAxes, fontsize=12, 
                    fontweight='bold', ha='center', bbox=dict(facecolor='white', alpha=0.8))

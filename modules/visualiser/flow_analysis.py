@@ -216,10 +216,11 @@ def plot_hydrograph_clean():
     try:
         # Read the flow data
         df = pd.read_csv(flow_file)
-        
+        df = df[8:] 
+        df = df.reset_index(drop=True)
         # Convert time from seconds to hours
         if "Time" in df.columns:
-            df["TimeHours"] = df["Time"] / 3600
+            df["TimeHours"] = (df["Time"] / 3600) - 2  # Adjust to start from zero hours
             time_col = "TimeHours"
             time_label = "Time (hours)"
         else:
@@ -286,11 +287,11 @@ def plot_hydrograph_clean():
                         xytext=(10, 10),
                         textcoords='offset points',
                         color=colors[i],
-                        fontsize=10,
+                        fontsize=15,
                         bbox=dict(boxstyle="round,pad=0.3", fc="white", ec=colors[i], alpha=0.8))
         
         # Add legend with scientific styling
-        legend = ax.legend(loc='upper right', fontsize=12, framealpha=0.9, 
+        legend = ax.legend(loc='upper right', fontsize=15, framealpha=0.9, 
                   edgecolor='gray', title="Monitoring Points")
         legend.get_title().set_fontweight('bold')
         
@@ -308,12 +309,12 @@ def plot_hydrograph_clean():
             f'Duration: {df[time_col].max():.1f} hours',
             f'Peak discharge: {max(m[2] for m in max_values):.1f} $m^3/s$'
         ))
-        ax.text(0.03, 0.97, textstr, transform=ax.transAxes, fontsize=10,
+        ax.text(0.03, 0.97, textstr, transform=ax.transAxes, fontsize=15,
                 verticalalignment='top', bbox=props)
         
         # Add figure number and caption (publication style)
-        fig.text(0.5, 0.01, 'Figure 1: Hydrograph of input boundary conditions for the three rivers in Event 1.', 
-                ha='center', fontsize=12, style='italic')
+        # fig.text(0.5, 0.01, 'Hydrograph of input boundary conditions for the three rivers in Event 1.', 
+        #         ha='center', fontsize=15, style='italic')
         
         # Apply tight layout with appropriate margins
         plt.tight_layout(rect=[0, 0.03, 1, 0.98])
@@ -322,9 +323,6 @@ def plot_hydrograph_clean():
         output_path = os.path.join(GRAPH_OUTPUT_DIR, "upstream_hydrographs_event1_scientific.png")
         plt.savefig(output_path, dpi=600, bbox_inches='tight', format='png')
         
-        # Also save in vector format for publication
-        vector_output_path = os.path.join(GRAPH_OUTPUT_DIR, "upstream_hydrographs_event1_scientific.pdf")
-        plt.savefig(vector_output_path, format='pdf')
         
         logger.info(f"Saved scientific-quality Event 1 hydrograph to {output_path}")
         plt.close()
