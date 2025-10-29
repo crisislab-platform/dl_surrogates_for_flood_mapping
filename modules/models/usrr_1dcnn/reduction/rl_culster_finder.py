@@ -57,11 +57,14 @@ class RLClusterFinder:
         rows, cols = np.where(rl_arr == 1)
         
         # Create a coordinate array for clustering
-        coordinates = np.column_stack((rows, cols))   
+        coordinates = np.column_stack((rows, cols)) 
+        from sklearn.preprocessing import MinMaxScaler
+        scaler = MinMaxScaler()
+        coordinates_scaled = scaler.fit_transform(coordinates)  
         logger.info(f"Found {len(coordinates)} representative locations for clustering")
         
         # Apply K-means clustering
-        labels = self.cluster_locations(coordinates, self.n_clusters, self.random_state)
+        labels = self.cluster_locations(coordinates_scaled, self.n_clusters, self.random_state)
   
         # Create a dataframe with the results
         result_df = pd.DataFrame({

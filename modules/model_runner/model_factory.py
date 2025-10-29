@@ -4,13 +4,15 @@ from modules.models.cnn1d.cnn1d import CNN1DSAModelWrapper
 from modules.models.usrr_1dcnn.ussr1dcnn import USSR1DCNNModelWrapper
 from modules.models.usrr_1dcnn.unet import UNetModelWrapper
 from modules.models.usrr_1dcnn.cnn1d import CNN1DModelWrapper
+from modules.models.usrr_1dcnn.cnn1d_sp import CNN1DModelWrapper as CNN1DModelWrapperV2
+from modules.models.usrr_1dcnn.lstm import LSTMModelWrapper as USRRLSTMModelWrapper
 from modules.models.pi1dcnn.pi1dcnn import PICNN1DModelWrapper
 from modules.models.hdl_fm.hdl_fm import HDLFMModelWrapper
 from modules.models.srr_lstm.srr_lstm import LSTMModelWrapper
 from modules.models.srr_lstm.srr_lstm_combined import SRRLSTMModelWrapper
 from modules.models.model_wrapper import ModelConfig, ModelWrapper
 
-from modules.lib.constants import (CNN1D_V1, USRR_UNET_V1, USRR_1DCNN_V1, USRR_CNN1D_COMBINED, PICNN1D_V1, POD_BNN_V1, TCN_V1, HDL_FM_V1, LSTM_SRR_V1, SRR_LSTM_COMBINED)
+from modules.lib.constants import (CNN1D_V1, USSR_1DCNN_V2, USRR_UNET_V1, USRR_1DCNN_V1, USRR_CNN1D_COMBINED, PICNN1D_V1, POD_BNN_V1, TCN_V1, HDL_FM_V1, LSTM_SRR_V1, SRR_LSTM_COMBINED, USRR_LSTM)
 logger = logging.getLogger("ModelFactory")
 
 def create_model(config: ModelConfig, args)-> ModelWrapper:
@@ -34,7 +36,11 @@ def create_model(config: ModelConfig, args)-> ModelWrapper:
         
         HDL_FM_V1: lambda: create_hdl_fm_model(config, args), 
         
-        SRR_LSTM_COMBINED: lambda: create_lstm_srr_combined_model(config, args)
+        USRR_LSTM: lambda: create_usrr_lstm_model(config, args),
+        
+        SRR_LSTM_COMBINED: lambda: create_lstm_srr_combined_model(config, args),
+        
+        USSR_1DCNN_V2: lambda: create_usrr1dcnv2_model(config, args)
     }
     
     try:
@@ -92,6 +98,31 @@ def create_rl1dcnn_model(config, args):
     }
     return CNN1DModelWrapper(config)
 
+def create_usrr1dcnv2_model(config, args):  
+    sampling_dist = args.sampling_dist
+    n_clusters = args.n_clusters
+    rl_group = args.rl_group
+    input_time_len_h = args.input_time_len_h
+    tuning_mode = args.tuning_mode
+    convo_kernel = args.usrr_conv_kernel
+    pool_kernel = args.usrr_pool_kernel
+    if not sampling_dist or not n_clusters or not rl_group:
+        logger.error("Missing required parameters for CNN1D model")
+        raise ValueError("Missing required parameters for CNN1D model")
+    
+    config.args = { 
+        'n_clusters': n_clusters,
+        'sampling_dist': sampling_dist,
+        'rl_group': rl_group,
+        'input_time_len_h': input_time_len_h,
+        'tuning_mode': tuning_mode,
+        'conv_kernel': convo_kernel,
+        'pool_kernel': pool_kernel,
+        'fc_layer_size': args.fc_layer_size,
+        'output_channel_size': args.output_channel_size,
+    }
+    return CNN1DModelWrapperV2(config)
+
 def create_combined_model(config, args):
     config.args = {
         'sampling_dist': args.sampling_dist,
@@ -140,3 +171,29 @@ def create_lstm_srr_model(config, args):
         'tuning_mode': args.tuning_mode
     }
     return LSTMModelWrapper(config)
+
+def create_usrr_lstm_model(config, args):
+    sampling_dist = args.sampling_dist
+    n_clusters = args.n_clusters
+    rl_group = args.rl_group
+    input_time_len_h = args.input_time_len_h
+    tuning_mode = args.tuning_mode
+    lstm_layers = args.lstm_layers
+    hidden_size = args.hidden_size
+    fc_layer_size = args.fc_layer_size
+    
+    if not sampling_dist or not n_clusters or not rl_group:
+        logger.error("Missing required parameters for CNN1D model")
+        raise ValueError("Missing required parameters for CNN1D model")
+    
+    config.args = { 
+        'n_clusters': n_clusters,
+        'sampling_dist': sampling_dist,
+        'rl_group': rl_group,
+        'input_time_len_h': input_time_len_h,
+        'tuning_mode': tuning_mode,
+        'lstm_layers': lstm_layers,
+        'hidden_size': hidden_size,
+        'fc_layer_size': fc_layer_size
+    }
+    return USRRLSTMModelWrapper(config)

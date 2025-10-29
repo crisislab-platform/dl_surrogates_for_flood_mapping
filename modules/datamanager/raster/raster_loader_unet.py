@@ -61,6 +61,9 @@ class UNetDataManager(USRRDataManager):
         self.prepare_batch_idxs()
         self.prepare_test_event_batches()
         
+    def shuffle_training_data(self):
+        pass
+        
     def prepare_test_event_batches(self):
         logger.info("Preparing test event data for UNet evaluation")
         

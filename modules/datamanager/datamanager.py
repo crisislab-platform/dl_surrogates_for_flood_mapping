@@ -24,6 +24,9 @@ class DataManager:
     def get_batch(self, indices, subset="train"):
         pass
     
+def shuffle_training_data(self, epoch):
+    pass
+    
 def check_inundation_data_cache(event_id):
     cache_dir = os.path.join(OUTPUT_DIR, "preprocessed_inundation")
     if not os.path.exists(cache_dir):
@@ -57,7 +60,6 @@ def create_inundation_map_tensors():
         event_inundation_data = []
         for inundation_file in event_inundation_files:
             inundation_map = gdal_asarray(inundation_file)
-            inundation_map[inundation_map < 0.3] = 0
             event_inundation_data.append(inundation_map)
         event_inundation_data = np.array(event_inundation_data)
         

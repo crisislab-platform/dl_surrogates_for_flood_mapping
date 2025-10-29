@@ -349,7 +349,7 @@ def draw_memory_usage_plot(train_memory_usage, pred_memory_usage, model_names, r
     logger.info(f"Saved enhanced scatter plot visualization to {output_file}")
     plt.close()
     
-def draw_radar_chart(model_names, rmse, inference_times, pred_memory, flops, params):
+def draw_radar_chart(model_names, metrics_dict):
     
     for i, model in enumerate(model_names):
         if model == USRR_CNN1D_COMBINED:
@@ -388,22 +388,28 @@ def draw_radar_chart(model_names, rmse, inference_times, pred_memory, flops, par
             return result
         
         # Convert all metrics to numeric values
-        numeric_rmse = ensure_numeric(rmse)
-        numeric_inference_times = ensure_numeric(inference_times)
-        numeric_pred_memory = ensure_numeric(pred_memory)
-        numeric_flops = ensure_numeric(flops)
-        numeric_params = ensure_numeric(params)
+        numeric_rmse = ensure_numeric(metrics_dict['rmse'])
+        numeric_mrmse = ensure_numeric(metrics_dict['mrmse'])
+        numeric_inference_times = ensure_numeric(metrics_dict['inference_times'])
+        numeric_pred_memory = ensure_numeric(metrics_dict['inference_memory_usage'])
+        numeric_flops = ensure_numeric(metrics_dict['flops'])
+        numeric_params = ensure_numeric(metrics_dict['params'])
+        numeric_hit_rate = ensure_numeric(metrics_dict['hit_rate'])
+        numeric_csi = ensure_numeric(metrics_dict['csi'])
+        numeric_f2_score = ensure_numeric(metrics_dict['f2_score'])
+        numeric_f3_score = ensure_numeric(metrics_dict['f3_score'])
         
         
-        weights = {
-            'E_RMSE': 1,  # Model accuracy (inverse of RMSE)
-            'E_Latency': 1,  # Inference speed (inverse of inference time)
-            'E_Memory': 0.1,  # Memory efficiency (inverse of memory usage)
-            'E_FLOPs': 0.01,  # Computation efficiency (inverse of FLOPs)
-            'E_Parameters': 0.01  # Model size efficiency (inverse of parameter count)
-        }
+        weight_profiles = [{'E_RMSE': 1, 'E_mRMSE':1,  'E_Hitrate':1, 'E_CSI':1, 'E_F2Score':1, 'E_F3Score':1, 'E_Latency':1, 'E_Memory':1, 'E_FLOPs':1, 'E_Parameters':1},
+                           {'E_RMSE': 2, 'E_mRMSE':1,  'E_Hitrate':1, 'E_CSI':1, 'E_F2Score':1, 'E_F3Score':1, 'E_Latency':0.5, 'E_Memory':0.5, 'E_FLOPs':0.5, 'E_Parameters':0.5},
+                           {'E_RMSE': 0.5, 'E_mRMSE':0.5,  'E_Hitrate':0.5, 'E_CSI':0.5 , 'E_F2Score':0.5, 'E_F3Score':0.5, 'E_Latency':1, 'E_Memory':1, 'E_FLOPs':1, 'E_Parameters':1},
+                           {'E_RMSE': 1, 'E_mRMSE':1,  'E_Hitrate':1, 'E_CSI':1, 'E_F2Score':1, 'E_F3Score':1, 'E_Latency':1, 'E_Memory':0.5, 'E_FLOPs':0.5, 'E_Parameters':0.5},]
+        
 
-        def normalize_and_invert(values, metric):
+        inverted_metrics = ['E_RMSE', 'E_Latency', 'E_Memory', 'E_FLOPs', 'E_Parameters'] # metrics where lower is better
+        non_inverted_metrics = ['E_Hitrate', 'E_CSI', 'E_F2Score', 'E_F3Score'] # metrics where higher is better
+        
+        def normalize_and_invert(values, metric, settings_index=0):
             """
             Logarithmic normalization and inversion for radar chart visualization.
             
@@ -451,75 +457,134 @@ def draw_radar_chart(model_names, rmse, inference_times, pred_memory, flops, par
             # Normalize log values to [0, 1]
             norm_log_values = [(v - log_min) / (log_max - log_min) for v in log_values]
             
+            weight = weight_profiles[settings_index].get(metric, 1)
+            if metric in non_inverted_metrics:
+                # For metrics where higher is better, do not invert
+                return [max(0.01, weight * v) for v in norm_log_values]
             # Invert for radar chart (higher is better)
-            return [1 - v for v in norm_log_values]
+            return [max(0.01, weight * (1 - v)) for v in norm_log_values]
         
-        #normalise before inverting
-        norm_rmse = normalize_and_invert(numeric_rmse, 'E_RMSE')  # Normalize RMSE
-        norm_inf_time = normalize_and_invert(numeric_inference_times, 'E_Latency')  # Normalize inference time
-        norm_pred_memory = normalize_and_invert(numeric_pred_memory, 'E_Memory')  # Normalize memory
-        norm_flops = normalize_and_invert(numeric_flops, 'E_FLOPs')  # Normalize FLOPs
-        norm_params = normalize_and_invert(numeric_params, 'E_Parameters')  # Normalize parameters
+        for i in range(len(weight_profiles)):
+            #normalise before inverting
+            norm_rmse = normalize_and_invert(numeric_rmse, 'E_RMSE', i)  # Normalize RMSE
+            norm_mrmse = normalize_and_invert(numeric_mrmse, 'E_mRMSE', i)  # Normalize RMSE
+            norm_inf_time = normalize_and_invert(numeric_inference_times, 'E_Latency', i)  # Normalize inference time
+            norm_pred_memory = normalize_and_invert(numeric_pred_memory, 'E_Memory', i)  # Normalize memory
+            norm_flops = normalize_and_invert(numeric_flops, 'E_FLOPs', i)  # Normalize FLOPs
+            norm_params = normalize_and_invert(numeric_params, 'E_Parameters', i)  # Normalize parameters
+            norm_hit_rate = normalize_and_invert(numeric_hit_rate, 'E_Hitrate', i)  # Normalize hit rate
+            norm_csi = normalize_and_invert(numeric_csi, 'E_CSI', i)  # Normalize CSI
+            norm_f2_score = normalize_and_invert(numeric_f2_score, 'E_F2Score', i)  # Normalize F2 Score
+            norm_f3_score = normalize_and_invert(numeric_f3_score, 'E_F3Score', i)  # Normalize F3 Score
+            
+            efficiency_metrics = {
+                'E_RMSE': norm_rmse,
+                'E_mRMSE': norm_mrmse, 
+                'E_Hitrate': norm_hit_rate,
+                'E_CSI': norm_csi,
+                'E_F2Score': norm_f2_score,
+                'E_F3Score': norm_f3_score,
+                'E_Latency': norm_inf_time,
+                'E_Memory': norm_pred_memory,
+                'E_FLOPs': norm_flops,
+                'E_Parameters': norm_params
+            }
+                
+            draw_radar_chart_single(model_names, efficiency_metrics, i)
         
-        # Apply weights to the normalized and inverted values
-        # norm_rmse = [v * weights['E_RMSE'] for v in norm_rmse]
-        # norm_inf_time = [v * weights['E_Latency'] for v in norm_inf_time]
-        # norm_pred_memory = [v * weights['E_Memory'] for v in norm_pred_memory]
-        # norm_flops = [v * weights['E_FLOPs'] for v in norm_flops]
-        # norm_params = [v * weights["E_Parameters"] for v in norm_params]
+        # Create a separate legend figure
+
         
-        # #Now invert the normalized values for radar chart (avoid any values becoming 0)
-        # norm_rmse = [(1 / (v + 0.1)) * weights['E_RMSE'] for v in norm_rmse]  # Invert RMSE
-        # norm_inf_time = [(1 / (v + 0.1)) * weights['E_Latency'] for v in norm_inf_time]  # Invert inference time
-        # norm_pred_memory = [(1 / (v + 0.1)) * weights['E_Memory'] for v in norm_pred_memory]  # Invert memory
-        # norm_flops = [(1 / (v + 0.1)) * weights['E_FLOPs'] for v in norm_flops]  # Invert FLOPs
-        # norm_params = [(1 / (v + 0.1)) * weights["E_Parameters"] for v in norm_params]  # Invert parameters
+        #Add a model vs efficieny plot
+        # draw_model_efficiency_plot(model_names, model_area, rmse, inference_times, pred_memory, flops, params)
         
+    except Exception as e:
+        logger.error(f"Error creating comprehensive radar chart: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         
-        
-        # Calculate the area of each model's radar chart
+def draw_radar_chart_single(model_names, efficiency_metrics, weighting_index=0):
+    # Calculate the area of each model's radar chart
         def calculate_area(values):
+            """
+            Calculate the area of a radar chart polygon using the shoelace formula.
+            
+            Args:
+                values: List of normalized metric values [0,1] for each radar chart axis
+                
+            Returns:
+                float: Area of the polygon formed by connecting the radar chart points
+            """
+            if not values or len(values) < 3:
+                return 0.0
+            
             # Convert the values to cartesian coordinates using angles on a unit circle
-            angles = np.linspace(0, 2 * np.pi, len(values) + 1)[:-1]  # Exclude the last angle (2π)
+            angles = np.linspace(0, 2 * np.pi, len(values), endpoint=False)  # Don't include 2π
             
             # Calculate x,y coordinates for each point on the radar chart
             x = [values[i] * np.cos(angles[i]) for i in range(len(values))]
             y = [values[i] * np.sin(angles[i]) for i in range(len(values))]
             
-            # Add the first point at the end to close the polygon
-            x.append(x[0])
-            y.append(y[0])
+            # Calculate area using the shoelace formula - FIXED VERSION
+            area = 0.0
+            n = len(x)
+            for i in range(n):
+                j = (i + 1) % n  # Use modulo to wrap around to first point
+                area += x[i] * y[j] - x[j] * y[i]
             
-            # Calculate area using the shoelace formula
-            area = 0.5 * np.abs(sum(x[i] * y[i+1] - x[i+1] * y[i] for i in range(len(values))))
-            return area
+            return 0.5 * abs(area)
         
-        model_values = [[norm_rmse[i], norm_inf_time[i], norm_pred_memory[i], norm_flops[i], norm_params[i]]
-            for i in range(len(model_names)) ]
+        # List of lists containing the normalized metric values for each model
+        model_effiency_metrics_map = {}
+        for i, model in enumerate(model_names):
+            model_effiency_metrics_map[model] = [
+                efficiency_metrics['E_RMSE'][i],
+                efficiency_metrics['E_mRMSE'][i],
+                efficiency_metrics['E_Hitrate'][i],
+                efficiency_metrics['E_CSI'][i],
+                efficiency_metrics['E_F2Score'][i],
+                efficiency_metrics['E_F3Score'][i],
+                efficiency_metrics['E_Latency'][i],
+                efficiency_metrics['E_Memory'][i],
+                efficiency_metrics['E_FLOPs'][i],
+                efficiency_metrics['E_Parameters'][i]
+            ]
         model_area = {}
         for i, model in enumerate(model_names):
-            area = calculate_area(model_values[i])
+            area = calculate_area(model_effiency_metrics_map[model])
             model_area[model] = area
         
                 
         #save normalized values and the area of each model to a csv file
         df = pd.DataFrame({
             'Model': model_names,
-            'E_RMSE': norm_rmse,
-            'E_Latency': norm_inf_time,
-            'E_Memory': norm_pred_memory,
-            'E_FLOPs': norm_flops,
-            'E_Parameters': norm_params,
-            'Area': [model_area[model] for model in model_names]
+            'E_RMSE': efficiency_metrics['E_RMSE'],
+            'E_mRMSE': efficiency_metrics['E_mRMSE'],
+            'E_Hitrate': efficiency_metrics['E_Hitrate'],
+            'E_CSI': efficiency_metrics['E_CSI'],
+            'E_F2Score': efficiency_metrics['E_F2Score'],
+            'E_F3Score': efficiency_metrics['E_F3Score'],
+            'E_Latency': efficiency_metrics['E_Latency'],
+            'E_Memory':efficiency_metrics['E_Memory'],
+            'E_FLOPs': efficiency_metrics['E_FLOPs'],
+            'E_Parameters':efficiency_metrics['E_Parameters'],
+            'Area': [model_area[model] for model in model_names],
+            'Weighting_Profile': [weighting_index + 1 for _ in model_names]
         })
+        
         #save to csv
-        output_csv = os.path.join(OUTPUT_DIR, 'radar_chart_data.csv')
+        output_csv = os.path.join(OUTPUT_DIR, f'radar_chart_data_{weighting_index}.csv')
         os.makedirs(os.path.dirname(output_csv), exist_ok=True)
         df.to_csv(output_csv, index=False)
         
         # Create radar chart data with all metrics - use more descriptive labels
         categories = [
             'E$_{RMSE}$',
+            'E$_{mRMSE}$',
+            'E$_{Hitrate}$',
+            'E$_{CSI}$',
+            'E$_{F2Score}$',
+            'E$_{F3Score}$',
             'E$_{Latency}$',
             'E$_{FLOPs}$',
             'E$_{Parameters}$',
@@ -592,11 +657,16 @@ def draw_radar_chart(model_names, rmse, inference_times, pred_memory, flops, par
         # Draw the radar chart for each model
         for i, model in enumerate(model_names):
             values = [
-                norm_rmse[i], 
-                norm_inf_time[i], 
-                norm_pred_memory[i], 
-                norm_flops[i], 
-                norm_params[i]
+                efficiency_metrics['E_RMSE'][i], 
+                efficiency_metrics['E_mRMSE'][i], 
+                efficiency_metrics['E_Hitrate'][i], 
+                efficiency_metrics['E_CSI'][i], 
+                efficiency_metrics['E_F2Score'][i], 
+                efficiency_metrics['E_F3Score'][i], 
+                efficiency_metrics['E_Latency'][i], 
+                efficiency_metrics['E_Memory'][i],
+                efficiency_metrics['E_FLOPs'][i],
+                efficiency_metrics['E_Parameters'][i]   
             ]
             values += values[:1]  # Close the loop
             
@@ -620,8 +690,15 @@ def draw_radar_chart(model_names, rmse, inference_times, pred_memory, flops, par
         ax.set_yticklabels([])
         ax.grid(True, alpha=0.3, linewidth=0.5, zorder=0)
         
-        # Set title
-        # ax.set_title('Model Performance Comparison', fontsize=14, pad=20)
+        # Set title based on weighting profile index
+        weighting_labels = {
+            0: '(a) Weighting Setting 1',
+            1: '(b) Weighting Setting 2', 
+            2: '(c) Weighting Setting 3',
+            3: '(d) Weighting Setting 4'
+        }
+        ax.set_title(weighting_labels.get(weighting_index, f'Weighting Setting {weighting_index + 1}'), 
+                    fontsize=20, pad=30)
         
         # Move the polar plot to the left side to make space for legends
         plt.subplots_adjust(right=0.7)  # Adjusted for better spacing
@@ -641,22 +718,14 @@ def draw_radar_chart(model_names, rmse, inference_times, pred_memory, flops, par
         logger.info(f"Created radar chart with {len(model_names)} models")
         logger.info(f"Model areas: {model_area}")
         # Save with a much larger bbox to ensure annotations are included
-        output_file = os.path.join(OUTPUT_DIR, 'comprehensive_model_comparison_radar.png')
+        output_file = os.path.join(OUTPUT_DIR, f'comprehensive_model_comparison_radar_setting{weighting_index}.png')
         os.makedirs(os.path.dirname(output_file), exist_ok=True)
         plt.savefig(output_file, dpi=300, bbox_inches='tight')
         logger.info(f"Saved enhanced radar chart visualization to {output_file}")
         plt.close()
         
-        # Create a separate legend figure
         create_separate_legend_figure(handles, labels, colors)
         
-        #Add a model vs efficieny plot
-        draw_model_efficiency_plot(model_names, model_area, rmse, inference_times, pred_memory, flops, params)
-        
-    except Exception as e:
-        logger.error(f"Error creating comprehensive radar chart: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
 
 def draw_model_efficiency_plot(model_names, model_areas, rmse=None, inference_times=None, pred_memory=None, flops=None, params=None):
     """Create an accuracy vs computational demand plot."""
@@ -1025,9 +1094,15 @@ def plot_metrics():
         
         model_names = perf_metrics['model'].values
         rmse = perf_metrics['rmse'].values
+        mrmse = perf_metrics['mRMSE'].values
+        csi = perf_metrics['csi'].values
+        hit_rate = perf_metrics['hit_rate'].values
+        f2_score = perf_metrics['f2_score'].values
+        f3_score = perf_metrics['f3_score'].values
         inference_times = perf_metrics['inference_latency'].values
         params = training_metrics['trainable_params'].values
         flops = perf_metrics['flops'].values
+   
 
         gflops = [round(float(flop / 1e9), 1) for flop in flops]  # Convert to GFLOPs with 1 decimal place
         
@@ -1042,6 +1117,16 @@ def plot_metrics():
                     inference_memory_usage.append(0)
             else:
                 inference_memory_usage.append(0)
+                
+             
+        metrics_dict = {
+            'rmse': rmse, 'mrmse': mrmse, 'csi': csi, 'hit_rate': hit_rate,
+            'f2_score': f2_score, 'f3_score': f3_score,
+            'inference_times': inference_times,
+            'params': params,
+            'flops': gflops,
+            'inference_memory_usage': inference_memory_usage
+        }
         
         # Calculate speed up
         speed_up = 20 * 60 / perf_metrics['inference_latency'].values
@@ -1105,7 +1190,7 @@ def plot_metrics():
         #                       'Inference Memory Usage vs Parameters vs RMSE', 'inference_memory_usage_vs_rmse.png')
         
         # # Create the enhanced radar chart with all metrics
-        draw_radar_chart(model_names, rmse, inference_times, inference_memory_usage, flops, params)
+        draw_radar_chart(model_names, metrics_dict)
             
         logger.info("Metrics visualizations generated successfully.")
     
@@ -1243,7 +1328,7 @@ def create_comprehensive_performance_subplot(model_names, gflops, rmse_inverse, 
     
     # Plot (d): Parameters vs GFLOPs (bubble = Memory Usage)
     create_subplot(axes[1, 0], gflops, inference_memory_usage, inference_times,
-                  'GFLOPs', 'Inference Memory Usage (GB)','Inference Time (s)', '(d) GLOPs vs Memory Usage')
+                  'GFLOPs', 'Inference Memory Usage (GB)','Inference Time (s)', '(d) GFLOPs vs Memory Usage')
     
     # Plot (e): Memory Usage vs Accuracy (bubble = Inference Time)
     create_subplot(axes[1, 1], inference_memory_usage, rmse_inverse, inference_times,

@@ -42,7 +42,7 @@ class ReconstructionModule():
         self.run_dir = run_dir
         
         # Initialise parameters
-        self.input_time_len_h = 12
+        self.input_time_len_h = 9
         self.seq_h = self.input_time_len_h * 4
         self.sampling_distance = sampling_distance
         self.cluster_size = cluster_size
@@ -88,6 +88,7 @@ class ReconstructionModule():
         for map_i in range(len(test_idxs)):
             logger.info(f"Processing map {map_i}")           
             pred_depths_map = pred_depths[map_i]
+            reference_outputs_map = reference_outputs[map_i]
             depth_map, ref_map, prof_analysis_results = self.single_construct(map_i, pred_depths_map)
             if map_i == 0 and prof_analysis_results is not None:
                 unet_profile = prof_analysis_results
@@ -101,8 +102,8 @@ class ReconstructionModule():
             logger.info(f"Reference map shape: {ref_map.shape}")       
 
             loss = self.loss_fn(depth_map, ref_map)
-            if map_i == 136:
-                self.save_predictions(depth_map)
+            
+            self.save_predictions(depth_map, map_i)
             nse = self.nse_fn(ref_map, depth_map)
             mRMSE = self.mRMSE_fn(depth_map, ref_map)
             overall_nse += nse
@@ -351,7 +352,7 @@ class ReconstructionModule():
     def get_rl_group_predictions(self, rl_group, model):
         try: 
             total_prediction_time = 0  # Initialize variable used in the method
-            cnn_data_manager = CNNSequentialDataManager(32, self.input_time_len_h,
+            cnn_data_manager = CNNSequentialDataManager(48, self.input_time_len_h,
                                                 rl_group, self.sampling_distance, 
                                                 self.cluster_size, tuning_mode=False, reconstruction_mode=True, reco_data_manager=self.data_manager)
             with torch.no_grad():
@@ -505,13 +506,11 @@ class ReconstructionModule():
     def load_cnn_model_from_file(self, model_file):
         checkpoint  = torch.load(model_file)
         model_structue = checkpoint['model_structure']
-        if 'seq_h' not in checkpoint:
-            seq_h = self.seq_h
-        else:
-            seq_h = checkpoint['seq_h']
+        self.input_time_len_h = checkpoint.get('input_time_len_h', 9)
+        self.seq_h = self.input_time_len_h * 4
         convo_kernel = checkpoint.get('convo_kernel', 4)
         pool_kernel = checkpoint.get('pool_kernel', 3)
-        model = CNN1DSequential(model_structue, seq_h, convo_kernel, pool_kernel).to(self.device)
+        model = CNN1DSequential(model_structue, self.seq_h, convo_kernel, pool_kernel).to(self.device)
         model.load_state_dict(checkpoint['model_state_dict'])
         model.eval()
         return model
@@ -523,8 +522,7 @@ class ReconstructionModule():
             cnn_models[rl_group] = cnn_model
         return cnn_models
     
-    def save_predictions(self, pred):
-        idx = 136
+    def save_predictions(self, pred, idx):
         output_dir = os.path.join(RUN_DIR, "output_maps", USRR_CNN1D_COMBINED)
         os.makedirs(output_dir, exist_ok=True)
         logger.info(f"Saving prediction map to {output_dir}")

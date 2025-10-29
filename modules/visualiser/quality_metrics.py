@@ -800,8 +800,8 @@ def vizualise_test_event():
     # plot_upstream_hydrographs()
     # plot_flood_depth()
     # plot_depth_predictions_at_points()
-    # plot_flood_maps()
-    plot_flood_extent_maps()  # Add flood extent confusion matrix maps
+    plot_flood_maps()
+    # plot_flood_extent_maps()  # Add flood extent confusion matrix maps
     # create_error_boxplot()  # Add the box plot function# Add individual model maps generation
 
 def plot_upstream_hydrographs():

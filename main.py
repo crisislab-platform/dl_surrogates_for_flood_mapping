@@ -11,6 +11,7 @@ from modules.metrics_reader.metrics_reader import hyperparam_analysis
 from modules.visualiser.quality_metrics import vizualise_test_event
 from modules.models.usrr_1dcnn.reduction.rep_location_finder import find_representative_locations_and_clusters
 from modules.datamanager.datamanager import create_inundation_map_tensors
+from modules.visualiser.metrics.bootstrapping import rmse_stats
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("Main")
@@ -57,6 +58,8 @@ def parse_args():
     parser.add_argument('--output_channel_size', type=int, default=1, help='Output channel size for the model')
     parser.add_argument('--fc_layer_size', type=int, default=64, help='Fully connected layer size for the model')
     parser.add_argument('--rl_id', type=str, default=None, help='ID for representative locations')
+    parser.add_argument('--lstm_layers', type=int, default=5, help='Patience for early stopping during training')
+    parser.add_argument('--hidden_size', type=int, default=64, help='Hidden size for LSTM models')
     return parser.parse_args()
 
 def check_if_already_run(args):
@@ -146,7 +149,8 @@ if __name__ == "__main__":
         exit(1)
 
     elif args.command == TRAIN_COMMAND:
-        if args.model == "USSR_1DCNN_V1":
+            
+        if args.model == "USSR_1DCNN_V1" or args.model == "USRR_LSTM_V1":
             # check_if_already_run(args)
             create_inundation_map_tensors()
             
@@ -221,6 +225,11 @@ if __name__ == "__main__":
             
         elif args.plot_type == "test_event":
             vizualise_test_event()
+            
+        elif args.plot_type == "bootstrap":
+            create_inundation_map_tensors()
+            rmse_stats()
+
             
         elif args.plot_type == "hydrograph_clean":
             plot_hydrograph_clean()

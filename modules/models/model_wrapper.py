@@ -85,12 +85,14 @@ class ModelWrapper:
             valid_batches = 0
             self.model.train()
             
-            if self.config.model_name == USRR_1DCNN_V1:
-                self.data_manager.reshuffle_train_indices()
+            if epoch > 0:
+                self.data_manager.shuffle_training_data(epoch)  # Shuffle training data at the start of each epoch
             
             for idx, t_indices in enumerate(self.data_manager.train_idx):
                 self.optimizer.zero_grad()
                 input_batch, output_batch = self.data_manager.get_batch(t_indices, subset="train")
+                input_batch = input_batch.to(device)
+                output_batch = output_batch.to(device)
                 if input_batch is None or output_batch is None:
                     logger.warning(f"Error getting batch {idx}, skipping")
                     continue
@@ -109,8 +111,12 @@ class ModelWrapper:
                                 profile_memory=True, 
                                 on_trace_ready=torch.profiler.tensorboard_trace_handler(run_dir)) as prof:
                         pred = self.model(input_batch)
-                        pred = pred.squeeze(1)  # Remove the channel dimension if present
-                        output_batch = output_batch.squeeze(1)  # Ensure output batch is also squeezed
+                        # Handle single pixel output (no squeezing needed for 1D output)
+                        if len(pred.shape) > 1 and pred.shape[1] > 1:
+                            pred = pred.squeeze(1)  # Only squeeze if there's a channel dimension
+                        # Handle single pixel output (no squeezing needed for 1D output) 
+                        if len(output_batch.shape) > 1 and output_batch.shape[1] > 1:
+                            output_batch = output_batch.squeeze(1)  # Only squeeze if needed
                         batch_loss = self.loss_fn(pred, output_batch)
                         batch_loss.backward()
                         self.optimizer.step()
@@ -120,8 +126,12 @@ class ModelWrapper:
                 else:
                     # Normal processing for all other batches
                     pred = self.model(input_batch)
-                    pred = pred.squeeze(1)  # Remove the channel dimension if present
-                    output_batch = output_batch.squeeze(1)  # Ensure output batch is also squeezed
+                    # Handle single pixel output (no squeezing needed for 1D output)
+                    if len(pred.shape) > 1 and pred.shape[1] > 1:
+                        pred = pred.squeeze(1)  # Only squeeze if there's a channel dimension
+                    # Handle single pixel output (no squeezing needed for 1D output) 
+                    if len(output_batch.shape) > 1 and output_batch.shape[1] > 1:
+                        output_batch = output_batch.squeeze(1)  # Only squeeze if needed
                     batch_loss = self.loss_fn(pred, output_batch)
                     batch_loss.backward()
                     self.optimizer.step()
@@ -133,6 +143,12 @@ class ModelWrapper:
             # Divide by actual number of valid batches processed
             epoch_loss = epoch_loss / valid_batches if valid_batches > 0 else float('inf')
             history["loss"].append(epoch_loss)
+            
+            # Step the learning rate scheduler with epoch loss
+            if hasattr(self, 'scheduler'):
+                self.scheduler.step(epoch_loss)
+                current_lr = self.optimizer.param_groups[0]['lr']
+                logger.info(f"Current learning rate: {current_lr:.2e}")
             
             # Epoch Validation
             if tuning_mode:
@@ -147,6 +163,11 @@ class ModelWrapper:
 
                     with torch.no_grad():
                         pred_val = self.model(input_batch)
+                        # Handle single pixel output for validation
+                        if len(pred_val.shape) > 1 and pred_val.shape[1] > 1:
+                            pred_val = pred_val.squeeze(1)
+                        if len(output_batch.shape) > 1 and output_batch.shape[1] > 1:
+                            output_batch = output_batch.squeeze(1)
                         # If pred < 0.3 then set to 0
                         pred_val = torch.where(pred_val < 0.3, torch.tensor(0.0).to(device), pred_val)
                         batch_val_loss = self.loss_fn(pred_val, output_batch).item()
@@ -159,6 +180,8 @@ class ModelWrapper:
                 history["val_loss"].append(epoch_val_loss)
                 logger.info(f"Epoch {epoch} loss: {epoch_loss}  validation loss: {epoch_val_loss} ")
             
+
+                
                 if epoch_val_loss < best_val_loss:
                     best_val_loss = epoch_val_loss
                     epochs_no_improvement = 0
@@ -233,15 +256,29 @@ class ModelWrapper:
         
         with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], profile_memory=True, on_trace_ready=torch.profiler.tensorboard_trace_handler(self.config.run_dir)) as prof:
             with torch.no_grad():
-                input_data = self.data_manager.test_input
-                ref_out = self.data_manager.test_output
+                # For single pixel training, we need to get all test data combined
+                if hasattr(self.data_manager, 'get_all_test_data'):
+                    input_data, ref_out = self.data_manager.get_all_test_data()
+                    input_data = input_data.to(self.device)
+                    ref_out = ref_out.to(self.device)
+                else:
+                    # Fallback to old method
+                    input_data = self.data_manager.test_input.to(self.device)
+                    ref_out = self.data_manager.test_output.to(self.device)
+                
                 start_time = time.time()
                 pred = self.model(input_data)
+                
+                # Handle single pixel output - no squeezing needed for 1D output
+                if len(pred.shape) > 1 and pred.shape[1] > 1:
+                    pred = pred.squeeze(1)
+                if len(ref_out.shape) > 1 and ref_out.shape[1] > 1:
+                    ref_out = ref_out.squeeze(1)
+                
                 # If pred < 0.3 then set to 0
                 pred = torch.where(pred < 0.3, torch.tensor(0.0).to(self.device), pred)
                 ref_out = torch.where(ref_out < 0.3, torch.tensor(0.0).to(self.device), ref_out)
-                pred = pred.squeeze(1)  
-                ref_out = ref_out.squeeze(1)  # Ensure output batch is also squeezed
+                
                 end_time = time.time()
                 loss = self.loss_fn(pred, ref_out)
                 mse = loss.item()
@@ -275,8 +312,6 @@ class ModelWrapper:
                 # F3 Score
                 f3_score = (tp - fp) / (tp + fp + fn) if (tp + fp + fn) > 0 else 0
                 
-                
-
                 # Calculate NSE
                 observed = ref_out
                 predicted = pred
@@ -286,7 +321,7 @@ class ModelWrapper:
         logger.info(f"Validation prediction_time:{pred_time} loss MSE: {mse} RMSE: {rmse}  NSE: {nse} mRMSE: {mRMSE}")
         
         flops = self.calculate_flops()
-        self.save_predictions(pred)
+        self.save_predictions_all(pred)
                 
         # Save predictions at points of interest
         poi_path = os.path.join(OUTPUT_DIR, "points_of_interest.csv")
@@ -312,7 +347,7 @@ class ModelWrapper:
         
         logger.info(prof.key_averages().table(sort_by="cuda_memory_usage", row_limit=10))
         return metrics
-    
+     
     def save_predictions_at_points(self, predictions, ground_truth, points_csv):
         """
         Save model predictions at specific points of interest to a CSV file
@@ -463,6 +498,43 @@ class ModelWrapper:
         os.makedirs(output_dir, exist_ok=True)
         logger.info(f"Saving prediction map to {output_dir}")
         save_prediction_map(pred_max, output_dir, idx, self.config.model_name)
+        
+    def save_predictions_all(self, pred):
+        """
+        Save predictions for single pixel training
+        For single pixel training, pred is 1D [num_samples], so we need to handle it differently
+        """
+        try:
+            output_dir = os.path.join(RUN_DIR, "output_maps", self.config.model_name)
+            os.makedirs(output_dir, exist_ok=True)
+            logger.info(f"Saving single pixel predictions to {output_dir}")
+            
+            # Convert to numpy
+            pred_np = pred.detach().cpu().numpy()
+            
+            # For single pixel training, we save the predictions as a CSV file
+            # since we don't have spatial maps anymore
+            predictions_df = pd.DataFrame({
+                'sample_idx': range(len(pred_np)),
+                'predicted_depth': pred_np
+            })
+            
+            csv_path = os.path.join(output_dir, "single_pixel_predictions.csv")
+            predictions_df.to_csv(csv_path, index=False)
+            logger.info(f"Saved single pixel predictions to {csv_path}")
+            
+        except Exception as e:
+            logger.error(f"Error saving single pixel predictions: {e}")
+            # If the above fails, try the old method for backward compatibility
+            try:
+                output_dir = os.path.join(RUN_DIR, "output_maps", self.config.model_name)
+                os.makedirs(output_dir, exist_ok=True)
+                logger.info(f"Saving all prediction maps to {output_dir}")
+                for idx in range(pred.shape[0]):
+                    pred_map = pred.detach().cpu().numpy()[idx]
+                    save_prediction_map(pred_map, output_dir, idx, self.config.model_name)
+            except Exception as e2:
+                logger.error(f"Error with fallback prediction saving: {e2}")
         
     def find_and_load_model(self, model_name):
         training_metrics = os.path.join(RUN_DIR,"final_training_metrics.csv")

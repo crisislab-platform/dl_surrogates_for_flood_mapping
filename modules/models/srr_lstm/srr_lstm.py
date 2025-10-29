@@ -15,7 +15,6 @@ model_name  = LSTM_SRR_V1
 class LSTMModel(nn.Module):
     def __init__(self, input_dim, hidden_dim, lstm_dim, output_dim):
         super(LSTMModel, self).__init__()
-        self.lstm_dim = lstm_dim
         self.hidden1 = nn.Linear(input_dim, hidden_dim)
         self.lstm = nn.LSTM(hidden_dim, lstm_dim, batch_first=True)  # use the first dimension as batch_no
         self.hidden2 = nn.Linear(lstm_dim, output_dim)
@@ -32,9 +31,9 @@ class LSTMModelWrapper(ModelWrapper):
         
         #Initialize model parameters
         self.input_dim = 3
-        self.hidden_dim = 10
-        self.lstm_dim = 20
-        self.output_dim = 1
+        self.hidden_dim = config.args.get('hidden_size', 64)
+        self.lstm_dim = config.args.get('fc_layer_size', 64)
+        self.output_dim = None # To be set based on data
     
         #Arguments from config
         self.model_name = model_name

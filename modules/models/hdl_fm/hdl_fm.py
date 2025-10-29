@@ -194,7 +194,7 @@ class HDLFMModelWrapper(ModelWrapper):
 
         # Save predictions as raster
         flops = self.calculate_flops()
-        self.save_predictions(predictions)
+        self.save_predictions_all(predictions)
                 
         # Save predictions at points of interest
         poi_path = os.path.join(OUTPUT_DIR, "points_of_interest.csv")

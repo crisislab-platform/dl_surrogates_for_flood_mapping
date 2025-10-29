@@ -5,7 +5,7 @@ from modules.models.model_wrapper import ModelConfig
 import logging
 import pandas as pd
 import json
-from modules.lib.constants import USRR_1DCNN_V1, USRR_UNET_V1, USRR_CNN1D_COMBINED, LSTM_SRR_V1, SRR_LSTM_COMBINED
+from modules.lib.constants import USRR_1DCNN_V1, USRR_UNET_V1, USRR_CNN1D_COMBINED, LSTM_SRR_V1, SRR_LSTM_COMBINED, USRR_LSTM
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("MetricsWriter")
@@ -34,7 +34,7 @@ def save_training_metrics(run_id, history, train_time, model, model_config: Mode
         save_csv(metrics, metrics_file)
         return
     
-    if model_config.model_name == USRR_1DCNN_V1 or model_config.model_name == USRR_UNET_V1 or model_config.model_name == LSTM_SRR_V1:
+    if model_config.model_name == USRR_1DCNN_V1 or model_config.model_name == USRR_UNET_V1 or model_config.model_name == LSTM_SRR_V1 or model_config.model_name == USRR_LSTM :
         metrics_file = os.path.join(RUN_DIR, model_config.model_name, 'final_training_metrics.csv')
     else:
         metrics_file = f'{RUN_DIR}/final_training_metrics.csv'  
@@ -67,7 +67,7 @@ def save_training_metrics(run_id, history, train_time, model, model_config: Mode
     
      
 def save_prediction_metrics(run_id, model_name, metrics):
-    if model_name == USRR_1DCNN_V1 or model_name == USRR_UNET_V1 or model_name == LSTM_SRR_V1:
+    if model_name == USRR_1DCNN_V1 or model_name == USRR_UNET_V1 or model_name == LSTM_SRR_V1 or model_name == USRR_LSTM:
         metrics_file = os.path.join(RUN_DIR, model_name, 'final_performance_metrics.csv')
     else:
         metrics_file = f'{RUN_DIR}/final_performance_metrics.csv'
@@ -78,7 +78,7 @@ def save_prediction_metrics(run_id, model_name, metrics):
             'mse': metrics.get('mse', ''),
             'rmse': metrics.get('rmse', ''),
             'inference_latency': metrics.get('pred_time', ''),
-            'hit_rate': metrics.get('hitrate', ''),
+            'hit_rate': metrics.get('hit_rate', ''),
             'csi': metrics.get('csi', ''),
             'f2_score': metrics.get('f2_score', ''),
             'f3_score': metrics.get('f3_score', ''),
