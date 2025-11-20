@@ -1,4 +1,4 @@
-from modules.lib.constants import CARLISLE_DATA_DIR,SIMULATION_DATA_DIR, OUTPUT_DIR, GRAPH_OUTPUT_DIR, RUN_DIR
+from modules.lib.constants import DATA_DIR,SIMULATION_DATA_DIR, OUTPUT_DIR, GRAPH_OUTPUT_DIR, RUN_DIR
 import os
 import logging
 import pandas as pd
@@ -805,7 +805,7 @@ def vizualise_test_event():
 
 def plot_upstream_hydrographs():
     logger.info("Generating upstream hydrograph plots")
-    flow_file = os.path.join(CARLISLE_DATA_DIR, "Upstream_Flows_Run1.csv")
+    flow_file = os.path.join(DATA_DIR, "Upstream_Flows_Run1.csv")
 
     df = pd.read_csv(flow_file)
     df["TimeHours"] = df["Time"] / 3600

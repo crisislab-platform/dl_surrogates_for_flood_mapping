@@ -16,9 +16,7 @@ USRR_LSTM = "USRR_LSTM_V1"
 
 #Paths
 PROJECT_ROOT = "/home/91/23016891/projects/carlisle"
-CARLISLE_DATA_DIR = f"{PROJECT_ROOT}/data/carlisle"
-SIMULATION_DATA_DIR = f"/data/carlisle/DEM5m_2D"
-OUTPUT_DIR = f"/data/carlisle/out"
+DATA_DIR = f"{PROJECT_ROOT}/data/westport"
+OUTPUT_DIR = f"/data/westport/out"
 GRAPH_OUTPUT_DIR = f"{PROJECT_ROOT}/out"
-RUN_DIR = f"{OUTPUT_DIR}/runs"
-SIMULATION_OUTPUT_DIR =  f"/data/carlisle/simulation_output"
+RUN_DIR = f"{OUTPUT_DIR}/runs"git

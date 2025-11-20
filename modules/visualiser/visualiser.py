@@ -2,7 +2,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import os
 import numpy as np
-from modules.lib.constants import CARLISLE_DATA_DIR as DATA_DIR, OUTPUT_DIR, SIMULATION_DATA_DIR, RUN_DIR, GRAPH_OUTPUT_DIR
+from modules.lib.constants import DATA_DIR as DATA_DIR, OUTPUT_DIR, SIMULATION_DATA_DIR, RUN_DIR, GRAPH_OUTPUT_DIR
 import logging
 import rasterio
 from rasterio.warp import transform_bounds

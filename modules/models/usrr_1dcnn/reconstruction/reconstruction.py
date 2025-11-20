@@ -1,4 +1,4 @@
-from modules.lib.constants import OUTPUT_DIR, RUN_DIR, CARLISLE_DATA_DIR, SIMULATION_DATA_DIR
+from modules.lib.constants import OUTPUT_DIR, RUN_DIR, DATA_DIR, SIMULATION_DATA_DIR
 from modules.models.usrr_1dcnn.lib.gdal_lib  import gdal_asarray, read_shp_point, coords2rc, gdal_transform, gdal_writetiff
 from modules.utils.run_util import check_device
 from modules.models.usrr_1dcnn.unet import UNet

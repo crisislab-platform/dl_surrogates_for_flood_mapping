@@ -4,14 +4,14 @@ import numpy as np
 import glob
 import logging
 import matplotlib.pyplot as plt
-from modules.lib.constants import CARLISLE_DATA_DIR, OUTPUT_DIR, GRAPH_OUTPUT_DIR
+from modules.lib.constants import DATA_DIR, OUTPUT_DIR, GRAPH_OUTPUT_DIR
 
 logger = logging.getLogger("Flow Analysis")
 
 def plot_upstream_hydrographs():
     
     logger.info("Generating upstream hydrograph plots")
-    flow_file_pattern = os.path.join(CARLISLE_DATA_DIR, "Upstream_Flows_Run*.csv")
+    flow_file_pattern = os.path.join(DATA_DIR, "Upstream_Flows_Run*.csv")
     flow_files = glob.glob(flow_file_pattern)
     
     if not flow_files:
@@ -207,7 +207,7 @@ def plot_hydrograph_clean():
     logger.info("Generating scientific-quality upstream hydrograph for Event 1")
     
     # Load Event 1 flow data
-    flow_file = os.path.join(CARLISLE_DATA_DIR, "Upstream_Flows_Run1.csv")
+    flow_file = os.path.join(DATA_DIR, "Upstream_Flows_Run1.csv")
     
     if not os.path.exists(flow_file):
         logger.error(f"Event 1 flow file not found: {flow_file}")

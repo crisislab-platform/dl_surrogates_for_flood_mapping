@@ -1,4 +1,4 @@
-from modules.lib.constants import RUN_DIR, SIMULATION_DATA_DIR, CARLISLE_DATA_DIR, OUTPUT_DIR, CNN1D_V1, HDL_FM_V1, PICNN1D_V1, USRR_CNN1D_COMBINED
+from modules.lib.constants import RUN_DIR, SIMULATION_DATA_DIR, DATA_DIR, OUTPUT_DIR, CNN1D_V1, HDL_FM_V1, PICNN1D_V1, USRR_CNN1D_COMBINED
 from modules.datamanager.datamanager import check_inundation_data_cache
 import os
 import pandas as pd
@@ -893,7 +893,7 @@ def plot_hydrograph_and_wet_cells(ref_maps_tensor):
     logger.info("Creating hydrograph and wet cells plot")
     
     # Load inflow data
-    inflow_file = os.path.join(CARLISLE_DATA_DIR, 'Upstream_Flows_Run1.csv')
+    inflow_file = os.path.join(DATA_DIR, 'Upstream_Flows_Run1.csv')
     inflow_data = pd.read_csv(inflow_file)
     inflow_data = inflow_data[8:] # Skip header/metadata rows
     
@@ -2417,7 +2417,7 @@ def plot_sequence_hydrographs_with_windows():
     logger.info("Generating single sequence hydrograph plot with one highlighted 2-hour input window")
     
     # Load flow data for all three upstream sources
-    flow_file = os.path.join(CARLISLE_DATA_DIR, "Upstream_Flows_Run1.csv")
+    flow_file = os.path.join(DATA_DIR, "Upstream_Flows_Run1.csv")
     df = pd.read_csv(flow_file)
     df["TimeHours"] = df["Time"] / 3600
     
