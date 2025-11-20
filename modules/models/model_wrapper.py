@@ -12,7 +12,6 @@ from modules.datamanager.datamanager import DataManager
 import json
 import pandas as pd
 from modules.lib.constants import OUTPUT_DIR, SIMULATION_DATA_DIR, RUN_DIR
-from modules.lib.constants import USRR_1DCNN_V1, USRR_UNET_V1
 import rasterio
 
 logger = logging.getLogger("Model")
@@ -108,7 +107,7 @@ class ModelWrapper:
                 if idx == 0 and epoch == 0:
                     logger.info("Starting memory profiling for the first batch")
                     with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], 
-                                profile_memory=True, 
+                                profile_memory=True, with_flops=True,
                                 on_trace_ready=torch.profiler.tensorboard_trace_handler(run_dir)) as prof:
                         pred = self.model(input_batch)
                         # Handle single pixel output (no squeezing needed for 1D output)

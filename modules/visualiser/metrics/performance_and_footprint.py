@@ -29,15 +29,15 @@ def create_performance_plot(x_values, y_values, z_values, model_names, x_label, 
     # Rename model_names to standard values
     for i, model in enumerate(model_names):
         if model == USRR_CNN1D_COMBINED:
-            model_names[i] = "USRR-1DCNN"
+            model_names[i] = "Tier-1"
         elif model == PICNN1D_V1:
-            model_names[i] = "PI1DCNN"
+            model_names[i] = "Tier-3"
         elif model == SRR_LSTM_COMBINED:
             model_names[i] = "SRR-LSTM"
         elif model == CNN1D_V1:
-            model_names[i] = "1DCNN"
+            model_names[i] = "Tier-2"
         elif model == HDL_FM_V1:
-            model_names[i] = "HDL-FM"
+            model_names[i] = "Tier-4"
     
     # Convert input values to numeric format if they aren't already
     numeric_x_values = []
@@ -401,9 +401,9 @@ def draw_radar_chart(model_names, metrics_dict):
         
         
         weight_profiles = [{'E_RMSE': 1, 'E_mRMSE':1,  'E_Hitrate':1, 'E_CSI':1, 'E_F2Score':1, 'E_F3Score':1, 'E_Latency':1, 'E_Memory':1, 'E_FLOPs':1, 'E_Parameters':1},
-                           {'E_RMSE': 2, 'E_mRMSE':1,  'E_Hitrate':1, 'E_CSI':1, 'E_F2Score':1, 'E_F3Score':1, 'E_Latency':0.5, 'E_Memory':0.5, 'E_FLOPs':0.5, 'E_Parameters':0.5},
+                           {'E_RMSE': 1, 'E_mRMSE':1,  'E_Hitrate':1, 'E_CSI':1, 'E_F2Score':1, 'E_F3Score':1, 'E_Latency':0.5, 'E_Memory':0.5, 'E_FLOPs':0.5, 'E_Parameters':0.5},
                            {'E_RMSE': 0.5, 'E_mRMSE':0.5,  'E_Hitrate':0.5, 'E_CSI':0.5 , 'E_F2Score':0.5, 'E_F3Score':0.5, 'E_Latency':1, 'E_Memory':1, 'E_FLOPs':1, 'E_Parameters':1},
-                           {'E_RMSE': 1, 'E_mRMSE':1,  'E_Hitrate':1, 'E_CSI':1, 'E_F2Score':1, 'E_F3Score':1, 'E_Latency':1, 'E_Memory':0.5, 'E_FLOPs':0.5, 'E_Parameters':0.5},]
+                           {'E_RMSE': 1, 'E_mRMSE':1,  'E_Hitrate':1, 'E_CSI':1, 'E_F2Score':1, 'E_F3Score':1, 'E_Latency':1, 'E_Memory':0.25, 'E_FLOPs':0.25, 'E_Parameters':0.25},]
         
 
         inverted_metrics = ['E_RMSE', 'E_Latency', 'E_Memory', 'E_FLOPs', 'E_Parameters'] # metrics where lower is better
@@ -586,9 +586,9 @@ def draw_radar_chart_single(model_names, efficiency_metrics, weighting_index=0):
             'E$_{F2Score}$',
             'E$_{F3Score}$',
             'E$_{Latency}$',
+            'E$_{Memory}$',
             'E$_{FLOPs}$',
             'E$_{Parameters}$',
-            'E$_{Memory}$'
         ]
         
         # Create descriptions for the metrics legend
@@ -605,11 +605,10 @@ def draw_radar_chart_single(model_names, efficiency_metrics, weighting_index=0):
         
         # Use colorblind-friendly colors matching the comprehensive subplot
         model_colors = {
-            "USRR-1DCNN": "#0173B2",  # Blue - safe for all colorblind types
-            "PI1DCNN": "#DE8F05",     # Orange - distinguishable from blue
-            "SRR-LSTM": "#CC78BC",    # Light purple/magenta - safe alternative to pink
-            "1DCNN": "#029E73",       # Green - deuteranopia safe
-            "HDL-FM": "#D55E00",      # Vermillion/red-orange - protanopia safe
+            "Tier-1": "#0173B2",  # Blue - safe for all colorblind types
+            "Tier-3": "#DE8F05",     # Orange - distinguishable from blue   # Light purple/magenta - safe alternative to pink
+            "Tier-2": "#029E73",       # Green - deuteranopia safe
+            "Tier-4": "#D55E00",      # Vermillion/red-orange - protanopia safe
         }
         
         # Assign colors based on model names, with fallback to colorblind-friendly palette
@@ -692,10 +691,10 @@ def draw_radar_chart_single(model_names, efficiency_metrics, weighting_index=0):
         
         # Set title based on weighting profile index
         weighting_labels = {
-            0: '(a) Weighting Setting 1',
-            1: '(b) Weighting Setting 2', 
-            2: '(c) Weighting Setting 3',
-            3: '(d) Weighting Setting 4'
+            0: '(a) Weighting Setting 1: Equal Weights',
+            1: '(b) Weighting Setting 2: Emphasize Accuracy', 
+            2: '(c) Weighting Setting 3: Emphasize Less Computational Demand',
+            3: '(d) Weighting Setting 4: Emphasize Accuracy & Speed',
         }
         ax.set_title(weighting_labels.get(weighting_index, f'Weighting Setting {weighting_index + 1}'), 
                     fontsize=20, pad=30)
@@ -724,7 +723,8 @@ def draw_radar_chart_single(model_names, efficiency_metrics, weighting_index=0):
         logger.info(f"Saved enhanced radar chart visualization to {output_file}")
         plt.close()
         
-        create_separate_legend_figure(handles, labels, colors)
+        create_separate_legend_figure(labels, model_colors)
+        
         
 
 def draw_model_efficiency_plot(model_names, model_areas, rmse=None, inference_times=None, pred_memory=None, flops=None, params=None):
@@ -898,15 +898,15 @@ def create_multi_dimensional_comparison(model_names, rmse, inference_times, flop
         display_names = []
         for model in model_names:
             if model == USRR_CNN1D_COMBINED:
-                display_names.append("USRR-1DCNN")
+                display_names.append("Tier-1")
             elif model == PICNN1D_V1:
-                display_names.append("PI1DCNN")
+                display_names.append("Tier-3")
             elif model == SRR_LSTM_COMBINED:
                 display_names.append("SRR-LSTM")
             elif model == CNN1D_V1:
-                display_names.append("1DCNN")
+                display_names.append("Tier-2")
             elif model == HDL_FM_V1:
-                display_names.append("HDL-FM")
+                display_names.append("Tier-4")
             else:
                 display_names.append(model)
         
@@ -1105,6 +1105,7 @@ def plot_metrics():
    
 
         gflops = [round(float(flop / 1e9), 1) for flop in flops]  # Convert to GFLOPs with 1 decimal place
+        params = [round(param / 1e6, 2) for param in params]  # Convert to Millions with 2 decimal places
         
         # Extract inference memory usage
         inference_memory_usage = []
@@ -1134,13 +1135,12 @@ def plot_metrics():
         
         rmse_inverse = [1 - (r / max(rmse)) for r in rmse]  # Inverse RMSE for better visualization
         rmse_inverse_lable = 'Inverse RMSE (Accuracy)'
-        # Fixed function calls without secondary axis parameters
         create_performance_plot(gflops, rmse_inverse, inference_times, model_names,
                               'GFLOPs', rmse_inverse_lable, 'Inference Time (s)',
                               'RMSE vs FLOPs vs Inference Latency', 'flops_vs_rmse_vs__inference_time.png')
         
         create_performance_plot(params,rmse_inverse, gflops, model_names,
-                        'Parameters', rmse_inverse_lable, 'GFLOPs',
+                        'Parameters (Million)', rmse_inverse_lable, 'GFLOPs',
                         'RMSE vs FLOPs vs Inference Latency', 'parameters_vs_rmse_vs_flops.png')
 
         create_performance_plot(gflops, inference_memory_usage, params, model_names, 'GFLOPs', 
@@ -1205,6 +1205,120 @@ def plot_metrics():
                                            params, inference_memory_usage, compound_footprint, 
                                            rmse_inverse_lable)
         
+    # Create separate compound footprint plot
+    create_compound_footprint_plot(model_names, compound_footprint, rmse_inverse, inference_times, rmse_inverse_lable)
+    
+    # Create separate parameters vs accuracy plot
+    create_parameters_vs_accuracy_plot(model_names, params, rmse_inverse, inference_times, rmse_inverse_lable)
+        
+
+def create_parameters_vs_accuracy_plot(model_names, params, rmse_inverse, gflops, rmse_inverse_label):
+    """Create a separate parameters vs accuracy plot."""
+    try:
+        # Rename model_names to standard values
+        display_names = []
+        for model in model_names:
+            if model == USRR_CNN1D_COMBINED:
+                display_names.append("Tier-1")
+            elif model == PICNN1D_V1:
+                display_names.append("Tier-3")
+            elif model == SRR_LSTM_COMBINED:
+                display_names.append("SRR-LSTM")
+            elif model == CNN1D_V1:
+                display_names.append("Tier-2")
+            elif model == HDL_FM_V1:
+                display_names.append("Tier-4")
+            else:
+                display_names.append(model)
+        
+        # Use consistent colorblind-friendly colors
+        model_colors = {
+            "USRR-1DCNN": "#0173B2",  # Blue - safe for all colorblind types
+            "PI1DCNN": "#DE8F05",     # Orange - distinguishable from blue
+            "SRR-LSTM": "#CC78BC",    # Light purple/magenta - safe alternative to pink
+            "1DCNN": "#029E73",       # Green - deuteranopia safe
+            "HDL-FM": "#D55E00",      # Vermillion/red-orange - protanopia safe
+        }
+        
+        colors = []
+        for model in display_names:
+            if model in model_colors:
+                colors.append(model_colors[model])
+            else:
+                idx = len(colors) % 10
+                colors.append(plt.cm.tab10(idx))
+        
+        # Create figure
+        fig, ax = plt.subplots(figsize=(10, 8))
+        fig.patch.set_facecolor('white')
+        ax.set_facecolor('white')
+        
+        # Normalize inference_times to bubble sizes instead of gflops
+        def normalize_bubble_sizes(values, min_size=100, max_size=800):
+            if max(values) == min(values):
+                return [min_size] * len(values)
+            normalized = [(val - min(values)) / (max(values) - min(values)) for val in values]
+            return [min_size + (max_size - min_size) * norm for norm in normalized]
+        
+        bubble_sizes = normalize_bubble_sizes(gflops)  # This should be inference_times
+        
+        # Plot each point
+        for i, model in enumerate(display_names):
+            ax.scatter(
+                params[i], 
+                rmse_inverse[i],
+                s=bubble_sizes[i],
+                marker='o',
+                color=colors[i],
+                alpha=0.8,
+                edgecolors='black',
+                linewidth=2,
+                label=model
+            )
+        
+        # Add model name labels with arrows
+        for i, model in enumerate(display_names):
+            ax.annotate(model, 
+                      xy=(params[i], rmse_inverse[i]),
+                      xytext=(20, 20),
+                      textcoords='offset points',
+                      fontsize=12,
+                      fontweight='bold',
+                      color='white',
+                      bbox=dict(boxstyle="round,pad=0.3", fc=colors[i], ec="black", alpha=0.9),
+                      arrowprops=dict(arrowstyle="->", connectionstyle="arc3,rad=.2", color=colors[i], lw=1.5))
+        
+        # Add bubble size legend
+        ax.text(0.5, -0.12, 'Bubble Size = Inference Time (s)', 
+                transform=ax.transAxes, fontsize=12, fontweight='normal', fontstyle='italic', 
+                color='black', ha='center')
+        
+        # Configure plot
+        ax.set_xlabel('Parameters (Million)', fontsize=14, color='black', fontweight='bold')
+        ax.set_ylabel(rmse_inverse_label, fontsize=14, color='black', fontweight='bold')
+        ax.set_title('Parameters vs Model Accuracy', fontsize=16, pad=20, fontweight='bold')
+        
+        ax.grid(True, linestyle='-', alpha=0.3, color='gray', linewidth=0.5)
+        ax.spines['top'].set_visible(True)
+        ax.spines['right'].set_visible(True)
+        ax.spines['bottom'].set_color('black')
+        ax.spines['left'].set_color('black')
+        ax.spines['top'].set_color('black')
+        ax.spines['right'].set_color('black')
+        ax.tick_params(colors='black', which='both')
+        
+        # Save the figure
+        output_file = os.path.join(OUTPUT_DIR, 'parameters_vs_accuracy.png')
+        os.makedirs(os.path.dirname(output_file), exist_ok=True)
+        plt.savefig(output_file, dpi=300, bbox_inches='tight')
+        logger.info(f"Saved parameters vs accuracy plot to {output_file}")
+        plt.close()
+        
+    except Exception as e:
+        logger.error(f"Error creating parameters vs accuracy plot: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+
 def create_comprehensive_performance_subplot(model_names, gflops, rmse_inverse, inference_times, 
                                            params, inference_memory_usage, compound_footprint, 
                                            rmse_inverse_lable):
@@ -1218,25 +1332,24 @@ def create_comprehensive_performance_subplot(model_names, gflops, rmse_inverse, 
     display_names = []
     for model in model_names:
         if model == USRR_CNN1D_COMBINED:
-            display_names.append("USRR-1DCNN")
+            display_names.append("Tier-1")
         elif model == PICNN1D_V1:
-            display_names.append("PI1DCNN")
+            display_names.append("Tier-3")
         elif model == SRR_LSTM_COMBINED:
             display_names.append("SRR-LSTM")
         elif model == CNN1D_V1:
-            display_names.append("1DCNN")
+            display_names.append("Tier-2")
         elif model == HDL_FM_V1:
-            display_names.append("HDL-FM")
+            display_names.append("Tier-4")
         else:
             display_names.append(model)
     
     # Use colorblind-friendly colors for each model (based on Cividis and Wong palettes)
     model_colors = {
-        "USRR-1DCNN": "#0173B2",  # Blue - safe for all colorblind types
-        "PI1DCNN": "#DE8F05",     # Orange - distinguishable from blue
-        "SRR-LSTM": "#CC78BC",    # Light purple/magenta - safe alternative to pink
-        "1DCNN": "#029E73",       # Green - deuteranopia safe
-        "HDL-FM": "#D55E00",      # Vermillion/red-orange - protanopia safe
+        "Tier-1": "#0173B2",  # Blue - safe for all colorblind types
+        "Tier-3": "#DE8F05",     # Orange - distinguishable from blue   # Light purple/magenta - safe alternative to pink
+        "Tier-2": "#029E73",       # Green - deuteranopia safe
+        "Tier-4": "#D55E00",      # Vermillion/red-orange - protanopia safe
     }
     
     # Assign colors based on model names
@@ -1260,32 +1373,80 @@ def create_comprehensive_performance_subplot(model_names, gflops, rmse_inverse, 
         
         bubble_sizes = normalize_bubble_sizes(z_vals)
         
-        # Plot points
+        # Apply small jitter to overlapping points to make them all visible
+        jittered_x = list(x_vals)
+        jittered_y = list(y_vals)
+        tolerance = 0.001  # Very small tolerance for exact matches
+        
+        for i in range(len(x_vals)):
+            collision_count = 0
+            for j in range(i):
+                x_range = max(x_vals) - min(x_vals) if max(x_vals) != min(x_vals) else 1
+                y_range = max(y_vals) - min(y_vals) if max(y_vals) != min(y_vals) else 1
+                
+                if (abs(x_vals[j] - x_vals[i]) < tolerance * x_range and 
+                    abs(y_vals[j] - y_vals[i]) < tolerance * y_range):
+                    collision_count += 1
+            
+            if collision_count > 0:
+                # Apply small jitter in a circular pattern
+                import math
+                jitter_radius = 0.02 * min(x_range, y_range)  # 2% of the smaller range
+                angle = collision_count * (2 * math.pi / 8)  # Distribute up to 8 points in circle
+                jittered_x[i] = x_vals[i] + jitter_radius * math.cos(angle)
+                jittered_y[i] = y_vals[i] + jitter_radius * math.sin(angle)
+        
+        # Plot points with jittered positions
         for i, model in enumerate(display_names):
-            ax.scatter(x_vals[i], y_vals[i], s=bubble_sizes[i], marker='o', 
+            ax.scatter(jittered_x[i], jittered_y[i], s=bubble_sizes[i], marker='o', 
                       color=colors[i], alpha=0.8, edgecolors='black', linewidth=1.5, label=model)
         
-        # Add model name labels with arrows - smart positioning to stay within plot area
+        # Add model name labels with arrows - smart positioning with collision detection
+        used_positions = []  # Track used annotation positions
+        tolerance = 0.01  # Tolerance for considering positions "same"
+        
         for i, model in enumerate(display_names):
-            # Calculate smart offset based on data position to keep annotations inside plot
             x_pos, y_pos = x_vals[i], y_vals[i]
             x_range = max(x_vals) - min(x_vals)
             y_range = max(y_vals) - min(y_vals)
+            
+            # Check for collision with other points (same x,y values)
+            collision_count = 0
+            for j in range(i):
+                if (abs(x_vals[j] - x_pos) < tolerance * x_range and 
+                    abs(y_vals[j] - y_pos) < tolerance * y_range):
+                    collision_count += 1
             
             # Determine offset direction based on position relative to center
             x_center = (max(x_vals) + min(x_vals)) / 2
             y_center = (max(y_vals) + min(y_vals)) / 2
             
-            # Smart positioning: offset away from edges
+            # Base positioning: offset away from edges
             if x_pos > x_center:  # Right side
-                x_offset = -30  # Point left
+                base_x_offset = -30  # Point left
             else:  # Left side
-                x_offset = 30   # Point right
+                base_x_offset = 30   # Point right
                 
             if y_pos > y_center:  # Top side
-                y_offset = -20  # Point down
+                base_y_offset = -20  # Point down
             else:  # Bottom side
-                y_offset = 20   # Point up
+                base_y_offset = 20   # Point up
+            
+            # Adjust for collisions - spread out overlapping annotations
+            if collision_count > 0:
+                # Create radial spread for overlapping points
+                angle_step = 60  # degrees between annotations
+                angle = collision_count * angle_step
+                radius = 40 + collision_count * 10  # Increase radius for each collision
+                
+                import math
+                x_offset = radius * math.cos(math.radians(angle))
+                y_offset = radius * math.sin(math.radians(angle))
+            else:
+                x_offset = base_x_offset
+                y_offset = base_y_offset
+                
+            
             
             ax.annotate(model, 
                       xy=(x_vals[i], y_vals[i]),
@@ -1300,8 +1461,8 @@ def create_comprehensive_performance_subplot(model_names, gflops, rmse_inverse, 
                       clip_on=True)  # Ensure annotations are clipped to axes
         
         # Configure subplot
-        ax.set_xlabel(x_label, fontsize=14)
-        ax.set_ylabel(y_label, fontsize=14)
+        ax.set_xlabel(x_label, fontsize=14, color='black', fontweight='bold')
+        ax.set_ylabel(y_label, fontsize=14, color='black', fontweight='bold')
         ax.grid(True, linestyle='-', alpha=0.3, color='gray', linewidth=0.5)
         ax.spines['top'].set_visible(True)
         ax.spines['right'].set_visible(True)
@@ -1320,11 +1481,11 @@ def create_comprehensive_performance_subplot(model_names, gflops, rmse_inverse, 
     
     # Plot (b): Parameters vs Accuracy (bubble = GFLOPs)
     create_subplot(axes[0, 1], params, rmse_inverse, gflops,
-                  'Parameters', rmse_inverse_lable, 'GFLOPs', '(b) Parameters vs Accuracy')
+                  'Parameters (Million)', rmse_inverse_lable, 'GFLOPs', '(b) Parameters vs Accuracy')
         
     # Plot (c): GFLOPs vs Memory Usage (bubble = Parameters)
     create_subplot(axes[0, 2], params, inference_memory_usage, inference_times,
-                  'Parameters', 'Inference Memory Usage (GB)', 'Inference Time (s)', '(c) Parameters vs Memory Usage')
+                  'Parameters (Million)', 'Inference Memory Usage (GB)', 'Inference Time (s)', '(c) Parameters vs Memory Usage')
     
     # Plot (d): Parameters vs GFLOPs (bubble = Memory Usage)
     create_subplot(axes[1, 0], gflops, inference_memory_usage, inference_times,
@@ -1362,9 +1523,10 @@ def create_comprehensive_performance_subplot(model_names, gflops, rmse_inverse, 
     
     # Create a custom legend for model colors
     legend_handles = []
-    for i, model in enumerate(display_names):
+    model_names_ordered = ['Tier-1', 'Tier-2', 'Tier-3', 'Tier-4']
+    for i, model in enumerate(model_names_ordered):
         legend_handles.append(plt.Line2D([0], [0], marker='o', color='w', 
-                                       markerfacecolor=colors[i], markersize=12, 
+                                       markerfacecolor=model_colors[model], markersize=12, 
                                        label=model))
     
     fig.legend(handles=legend_handles, loc='lower center', 
@@ -1381,9 +1543,10 @@ def create_comprehensive_performance_subplot(model_names, gflops, rmse_inverse, 
     logger.info(f"Saved comprehensive performance comparison to {output_file}")
     plt.close()
 
-def create_separate_legend_figure(handles, labels, colors):
+def create_separate_legend_figure(labels, model_colors):
     """Create a separate figure containing only the legend for model colors."""
     try:
+        
         # Create a new figure just for the legend
         legend_fig, legend_ax = plt.subplots(figsize=(8, 2))
         
@@ -1392,10 +1555,13 @@ def create_separate_legend_figure(handles, labels, colors):
         
         # Create legend handles with the same colors as the radar chart
         legend_handles = []
-        for i, (handle, label) in enumerate(zip(handles, labels)):
+        
+        ordered_model_names = ['Tier-1', 'Tier-2', 'Tier-3', 'Tier-4']
+        for i, label in enumerate(ordered_model_names):
             legend_handles.append(plt.Line2D([0], [0], marker='o', color='w', 
-                                           markerfacecolor=colors[i], markersize=15, 
+                                           markerfacecolor=model_colors[label], markersize=15, 
                                            label=label, markeredgecolor='black', markeredgewidth=1))
+        
         
         # Create the legend with large font size
         legend = legend_ax.legend(handles=legend_handles, 
@@ -1421,6 +1587,113 @@ def create_separate_legend_figure(handles, labels, colors):
         
     except Exception as e:
         logger.error(f"Error creating separate legend figure: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+
+def create_compound_footprint_plot(model_names, compound_footprint, rmse_inverse, inference_times, rmse_inverse_label):
+    """Create a separate compound footprint vs accuracy plot."""
+    try:
+        # Rename model_names to standard values
+        display_names = []
+        for model in model_names:
+            if model == USRR_CNN1D_COMBINED:
+                display_names.append("Tier-1")
+            elif model == PICNN1D_V1:
+                display_names.append("Tier-3")
+            elif model == SRR_LSTM_COMBINED:
+                display_names.append("SRR-LSTM")
+            elif model == CNN1D_V1:
+                display_names.append("Tier-2")
+            elif model == HDL_FM_V1:
+                display_names.append("Tier-4")
+            else:
+                display_names.append(model)
+        
+        # Use consistent colorblind-friendly colors
+        model_colors = {
+            "USRR-1DCNN": "#0173B2",  # Blue - safe for all colorblind types
+            "PI1DCNN": "#DE8F05",     # Orange - distinguishable from blue
+            "SRR-LSTM": "#CC78BC",    # Light purple/magenta - safe alternative to pink
+            "1DCNN": "#029E73",       # Green - deuteranopia safe
+            "HDL-FM": "#D55E00",      # Vermillion/red-orange - protanopia safe
+        }
+        
+        colors = []
+        for model in display_names:
+            if model in model_colors:
+                colors.append(model_colors[model])
+            else:
+                idx = len(colors) % 10
+                colors.append(plt.cm.tab10(idx))
+        
+        # Create figure
+        fig, ax = plt.subplots(figsize=(10, 8))
+        fig.patch.set_facecolor('white')
+        ax.set_facecolor('white')
+        
+        # Normalize inference times to bubble sizes
+        def normalize_bubble_sizes(values, min_size=100, max_size=800):
+            if max(values) == min(values):
+                return [min_size] * len(values)
+            normalized = [(val - min(values)) / (max(values) - min(values)) for val in values]
+            return [min_size + (max_size - min_size) * norm for norm in normalized]
+        
+        bubble_sizes = normalize_bubble_sizes(inference_times)
+        
+        # Plot each point
+        for i, model in enumerate(display_names):
+            ax.scatter(
+                compound_footprint[i], 
+                rmse_inverse[i],
+                s=bubble_sizes[i],
+                marker='o',
+                color=colors[i],
+                alpha=0.8,
+                edgecolors='black',
+                linewidth=2,
+                label=model
+            )
+        
+        # Add model name labels with arrows
+        for i, model in enumerate(display_names):
+            ax.annotate(model, 
+                      xy=(compound_footprint[i], rmse_inverse[i]),
+                      xytext=(20, 20),
+                      textcoords='offset points',
+                      fontsize=12,
+                      fontweight='bold',
+                      color='white',
+                      bbox=dict(boxstyle="round,pad=0.3", fc=colors[i], ec="black", alpha=0.9),
+                      arrowprops=dict(arrowstyle="->", connectionstyle="arc3,rad=.2", color=colors[i], lw=1.5))
+        
+        # Add bubble size legend
+        ax.text(0.5, -0.12, 'Bubble Size = Inference Time (s)', 
+                transform=ax.transAxes, fontsize=12, fontweight='normal', fontstyle='italic', 
+                color='black', ha='center')
+        
+        # Configure plot
+        ax.set_xlabel('Compound Computational Footprint', fontsize=14, color='black', fontweight='bold')
+        ax.set_ylabel(rmse_inverse_label, fontsize=14, color='black', fontweight='bold')
+        ax.set_title('Compound Footprint vs Model Accuracy', fontsize=16, pad=20, fontweight='bold')
+        
+        ax.grid(True, linestyle='-', alpha=0.3, color='gray', linewidth=0.5)
+        ax.spines['top'].set_visible(True)
+        ax.spines['right'].set_visible(True)
+        ax.spines['bottom'].set_color('black')
+        ax.spines['left'].set_color('black')
+        ax.spines['top'].set_color('black')
+        ax.spines['right'].set_color('black')
+        ax.tick_params(colors='black', which='both')
+        
+        # Save the figure
+        output_file = os.path.join(OUTPUT_DIR, 'compound_footprint_vs_accuracy.png')
+        os.makedirs(os.path.dirname(output_file), exist_ok=True)
+        plt.savefig(output_file, dpi=300, bbox_inches='tight')
+        logger.info(f"Saved compound footprint vs accuracy plot to {output_file}")
+        plt.close()
+        
+    except Exception as e:
+        logger.error(f"Error creating compound footprint plot: {e}")
         import traceback
         logger.error(traceback.format_exc())
 

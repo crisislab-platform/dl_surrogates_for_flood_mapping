@@ -69,22 +69,129 @@ class ReconstructionModule():
         logger.info("Running reconstruction")
         test_idxs = self.data_manager.reconstruction_test_idxs
         logger.info(f"Testing the recosntruction for : {test_idxs.shape} maps")
-    
-        overall_mse = 0
-        overall_nse = 0
-        overall_mRMSE = 0
-        start_time = time.time()
-        
         logger.info("Predicting depths at representative locations using CNN models")
         pred_depths, reference_outputs, pred_time, cnn_profile = self.predict_rl_depth()
         logger.info(f"Time taken for RL depth prediction: {pred_time}")
-        unet_profile = None
+        metrics = self.single_reconstruction(test_idxs, pred_depths, reference_outputs, cnn_profile)
+        return metrics
+      
+    def multi_reconstruction(self, test_idxs, pred_depths, reference_outputs, cnn_profile):
+        start_time = time.time()
         all_preds = []
         all_reference_maps = []
         all_tp = 0
         all_tn = 0
         all_fp = 0
-        all_fn = 0  
+        all_fn = 0
+        
+        # Process the first map to get unet profile
+        pred_depths_map = pred_depths[0]
+        depth_map, ref_map, prof_analysis_results = self.single_construct(0, pred_depths_map)
+        unet_profile = prof_analysis_results
+        overall_mse = 0
+        overall_mrmse= 0
+        overall_rmse = 0
+        batches_of_test_indices = np.array_split(test_idxs, max(1, len(test_idxs)//20))
+        
+        for batch_indices in batches_of_test_indices:
+            pred_maps, reference_maps = self.multiple_construct(batch_indices, pred_depths)
+
+        
+            logger.info(f"Depth map shape: {depth_map.shape}")
+            logger.info(f"Reference map shape: {ref_map.shape}")       
+
+            # overall_mse = self.loss_fn(pred_maps, reference_maps)
+            # self.save_predictions(depth_map, map_i)
+            # nse = self.nse_fn(ref, depth_map)
+            overall_mse += self.loss_fn(pred_maps, reference_maps)
+            overall_mrmse += self.mRMSE_fn(pred_maps, reference_maps)
+            overall_rmse += np.sqrt(self.loss_fn(pred_maps, reference_maps).item())
+               
+            # create confusion matrix for flood/no flood
+            threshold = 0.3
+            pred_binary = (depth_map > threshold).float()
+            ref_binary = (ref_map > threshold).float()
+            
+            all_preds.extend(pred_maps)
+            all_reference_maps.extend(reference_maps)
+
+            tp = ((pred_binary == 1) & (ref_binary == 1)).sum().item()
+            tn = ((pred_binary == 0) & (ref_binary == 0)).sum().item()
+            fp = ((pred_binary == 1) & (ref_binary == 0)).sum().item()
+            fn = ((pred_binary == 0) & (ref_binary == 1)).sum().item()
+            all_tp += tp
+            all_tn += tn
+            all_fp += fp
+            all_fn += fn
+            logger.info(f"Batch MSE {self.loss_fn(pred_maps, reference_maps).item()} mRMSE {self.mRMSE_fn(pred_maps, reference_maps)} all_tp {tp} all_tn {tn} all_fp {fp} all_fn {fn}")
+
+        end_time = time.time()
+        reconstruction_time = end_time - start_time
+        
+        mse = overall_mse / len(batches_of_test_indices)
+        rmse = overall_rmse / len(batches_of_test_indices)
+        mRMSE = overall_mrmse / len(batches_of_test_indices)
+        
+        # Calculate Hit Ratio and Critical Success Index (CSI)
+        hit_ratio = (all_tp + all_tn) / (all_tp + all_tn + all_fp + all_fn) if (all_tp + all_tn + all_fp + all_fn) > 0 else 0
+        csi = all_tp / (all_tp + all_fp + all_fn) if (all_tp + all_fp + all_fn) > 0 else 0
+        
+        # F2 Score
+        f2_score = (all_tp - all_fn) / (all_tp + all_fp + all_fn) if (all_tp + all_fp + all_fn) > 0 else 0
+                
+        # F3 Score
+        f3_score = (all_tp - all_fp) / (all_tp + all_fp + all_fn) if (all_tp + all_fp + all_fn) > 0 else 0
+        
+        # Find max Memory Consumption out of cnn and unet models
+        if cnn_profile is not None:
+            max_cuda_memor_cnn = cnn_profile['max_cuda_memory']
+            max_cpu_memory_cnn = cnn_profile['max_cpu_memory']
+        if unet_profile is not None:
+            max_cuda_memory_unet = unet_profile['max_cuda_memory']
+            max_cpu_memory_unet = unet_profile['max_cpu_memory']
+    
+        pred_memory_usage = {
+            "max_cuda_memory": max(max_cuda_memor_cnn, max_cuda_memory_unet) if cnn_profile and unet_profile else 0,
+            "max_cpu_memory": max(max_cpu_memory_cnn, max_cpu_memory_unet) if cnn_profile and unet_profile else 0,
+            "total_cpu_time": cnn_profile['total_cpu_time'] + unet_profile['total_cpu_time'] if cnn_profile and unet_profile else 0,
+            "total_gpu_time": cnn_profile['total_gpu_time'] + unet_profile['total_gpu_time'] if cnn_profile and unet_profile else 0,
+            "total_cpu_memory": 0,
+            "total_gpu_memory": 0 
+        }
+        
+        logger.info(f"Overall MSE: {mse}, RMSE: {rmse},  mRMSE: {mRMSE} Hit Ratio: {hit_ratio}, CSI: {csi}, F2 Score: {f2_score}, F3 Score: {f3_score}")
+        flops = self.cnn_train_history['flops'] + unet_profile['reconstruct_flops']
+        logger.info(f"Total FLOPs: {format_flops(flops)}")
+        
+        # Save the prediction maps
+        # self.save_predictions_at_points(all_preds, all_reference_maps)
+        metrics  = {
+            'mse': mse,
+            'rmse': rmse,
+            'mRMSE': mRMSE,
+            'nse': "",
+            'pred_time': reconstruction_time,
+            'flops': flops,
+            "pred_memory_usage": pred_memory_usage , 
+            'hit_rate': hit_ratio,
+            'csi': csi,
+            'f2_score': f2_score,
+            'f3_score': f3_score
+        }
+        return metrics
+    
+    
+    def single_reconstruction(self, test_idxs, pred_depths, reference_outputs, cnn_profile):
+        start_time = time.time()
+        all_preds = []
+        all_reference_maps = []
+        all_tp = 0
+        all_tn = 0
+        all_fp = 0
+        all_fn = 0
+        overall_mse = 0
+        overall_nse = 0
+        overall_mRMSE = 0  
         for map_i in range(len(test_idxs)):
             logger.info(f"Processing map {map_i}")           
             pred_depths_map = pred_depths[map_i]
@@ -103,7 +210,7 @@ class ReconstructionModule():
 
             loss = self.loss_fn(depth_map, ref_map)
             
-            self.save_predictions(depth_map, map_i)
+            # self.save_predictions(depth_map, map_i)
             nse = self.nse_fn(ref_map, depth_map)
             mRMSE = self.mRMSE_fn(depth_map, ref_map)
             overall_nse += nse
@@ -128,7 +235,7 @@ class ReconstructionModule():
             logger.info(f"Map {map_i} MSE {loss.item()} NSE {nse} mRMSE {mRMSE} all_tp {tp} all_tn {tn} all_fp {fp} all_fn {fn}")
             all_preds.append(depth_map)
             all_reference_maps.append(ref_map)
-                
+        
         end_time = time.time()
         mse = overall_mse / test_idxs.shape[0]
         rmse = np.sqrt(mse)
@@ -164,11 +271,11 @@ class ReconstructionModule():
         }
         
         logger.info(f"Overall MSE: {mse}, RMSE: {rmse}, NSE: {nse} mRMSE: {mRMSE} Hit Ratio: {hit_ratio}, CSI: {csi}, F2 Score: {f2_score}, F3 Score: {f3_score}")
-        flops = self.cnn_train_history['flops'] + unet_profile['reconstruct_flops']
+        flops = max(self.cnn_train_history['flops'], self.unet_train_history['flops'])
         logger.info(f"Total FLOPs: {format_flops(flops)}")
         
         # Save the prediction maps
-        self.save_predictions_at_points(all_preds, all_reference_maps)
+        # self.save_predictions_at_points(all_preds, all_reference_maps)
         metrics  = {
             'mse': mse,
             'rmse': rmse,
@@ -183,6 +290,8 @@ class ReconstructionModule():
             'f3_score': f3_score
         }
         return metrics
+                
+        
     
     def visualise_error_distribution(self, depth_map, ref_map):
         """
@@ -314,8 +423,12 @@ class ReconstructionModule():
         all_preds = [] 
         pred_start = time.time()
         
+        # Add thread lock for concurrent access to all_preds
+        import threading
+        preds_lock = threading.Lock()
+        
         #Use ProcessPoolExecutor for parallel execution
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=50) as executor:
             # Submit all prediction tasks
             future_to_group = {
                 executor.submit(self.get_rl_group_predictions, rl_group, model): rl_group
@@ -326,17 +439,16 @@ class ReconstructionModule():
             for future in concurrent.futures.as_completed(future_to_group):
                 rl_group = future_to_group[future]
                 try:
-                    if rl_group == 0 or rl_group == '0':
-                        logger.info(f"RL group {rl_group} has {y_hat_np.shape[0]} timesteps")
                     y_hat_np, data_manager = future.result()
-                    # Process each timestep
-                    for i in range(y_hat_np.shape[0]):
-                        # Initialize map for this timestep if needed
-                        if len(all_preds) <= i:
-                            all_preds.append(torch.zeros(self.dem_map.shape, device=self.device))
-                        
-                        # Add predictions to the map at the proper locations
-                        all_preds[i][data_manager.filter_mask] = y_hat_np[i]
+                    # Process each timestep with thread synchronization
+                    with preds_lock:  # Acquire lock before modifying shared data
+                        for i in range(y_hat_np.shape[0]):
+                            # Initialize map for this timestep if needed
+                            if len(all_preds) <= i:
+                                all_preds.append(torch.zeros(self.dem_map.shape, device=self.device))
+                            
+                            # Add predictions to the map at the proper locations
+                            all_preds[i][data_manager.filter_mask] = y_hat_np[i]
                     
                     logger.info(f"Completed predictions for RL group {rl_group}")
                 except Exception as exc:
@@ -352,9 +464,11 @@ class ReconstructionModule():
     def get_rl_group_predictions(self, rl_group, model):
         try: 
             total_prediction_time = 0  # Initialize variable used in the method
-            cnn_data_manager = CNNSequentialDataManager(48, self.input_time_len_h,
+            cnn_data_manager = CNNSequentialDataManager(16, self.input_time_len_h,
                                                 rl_group, self.sampling_distance, 
-                                                self.cluster_size, tuning_mode=False, reconstruction_mode=True, reco_data_manager=self.data_manager)
+                                                self.cluster_size, tuning_mode=False,
+                                                reconstruction_mode=True, 
+                                                reco_data_manager=self.data_manager)
             with torch.no_grad():
                 model.eval()
                 test_inputs = cnn_data_manager.test_input
@@ -437,46 +551,38 @@ class ReconstructionModule():
             prof_analysis_results = None
             # Only profile the first map/timestep
             if map_i == 0:
+                input_batch, output_batch, reference_map = self.data_manager.get_batch(map_i, pred_depths)
                 with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], profile_memory=True,
-                           record_shapes=True, with_stack=True, with_flops=True) as prof_construct:
-                    input_batch, output_batch, reference_map = self.data_manager.get_batch(map_i, pred_depths)
+                         with_flops=True) as prof_construct:
                     preds = self.unet(input_batch)
-                    preds = preds.squeeze(1)
-                    loss = self.loss_fn(preds, output_batch)
-                    logger.info(f"Map {map_i} Loss: {loss.item()}")
-                    
-                    process = psutil.Process()
-                    start_cpu_time = process.cpu_times().user + process.cpu_times().system
-                    start_time = time.time()
-                    mem_before = process.memory_info().rss / (1024 * 1024)
-                    
-                    #Need to measure flops for this one
-                    predicted_map = self.data_manager.reconstruct_full_map(preds)
-                    
-                    mem_after = process.memory_info().rss / (1024 * 1024)
-                    memory_used = mem_after - mem_before
-                    logger.info(f"Memory used during UNet reconstruction: {memory_used:.2f} MB")
-                    
-                    end_time = time.time()
-                    end_cpu_time = process.cpu_times().user + process.cpu_times().system
-                    cpu_time_used = end_cpu_time - start_cpu_time
-                    wall_time = end_time - start_time
-                    
-                    # Estimate FLOPS based on CPU frequency and utilization
-                    cpu_freq = psutil.cpu_freq().current * 1e6  # Convert MHz to Hz
-                    cpu_count = psutil.cpu_count(logical=True)
-                    utilization = cpu_time_used / wall_time 
-                    estimated_flops = cpu_freq * cpu_count * utilization * wall_time
-                    logger.info(f"Estimated FLOPS for single construct: {estimated_flops:,.0f}")
+                
+                preds = preds.squeeze(1)
+                loss = self.loss_fn(preds, output_batch)
+                logger.info(f"Map {map_i} Loss: {loss.item()}")
+                
+                process = psutil.Process()
+                start_cpu_time = process.cpu_times().user + process.cpu_times().system
+                start_time = time.time()
+                mem_before = process.memory_info().rss / (1024 * 1024)
+                
+                # Need to measure flops for this one
+                predicted_map = self.data_manager.reconstruct_full_map(preds)
+                
+                mem_after = process.memory_info().rss / (1024 * 1024)
+                memory_used = mem_after - mem_before
+                logger.info(f"Memory used during UNet reconstruction: {memory_used:.2f} MB")
+                
+                end_time = time.time()
+                end_cpu_time = process.cpu_times().user + process.cpu_times().system
                 
                 # Log profiler results for single construct
                 logger.info("Single Construct (First Timestep) Profiler Results:")
                 logger.info(prof_construct.key_averages().table(sort_by="cuda_memory_usage", row_limit=10))
                 prof_analysis_results = profiler_analysis(prof_construct.key_averages())
+                logger.info(f"Profiler Analysis Results for single_construct: {prof_analysis_results}")
                 logger.info(f"Memory usage for single_construct: {prof_analysis_results['max_cpu_memory']} MB")
                 logger.info(f"CUDA Memory usage for single_construct: {prof_analysis_results['max_cuda_memory']} MB")
-                logger.info(f"FLOPs for single_construct: {format_flops(prof_analysis_results['flops'])}")
-                prof_analysis_results['reconstruct_flops'] = estimated_flops     
+                logger.info(f"FLOPs for single_construct: {format_flops(prof_analysis_results['flops'])}")   
                      
             else:
                 input_batch, output_batch, reference_map = self.data_manager.get_batch(map_i, pred_depths)
@@ -492,6 +598,29 @@ class ReconstructionModule():
             
             # predicted_map[reference_map < 0.3] = 0
             return predicted_map, reference_map, prof_analysis_results
+        
+    def multiple_construct(self, map_indices, pred_depths):
+         with torch.no_grad():
+            self.unet.eval()
+            input_batch, output_batch, reference_maps = self.data_manager.get_batch_multiple(map_indices, pred_depths)
+            preds_multiple= self.unet(input_batch)
+            preds_multiple = preds_multiple.squeeze(1)
+            loss = self.loss_fn(preds_multiple, output_batch)
+            logger.info(f"Map {map_indices} MSE: {loss.item()}")
+            
+            predicted_maps = []
+            index = 0
+            for preds in preds_multiple:
+                logger.info(f"Reconstructing map {index}")
+                predicted_map = self.data_manager.reconstruct_full_map(preds)
+                torch.cuda.empty_cache()
+                reference_maps[reference_maps < 0.3] = 0
+                predicted_map[predicted_map < 0.3] = 0
+                predicted_maps.append(predicted_map)
+                index += 1
+            
+            # predicted_map[reference_map < 0.3] = 0
+            return predicted_maps, reference_maps
         
         
     def load_unet_model_from_file(self, model_file):

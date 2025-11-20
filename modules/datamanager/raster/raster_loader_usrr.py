@@ -66,6 +66,25 @@ class ReconsturctionDataManager(USRRDataManager):
             dem_batch = self.shaped_dem_gpu.unsqueeze(1)  # Add channel dimension for DEM
             reference_tiles = self.preloaded_tiles[t_idx]
             return torch.cat((input_map_tensor, dem_batch), dim=1), reference_tiles, inundation_map
+        
+    def get_batch_multiple(self, t_indices, rl_depths):
+        with torch.no_grad():
+            inundation_maps = []
+            input_temp_filled = []
+            reference_tiles = []
+            for t_idx, rl_depth in zip(t_indices, rl_depths):
+                inundation_maps.append(self.preloaded_maps[t_idx])
+                input_map_tensor = self.tiles_prep_func_gpu(rl_depth).unsqueeze(1)
+                dem_batch = self.shaped_dem_gpu.unsqueeze(1)
+                input_tensor_cat = torch.cat((input_map_tensor, dem_batch), dim=1)
+                input_temp_filled.append(input_tensor_cat)
+                reference_tiles.append(self.preloaded_tiles[t_idx])
+              # Add channel dimension for DEM
+
+            input_map_tensors = torch.cat(input_temp_filled, dim=0)
+            inundation_maps = torch.cat(inundation_maps, dim=0)
+            reference_tiles = torch.cat(reference_tiles, dim=0)
+            return input_map_tensors, reference_tiles, inundation_maps
                     
     
     def reconstruction_init(self):

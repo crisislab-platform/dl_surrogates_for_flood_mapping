@@ -7,7 +7,6 @@ from matplotlib import pyplot as plt
 import numpy as np
 from modules.lib.constants import CNN1D_V1, PICNN1D_V1, USRR_CNN1D_COMBINED, SRR_LSTM_COMBINED, HDL_FM_V1
 import rasterio
-from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("Test Event Visualisation")
@@ -82,11 +81,11 @@ def plot_depth_predictions_at_points():
     
     # Create nicer display names for models
     model_display_names = {
-        CNN1D_V1: '1DCNN',
-        PICNN1D_V1: 'PICNN',
-        USRR_CNN1D_COMBINED: 'USRR-CNN',
+        CNN1D_V1: 'Tier-2',
+        PICNN1D_V1: 'Tier-3',
+        USRR_CNN1D_COMBINED: 'Tier-1',
         SRR_LSTM_COMBINED: 'SRR-LSTM',
-        HDL_FM_V1: 'HDL-FM',
+        HDL_FM_V1: 'Tier-4',
         'True': 'Ground Truth'
     }
     
@@ -241,11 +240,11 @@ def plot_summary_comparison(model_predictions, poi_df):
         
         # Create nicer display names for models
         model_display_names = {
-            CNN1D_V1: '1DCNN',
-            PICNN1D_V1: 'PI1DCNN',
-            USRR_CNN1D_COMBINED: 'USRR-1DCNN',
+            CNN1D_V1: 'Tier-2',
+            PICNN1D_V1: 'Tier-3',
+            USRR_CNN1D_COMBINED: 'Tier-1',
             SRR_LSTM_COMBINED: 'SRR-LSTM',
-            HDL_FM_V1: 'HDL-FM'
+            HDL_FM_V1: 'Tier-4',
         }
         
         # Calculate global y-axis limits across all models for consistency
@@ -800,8 +799,8 @@ def vizualise_test_event():
     # plot_upstream_hydrographs()
     # plot_flood_depth()
     # plot_depth_predictions_at_points()
-    plot_flood_maps()
-    # plot_flood_extent_maps()  # Add flood extent confusion matrix maps
+    # plot_flood_maps()
+    plot_flood_extent_maps()  # Add flood extent confusion matrix maps
     # create_error_boxplot()  # Add the box plot function# Add individual model maps generation
 
 def plot_upstream_hydrographs():
@@ -1135,15 +1134,15 @@ def plot_flood_maps():
     Each model gets its own row in the grid for easy comparison.
     """
     # List of all models to process
-    model_names = [CNN1D_V1, PICNN1D_V1, USRR_CNN1D_COMBINED, SRR_LSTM_COMBINED, HDL_FM_V1]
+    model_names = [USRR_CNN1D_COMBINED, CNN1D_V1, PICNN1D_V1, HDL_FM_V1]
     
     # Create nicer display names for models
     model_display_names = {
-        CNN1D_V1: '1DCNN',
-        PICNN1D_V1: 'PI1DCNN',
-        USRR_CNN1D_COMBINED: 'USRR-1DCNN',
+        CNN1D_V1: 'Tier-2',
+        PICNN1D_V1: 'Tier-3',
+        USRR_CNN1D_COMBINED: 'Tier-1',
         SRR_LSTM_COMBINED: 'SRR-LSTM',
-        HDL_FM_V1: 'HDL-FM'
+        HDL_FM_V1: 'Tier-4'
     }
     
     # Timestep to use for comparison
@@ -1173,15 +1172,16 @@ def plot_flood_maps():
     for i in range(len(water_colors)):
         water_colors[i, 0:3] = np.clip(water_colors[i, 0:3] * 1.3, 0, 1)
     water_cmap = plt.matplotlib.colors.LinearSegmentedColormap.from_list('enhanced_blues', water_colors)
-    
-    # Create diverging colormap for error visualization
-    error_cmap = 'coolwarm'  # Red for over-prediction, blue for under-prediction
-    
-    # Set DEM visualization properties
-    dem_cmap = plt.cm.Greys_r
-    dem_alpha = 0.7
-    water_alpha = 1.0
-    
+
+    # Create diverging colormap for error visualization -- ensure zero maps to white
+    from matplotlib.colors import LinearSegmentedColormap
+    # Blue -> White -> Red with white at center (zero)
+    error_cmap = LinearSegmentedColormap.from_list('error_white_center', [
+        (0.0, 0.0, 1.0),  # blue at negative extreme
+        (1.0, 1.0, 1.0),  # white at center
+        (1.0, 0.0, 0.0)   # red at positive extreme
+    ])
+
     # Dictionary to collect model data
     model_data = {}
     available_models = []
@@ -1288,10 +1288,10 @@ def plot_flood_maps():
             fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 8))
             
             # Left plot: Prediction map
-            ax1.imshow(dem_data, extent=extent, cmap=dem_cmap, alpha=dem_alpha, origin='upper')
-            im1 = ax1.imshow(model_info['masked_pred'], extent=extent, cmap=water_cmap, alpha=water_alpha, 
+            # ax1.imshow(dem_data, extent=extent, cmap=dem_cmap, alpha=dem_alpha, origin='upper')
+            im1 = ax1.imshow(model_info['pred_data'], extent=extent, cmap=water_cmap, alpha=1.0, 
                             vmin=0, vmax=3.0, origin='upper')
-            ax1.set_title(f'{display_name} - Prediction', fontsize=14, fontweight='bold')
+            ax1.set_title(f'{display_name} - Prediction', fontsize=18)
             ax1.set_xticks([])
             ax1.set_yticks([])
             
@@ -1308,21 +1308,21 @@ def plot_flood_maps():
                     bbox=dict(facecolor='white', alpha=0.8, edgecolor='black'))
             
             # Right plot: Error map
-            ax2.imshow(dem_data, extent=extent, cmap=dem_cmap, alpha=0.15, origin='upper')
-            im2 = ax2.imshow(model_info['masked_error'], extent=extent, cmap=error_cmap,
+            # ax2.imshow(dem_data, extent=extent, cmap=dem_cmap, alpha=0.15, origin='upper')
+            im2 = ax2.imshow(model_info['error_data'], extent=extent, cmap=error_cmap,
                             vmin=-global_error_max, vmax=global_error_max, alpha=1.0, origin='upper')
-            ax2.set_title(f'{display_name} - Error (RMSE: {model_info["rmse"]:.3f}m)', fontsize=14, fontweight='bold')
+            ax2.set_title(f'{display_name} - Prediction Error (RMSE: {model_info["rmse"]:.3f}m)', fontsize=18)
             ax2.set_xticks([])
             ax2.set_yticks([])
             
             # Calculate and display error statistics
-            error_compressed = model_info['masked_error'].compressed()
+            error_compressed = model_info['error_data']
             if len(error_compressed) > 0:
                 over_pred = np.sum(error_compressed > 0.1) / len(error_compressed) * 100
                 under_pred = np.sum(error_compressed < -0.1) / len(error_compressed) * 100
                 
-                stats_text = (f"Over-prediction: {over_pred:.1f}%\n"
-                             f"Under-prediction: {under_pred:.1f}%")
+                stats_text = (f"Overestiamtions: {over_pred:.1f}%\n"
+                             f"Underestimations: {under_pred:.1f}%")
                 
                 ax2.text(0.02, 0.98, stats_text, transform=ax2.transAxes, fontsize=10,
                         verticalalignment='top', horizontalalignment='left',
@@ -1585,235 +1585,252 @@ def plot_flood_extent_maps():
     logger.info("Creating flood extent confusion matrix maps")
     
     # List of all models to process
-    model_names = [CNN1D_V1, PICNN1D_V1, USRR_CNN1D_COMBINED, SRR_LSTM_COMBINED, HDL_FM_V1]
+    model_names = [USRR_CNN1D_COMBINED, CNN1D_V1, PICNN1D_V1, SRR_LSTM_COMBINED, HDL_FM_V1]
     
     # Create nicer display names for models
     model_display_names = {
-        CNN1D_V1: '1DCNN',
-        PICNN1D_V1: 'PI1DCNN',
-        USRR_CNN1D_COMBINED: 'USRR-1DCNN',
-        HDL_FM_V1: 'HDL-FM'
+        CNN1D_V1: 'Tier-2',
+        PICNN1D_V1: 'Tier-3',
+        USRR_CNN1D_COMBINED: 'Tier-1',
+        HDL_FM_V1: 'Tier-4',
     }
     
     # Timestep to use for comparison
-    idx = "0145"
-    alt_idx = "0136"  # Alternative timestep if primary isn't available
+    reference_indices = ["0145", "0056", "0224"]  # Prioritized list of timesteps
+    pred_idx = ["0137", "0048", "0216"]  # Alternative timesteps if primary isn't available
     
-    # Define the flood threshold
-    flood_threshold = 0.3
-    
-    # Reference LISFLOOD run (ground truth)
-    lf_extent_file = os.path.join(SIMULATION_DATA_DIR, f"Run1-{idx}.wd")
-    if not os.path.exists(lf_extent_file):
-        logger.error(f"Ground truth file doesn't exist: {lf_extent_file}")
-        return None
-    
-    # Load the reference LISFLOOD data
-    with rasterio.open(lf_extent_file) as src:
-        truth_data = src.read(1)
-        truth_nodata = src.nodata
-        extent = [src.bounds.left, src.bounds.right, src.bounds.bottom, src.bounds.top]
-    
-    # Load DEM data for background
-    dem_file = os.path.join(SIMULATION_DATA_DIR, "Carlisle_5m.asc")
-    with rasterio.open(dem_file) as src:
-        dem_data = src.read(1)
-        dem_nodata = src.nodata
-    
-    # Create binary truth mask (1 = flooded, 0 = dry)
-    truth_binary = np.where(truth_data >= flood_threshold, 1, 0)
-    
-    # Define output directory
-    output_dir = os.path.join(OUTPUT_DIR, "quality_metrics", "confusion_matrix_maps")
-    os.makedirs(output_dir, exist_ok=True)
-    
-    # Define colors for confusion matrix categories
-    confusion_colors = {
-        0: "#ffffff",  # True Negatives (TN) - White (correct dry)
-        1: "#808080",  # True Positives (TP) - Grey (hits - correct flood)
-        2: "#FF8C00",  # False Positives (FP) - Dark orange (overpredictions)
-        3: "#FF0000",  # False Negatives (FN) - Red (misses - underpredictions)
-    }
-    
-    # Create custom colormap
-    from matplotlib.colors import ListedColormap
-    colors_list = [confusion_colors[i] for i in range(4)]
-    confusion_cmap = ListedColormap(colors_list)
-    
-    # Process each model
-    available_models = []
-    model_stats = {}
-    
-    for model_name in model_names:
-        # Try to find the prediction file
-        maps_dir = os.path.join(RUN_DIR, "output_maps", model_name)
-        primary_map_path = os.path.join(maps_dir, f"map_{idx}.wd")
-        alt_map_path = os.path.join(maps_dir, f"map_{alt_idx}.wd")
+    for ref_idx, pred_idx in zip(reference_indices, pred_idx):
+        # Define the flood threshold
+        flood_threshold = 0.3
         
-        model_map_path = None
-        if os.path.exists(primary_map_path):
-            model_map_path = primary_map_path
-            used_idx = idx
-        elif os.path.exists(alt_map_path):
-            model_map_path = alt_map_path
-            used_idx = alt_idx
-            logger.info(f"Using alternative timestep for {model_name}")
+        # Reference LISFLOOD run (ground truth)
+        lf_extent_file = os.path.join(SIMULATION_DATA_DIR, f"Run1-{ref_idx}.wd")
+        if not os.path.exists(lf_extent_file):
+            logger.error(f"Ground truth file doesn't exist: {lf_extent_file}")
+            return None
         
-        if not model_map_path:
-            logger.warning(f"No prediction data found for {model_name}")
-            continue
+        # Load the reference LISFLOOD data
+        with rasterio.open(lf_extent_file) as src:
+            truth_data = src.read(1)
+            truth_nodata = src.nodata
+            extent = [src.bounds.left, src.bounds.right, src.bounds.bottom, src.bounds.top]
         
-        try:
-            # Load the prediction data
-            with rasterio.open(model_map_path) as src:
-                pred_data = src.read(1)
-                pred_nodata = src.nodata
-            
-            # Create binary prediction mask (1 = flooded, 0 = dry)
-            pred_binary = np.where(pred_data >= flood_threshold, 1, 0)
-            
-            # Create confusion matrix map
-            # 0: TN (both dry), 1: TP (both flooded), 2: FP (pred flood, truth dry), 3: FN (pred dry, truth flood)
-            confusion_map = np.zeros_like(truth_binary)
-            
-            # True Negatives (TN) - both predict and truth are dry
-            tn_mask = (pred_binary == 0) & (truth_binary == 0)
-            confusion_map[tn_mask] = 0
-            
-            # True Positives (TP) - both predict and truth are flooded
-            tp_mask = (pred_binary == 1) & (truth_binary == 1)
-            confusion_map[tp_mask] = 1
-            
-            # False Positives (FP) - predict flooded but truth is dry (overpredictions)
-            fp_mask = (pred_binary == 1) & (truth_binary == 0)
-            confusion_map[fp_mask] = 2
-            
-            # False Negatives (FN) - predict dry but truth is flooded (misses/underpredictions)
-            fn_mask = (pred_binary == 0) & (truth_binary == 1)
-            confusion_map[fn_mask] = 3
-            
-            # Calculate confusion matrix statistics
-            tp_count = np.sum(tp_mask)
-            tn_count = np.sum(tn_mask)
-            fp_count = np.sum(fp_mask)
-            fn_count = np.sum(fn_mask)
-            
-            # Calculate metrics
-            hit_rate = tp_count / (tp_count + fn_count) if (tp_count + fn_count) > 0 else 0
-            csi = tp_count / (tp_count + fn_count + fp_count) if (tp_count + fn_count + fp_count) > 0 else 0
-            f2_score = (tp_count - fn_count)/ (tp_count + fn_count + fp_count) if (tp_count + fn_count + fp_count) > 0 else 0
-            f3_score  = (tp_count - fp_count) / (tp_count + fn_count + fp_count) if (tp_count + fn_count + fp_count) > 0 else 0
-            
-            # Store statistics
-            display_name = model_display_names.get(model_name, model_name)
-            model_stats[display_name] = {
-                'tp': tp_count, 'tn': tn_count, 'fp': fp_count, 'fn': fn_count,
-                'hit_rate': hit_rate, 'csi': csi, 'f2_score': f2_score, 'f3_score': f3_score
-            }
-            
-            # Create the visualization
-            fig, ax = plt.subplots(figsize=(12, 10))
-            
-            # Plot DEM as background (very light)
-            dem_masked = np.ma.masked_equal(dem_data, dem_nodata)
-            ax.imshow(dem_masked, extent=extent, cmap='terrain', alpha=0.8, origin='upper')
-            
-            # Plot confusion matrix map
-            im = ax.imshow(confusion_map, extent=extent, cmap=confusion_cmap, 
-                          alpha=0.8, origin='upper', vmin=0, vmax=3)
-       
-            
-            # Set title with statistics
-            ax.set_title(f'({chr(97 + len(available_models))}) {display_name} - Flood Extent Confusion Matrix', 
-                        fontsize=14)
+        # Load DEM data for background
+        dem_file = os.path.join(SIMULATION_DATA_DIR, "Carlisle_5m.asc")
+        with rasterio.open(dem_file) as src:
+            dem_data = src.read(1)
+            dem_nodata = src.nodata
         
-            # f'Hit-rate: {hit_rate:.2f}, CSI: {csi:.2f}, F2: {f2_score:.2f}, F3: {f3_score:.2f}'
+        # Create binary truth mask (1 = flooded, 0 = dry)
+        truth_binary = np.where(truth_data >= flood_threshold, 1, 0)
+        
+        # Define output directory
+        output_dir = os.path.join(OUTPUT_DIR, "quality_metrics", "confusion_matrix_maps")
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Define colors for confusion matrix categories
+        confusion_colors = {
+            0: "#ffffff",  # True Negatives (TN) - White (correct dry)
+            1: "#808080",  # True Positives (TP) - Grey (hits - correct flood)
+            2: "#FF8C00",  # False Positives (FP) - Dark orange (overpredictions)
+            3: "#FF0000",  # False Negatives (FN) - Red (misses - underpredictions)
+        }
+        
+        # Create custom colormap
+        from matplotlib.colors import ListedColormap
+        colors_list = [confusion_colors[i] for i in range(4)]
+        confusion_cmap = ListedColormap(colors_list)
+        
+        # Process each model
+        available_models = []
+        model_stats = {}
+        
+        for model_name in model_names:
+            # Try to find the prediction file
+            maps_dir = os.path.join(RUN_DIR, "output_maps", model_name)
+            primary_map_path = os.path.join(maps_dir, f"map_{pred_idx}.wd")
+            # alt_map_path = os.path.join(maps_dir, f"map_{pred_idx}.wd")
             
-            ax.set_xticks([])
-            ax.set_yticks([])
+            model_map_path = None
+            if os.path.exists(primary_map_path):
+                model_map_path = primary_map_path
+
+            if not model_map_path:
+                logger.warning(f"No prediction data found for {model_name}")
+                continue
             
-            # Add border to the subplot
-            for spine in ax.spines.values():
-                spine.set_visible(True)
-                spine.set_linewidth(2.0)
-                spine.set_edgecolor('black')
+            try:
+                # Load the prediction data
+                with rasterio.open(model_map_path) as src:
+                    pred_data = src.read(1)
+                    pred_nodata = src.nodata
+                
+                # Create binary prediction mask (1 = flooded, 0 = dry)
+                pred_binary = np.where(pred_data >= flood_threshold, 1, 0)
+                
+                # Create confusion matrix map
+                # 0: TN (both dry), 1: TP (both flooded), 2: FP (pred flood, truth dry), 3: FN (pred dry, truth flood)
+                confusion_map = np.zeros_like(truth_binary)
+                
+                # True Negatives (TN) - both predict and truth are dry
+                tn_mask = (pred_binary == 0) & (truth_binary == 0)
+                confusion_map[tn_mask] = 0
+                
+                # True Positives (TP) - both predict and truth are flooded
+                tp_mask = (pred_binary == 1) & (truth_binary == 1)
+                confusion_map[tp_mask] = 1
+                
+                # False Positives (FP) - predict flooded but truth is dry (overpredictions)
+                fp_mask = (pred_binary == 1) & (truth_binary == 0)
+                confusion_map[fp_mask] = 2
+                
+                # False Negatives (FN) - predict dry but truth is flooded (misses/underpredictions)
+                fn_mask = (pred_binary == 0) & (truth_binary == 1)
+                confusion_map[fn_mask] = 3
+                
+                # Calculate confusion matrix statistics
+                tp_count = np.sum(tp_mask)
+                tn_count = np.sum(tn_mask)
+                fp_count = np.sum(fp_mask)
+                fn_count = np.sum(fn_mask)
+                
+                # Calculate metrics
+                hit_rate = tp_count / (tp_count + fn_count) if (tp_count + fn_count) > 0 else 0
+                csi = tp_count / (tp_count + fn_count + fp_count) if (tp_count + fn_count + fp_count) > 0 else 0
+                f2_score = (tp_count - fn_count)/ (tp_count + fn_count + fp_count) if (tp_count + fn_count + fp_count) > 0 else 0
+                f3_score  = (tp_count - fp_count) / (tp_count + fn_count + fp_count) if (tp_count + fn_count + fp_count) > 0 else 0
+                
+                # Store statistics
+                display_name = model_display_names.get(model_name, model_name)
+                model_stats[display_name] = {
+                    'tp': tp_count, 'tn': tn_count, 'fp': fp_count, 'fn': fn_count,
+                    'hit_rate': hit_rate, 'csi': csi, 'f2_score': f2_score, 'f3_score': f3_score
+                }
+                
+                # Create the visualization
+                fig, ax = plt.subplots(figsize=(16, 12))
+                
+                # Plot DEM as background (very light)
+                dem_masked = np.ma.masked_equal(dem_data, dem_nodata)
+                ax.imshow(dem_masked, extent=extent, cmap='terrain', alpha=0.8, origin='upper')
+                
+                # Plot confusion matrix map
+                im = ax.imshow(confusion_map, extent=extent, cmap=confusion_cmap, 
+                            alpha=0.8, origin='upper', vmin=0, vmax=3)
+        
+                
+                # Set title with statistics
+                # {chr(97 + len(available_models))}) 
+                ax.set_title(f'{display_name} - Timestep {int(pred_idx)/4:.2f}h', 
+                            fontsize=50, pad=15)
             
-            # Add scale bar and north arrow
-            ax.text(0.95, 0.05, '↑N', transform=ax.transAxes, fontsize=12, 
-                   fontweight='bold', ha='center', bbox=dict(facecolor='white', alpha=0.8))
-            
-            scalebar_length_m = 500
-            scale_x = extent[0] + (extent[1] - extent[0]) * 0.05
-            scale_y = extent[2] + (extent[3] - extent[2]) * 0.05
-            ax.plot([scale_x, scale_x + scalebar_length_m], [scale_y, scale_y], 'k-', linewidth=2)
-            ax.text(scale_x + scalebar_length_m/2, scale_y + (extent[3] - extent[2]) * 0.01, 
-                   f'{scalebar_length_m}m', ha='center', va='bottom', 
-                   bbox=dict(facecolor='white', alpha=0.8, edgecolor='black'))
-            
-            # Add statistics text box
-            stats_text = (f"Hits(A): {tp_count:,}\n"
-                         f"Overpredications/Flase Alarms(B): {fp_count:,}\n"
-                         f"Misses/Underprediction(C): {fn_count:,}\n"
-                         f"Correct Dry(D): {tn_count:,}")
-            
-            ax.text(0.02, 0.98, stats_text, transform=ax.transAxes, fontsize=12,
-                   verticalalignment='top', horizontalalignment='left',
-                   bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.9, edgecolor='gray'))
-            
-            plt.tight_layout()
-            
-            # Save individual model confusion matrix map
-            output_file = os.path.join(output_dir, f"{display_name}_confusion_matrix.png")
-            plt.savefig(output_file, dpi=300, bbox_inches='tight', facecolor='white')
-            logger.info(f"Saved {display_name} confusion matrix map to {output_file}")
-            plt.close()
-            
-            available_models.append(display_name)
-            
-        except Exception as e:
-            logger.error(f"Error processing {model_name}: {str(e)}")
-            continue
-    
-    if not available_models:
-        logger.error("No model prediction data could be loaded")
-        return None
-    
-    # Create legend figure
-    fig, ax = plt.subplots(figsize=(8, 4))
-    ax.axis('off')
-    
-    # Create legend patches
-    from matplotlib.patches import Patch
-    legend_elements = [
-        Patch(facecolor=confusion_colors[0], edgecolor='black', 
-              label='True Negatives (Correct Dry)'),
-        Patch(facecolor=confusion_colors[1], edgecolor='black', 
-              label='True Positives (Hits)'),
-        Patch(facecolor=confusion_colors[2], edgecolor='black', 
-              label='False Positives (Overpredictions)'),
-        Patch(facecolor=confusion_colors[3], edgecolor='black', 
-              label='False Negatives (Misses/Underpredictions)')
-    ]
-    
-    ax.legend(handles=legend_elements, loc='center', fontsize=14, 
-             title=f"Flood Extent Classification (Threshold: {flood_threshold}m)",
-             title_fontsize=16, frameon=True, fancybox=True, shadow=True)
-    
-    plt.tight_layout()
-    legend_file = os.path.join(output_dir, "confusion_matrix_legend.png")
-    plt.savefig(legend_file, dpi=300, bbox_inches='tight', facecolor='white')
-    logger.info(f"Saved confusion matrix legend to {legend_file}")
-    plt.close()
-    
-    # Create summary statistics table and save as image
-    create_confusion_matrix_summary(model_stats, output_dir)
-    
-    logger.info(f"Generated confusion matrix maps for {len(available_models)} models")
-    logger.info("Summary statistics:")
-    
+                # f'Hit-rate: {hit_rate:.2f}, CSI: {csi:.2f}, F2: {f2_score:.2f}, F3: {f3_score:.2f}'
+                
+                ax.set_xticks([])
+                ax.set_yticks([])
+                
+                # Add border to the subplot
+                for spine in ax.spines.values():
+                    spine.set_visible(True)
+                    spine.set_linewidth(2.0)
+                    spine.set_edgecolor('black')
+                
+                # Add scale bar and north arrow
+                ax.text(0.95, 0.05, '↑N', transform=ax.transAxes, fontsize=12, 
+                    fontweight='bold', ha='center', bbox=dict(facecolor='white', alpha=0.8))
+                
+                scalebar_length_m = 500
+                scale_x = extent[0] + (extent[1] - extent[0]) * 0.05
+                scale_y = extent[2] + (extent[3] - extent[2]) * 0.05
+                ax.plot([scale_x, scale_x + scalebar_length_m], [scale_y, scale_y], 'k-', linewidth=2)
+                ax.text(scale_x + scalebar_length_m/2, scale_y + (extent[3] - extent[2]) * 0.01, 
+                    f'{scalebar_length_m}m', ha='center', va='bottom', 
+                    bbox=dict(facecolor='white', alpha=0.8, edgecolor='black'))
+                
+                # Add statistics text box
+                stats_text = (f"A: {tp_count:,}\n"
+                            f"B: {fp_count:,}\n"
+                            f"C: {fn_count:,}\n"
+                            f"D: {tn_count:,}")
+                
+                ax.text(0.98,0.02,stats_text, transform=ax.transAxes, fontsize=40,
+                    verticalalignment='bottom', horizontalalignment='right',
+                    bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.9, edgecolor='gray'))
+                
+                plt.tight_layout()
+                
+                # Save individual model confusion matrix map
+                output_file = os.path.join(output_dir, f"{display_name}_confusion_matrix{pred_idx}.png")
+                plt.savefig(output_file, dpi=300, bbox_inches='tight', facecolor='white')
+                logger.info(f"Saved {display_name} confusion matrix map to {output_file}")
+                plt.close()
+                
+                available_models.append(display_name)
+                
+            except Exception as e:
+                logger.error(f"Error processing {model_name}: {str(e)}")
+                continue
+        
+        if not available_models:
+            logger.error("No model prediction data could be loaded")
+            return None
+        
+        # Create legend figure
+        fig, ax = plt.subplots(figsize=(7.5, 2.5))
+        ax.axis('off')
+        
+        # Create legend patches
+        from matplotlib.patches import Patch
+        legend_elements = [
+            Patch(facecolor=confusion_colors[0], edgecolor='black', 
+                label='True Negatives (Correct Dry)'),
+            Patch(facecolor=confusion_colors[1], edgecolor='black', 
+                label='True Positives (Hits)'),
+            Patch(facecolor=confusion_colors[2], edgecolor='black', 
+                label='False Positives (Overpredictions)'),
+            Patch(facecolor=confusion_colors[3], edgecolor='black', 
+                label='False Negatives (Misses/Underpredictions)')
+        ]
+        
+        ax.legend(handles=legend_elements, loc='center', fontsize=18, 
+                title=f"Flood Extent Classification (Threshold: {flood_threshold}m)",
+                title_fontsize=20, frameon=True, fancybox=True, shadow=True)
+        
+
+        
+        plt.tight_layout()
+        legend_file = os.path.join(output_dir, "confusion_matrix_legend.png")
+        plt.savefig(legend_file, dpi=300, bbox_inches='tight', facecolor='white')
+        logger.info(f"Saved confusion matrix legend to {legend_file}")
+        plt.close()
+        
+        # Create a separate legend figure for A,B,C,D labels
+        abc_text = ("A: Hits (TP) - Correctly predicted flooded areas\n"
+                    "B: Overpredictions (FP) - Predicted flood where none exists\n"
+                    "C: Misses (FN) - Missed flooded areas (underpredictions)\n"
+                    "D: True Negatives (TN) - Correctly predicted dry areas")
+        
+        fig, ax = plt.subplots(figsize=(8, 3))
+        ax.axis('off')
+        ax.text(0.5, 0.5, abc_text, transform=ax.transAxes, fontsize=18,
+                ha='center', va='center',
+                bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.9, edgecolor='gray'))    
+        
+        plt.tight_layout()
+        abc_legend_file = os.path.join(output_dir, "confusion_matrix_ABC_legend.png")
+        plt.savefig(abc_legend_file, dpi=300, bbox_inches='tight', facecolor='white')
+        logger.info(f"Saved confusion matrix A,B,C,D legend to {abc_legend_file}")
+        plt.close()
+        
+        # Create summary statistics table and save as image
+        create_confusion_matrix_summary(model_stats, output_dir, ref_idx)
+        
+        logger.info(f"Generated confusion matrix maps for {len(available_models)} models")
+        logger.info("Summary statistics:")
+        
     return output_dir
 
-def create_confusion_matrix_summary(model_stats, output_dir):
+def create_confusion_matrix_summary(model_stats, output_dir, idx):
     """Create a summary table of confusion matrix statistics for all models."""
     import pandas as pd
     
@@ -1835,7 +1852,7 @@ def create_confusion_matrix_summary(model_stats, output_dir):
     df = pd.DataFrame(stats_data)
     
     # Save as CSV
-    csv_file = os.path.join(output_dir, "confusion_matrix_summary.csv")
+    csv_file = os.path.join(output_dir, f"confusion_matrix_summary{idx}.csv")
     df.to_csv(csv_file, index=False)
     logger.info(f"Saved confusion matrix summary to {csv_file}")
     
@@ -1874,4 +1891,5 @@ def create_confusion_matrix_summary(model_stats, output_dir):
     plt.close()
     
     return df
-    
+
+

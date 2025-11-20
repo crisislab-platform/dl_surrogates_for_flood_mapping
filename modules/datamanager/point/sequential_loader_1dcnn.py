@@ -160,7 +160,7 @@ class CNNSequentialDataManager(DataManager):
         logger.info(f"Number of True values in filter mask: {np.sum(self.filter_mask)}")
     
         # Visualize the representative locations on the DEM
-        self.visualize_rls_cluster()
+        # self.visualize_rls_cluster()
         
     def visualize_rls_cluster(self):
         """Visualize the representative locations on the DEM map"""
