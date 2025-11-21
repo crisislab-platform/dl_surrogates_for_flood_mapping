@@ -22,3 +22,5 @@ OUTPUT_DIR = f"/data/carlisle/out"
 GRAPH_OUTPUT_DIR = f"{PROJECT_ROOT}/out"
 RUN_DIR = f"{OUTPUT_DIR}/runs"
 SIMULATION_OUTPUT_DIR =  f"/data/carlisle/simulation_output"
+
+WESTPORT_DATA_DIR = f"{PROJECT_ROOT}/data/westport"
