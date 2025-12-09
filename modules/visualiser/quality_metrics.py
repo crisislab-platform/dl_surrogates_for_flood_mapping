@@ -1,4 +1,4 @@
-from modules.lib.constants import CARLISLE_DATA_DIR,SIMULATION_DATA_DIR, OUTPUT_DIR, GRAPH_OUTPUT_DIR, RUN_DIR
+from modules.lib.constants import DATA_DIR,SIMULATION_DATA_DIR, OUTPUT_DIR, PLOTS_OUTPUT_DIR, RUN_DIR
 import os
 import logging
 import pandas as pd
@@ -363,7 +363,7 @@ def plot_summary_comparison(model_predictions, poi_df):
                            hspace=0.4, wspace=0.3)  # Increased hspace and wspace for better spacing
         
         # Save figure
-        output_path = os.path.join(GRAPH_OUTPUT_DIR, "model_point_grid_comparison.png")
+        output_path = os.path.join(PLOTS_OUTPUT_DIR, "model_point_grid_comparison.png")
         plt.savefig(output_path, dpi=300, bbox_inches='tight')
         logger.info(f"Saved model-point grid comparison plot to {output_path}")
         plt.close(fig)
@@ -384,7 +384,7 @@ def visualize_errors():
     model_names = ["1DCNN_V1"]  # Add more models as needed
     
     # Create output directory for error visualizations
-    os.makedirs(GRAPH_OUTPUT_DIR, exist_ok=True)
+    os.makedirs(PLOTS_OUTPUT_DIR, exist_ok=True)
     
     # Reference file for raster properties
     ref_file = os.path.join(SIMULATION_DATA_DIR, "Run1-0000.wd")
@@ -464,26 +464,26 @@ def visualize_errors():
             # Create visualizations
             # 1. Absolute Error Map
             create_error_map(abs_error, dem, nodata_value, 
-                          os.path.join(GRAPH_OUTPUT_DIR, f"{model_name}_absolute_error.png"),
+                          os.path.join(PLOTS_OUTPUT_DIR, f"{model_name}_absolute_error.png"),
                           "Absolute Error (m)", "plasma", 
                           f"{model_name}: Absolute Error at Peak Flood (t={timestep})")
             
             # 2. Relative Error Map (as percentage)
             create_error_map(rel_error * 100, dem, nodata_value, 
-                          os.path.join(GRAPH_OUTPUT_DIR, f"{model_name}_relative_error.png"),
+                          os.path.join(PLOTS_OUTPUT_DIR, f"{model_name}_relative_error.png"),
                           "Relative Error (%)", "magma", 
                           f"{model_name}: Relative Error at Peak Flood (t={timestep})")
             
             # 3. Over/Under Prediction Map
             create_error_map(error_direction, dem, nodata_value, 
-                          os.path.join(GRAPH_OUTPUT_DIR, f"{model_name}_error_direction.png"),
+                          os.path.join(PLOTS_OUTPUT_DIR, f"{model_name}_error_direction.png"),
                           "Error (m)", "coolwarm", 
                           f"{model_name}: Over/Under Prediction at Peak Flood (t={timestep})",
                           center_zero=True)
             
             # 4. Combined visualization with multiple metrics
             create_combined_error_visualization(pred_data, truth_data, abs_error, error_direction, dem, nodata_value,
-                                          os.path.join(GRAPH_OUTPUT_DIR, f"{model_name}_combined_error_analysis.png"),
+                                          os.path.join(PLOTS_OUTPUT_DIR, f"{model_name}_combined_error_analysis.png"),
                                           f"{model_name}: Error Analysis at Peak Flood (t={timestep})")
             
             logger.info(f"Completed error visualization for model {model_name}")
@@ -782,7 +782,7 @@ def create_error_boxplot():
         
         plt.tight_layout()
         
-        output_path = os.path.join(GRAPH_OUTPUT_DIR, "model_error_boxplot_clean.png")
+        output_path = os.path.join(PLOTS_OUTPUT_DIR, "model_error_boxplot_clean.png")
         plt.savefig(output_path, dpi=300, bbox_inches='tight', facecolor='white')
         logger.info(f"Clean error box plot saved to {output_path}")
         plt.close()
@@ -805,12 +805,12 @@ def vizualise_test_event():
 
 def plot_upstream_hydrographs():
     logger.info("Generating upstream hydrograph plots")
-    flow_file = os.path.join(CARLISLE_DATA_DIR, "Upstream_Flows_Run1.csv")
+    flow_file = os.path.join(DATA_DIR, "Upstream_Flows_Run1.csv")
 
     df = pd.read_csv(flow_file)
     df["TimeHours"] = df["Time"] / 3600
 
-    os.makedirs(GRAPH_OUTPUT_DIR, exist_ok=True)
+    os.makedirs(PLOTS_OUTPUT_DIR, exist_ok=True)
     upstream_sources = ['Upstream1', 'Upstream2', 'Upstream3']
 
     plt.figure(figsize=(12, 8))
@@ -861,7 +861,7 @@ def plot_upstream_hydrographs():
 
     plt.legend(handles=legend_entries, title="", loc='upper right', 
               prop={'size': 12}, title_fontsize=14)
-    output_path = os.path.join(GRAPH_OUTPUT_DIR, "upstream_conditions_testevent.png")
+    output_path = os.path.join(PLOTS_OUTPUT_DIR, "upstream_conditions_testevent.png")
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     logger.info(f"Saved combined upstream hydrograph to {output_path}")
     plt.close()
@@ -1089,7 +1089,7 @@ def plot_flood_depth():
     
     plt.tight_layout()
     
-    output_path = os.path.join(GRAPH_OUTPUT_DIR, "flood_depth_multiple_points.png")
+    output_path = os.path.join(PLOTS_OUTPUT_DIR, "flood_depth_multiple_points.png")
     plt.savefig(output_path, dpi=500, bbox_inches='tight')  # Higher resolution for better quality
     logger.info(f"Saved flood depth plot to {output_path}")
     plt.close(fig)

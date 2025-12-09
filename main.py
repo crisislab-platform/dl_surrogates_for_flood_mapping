@@ -3,15 +3,10 @@ from modules.models.model_wrapper import ModelConfig
 import logging
 import argparse
 from datetime import datetime
-from modules.visualiser.visualiser import plot_upstream_conditions, visualise_rep_locations, plot_boundary_information, create_flood_animation, plot_extent_reference, plot_extent_prediction, plot_extents_on_same_image, visualise_area_check_map, plot_study_area, plot_study_area_clean, plot_study_area_satellite
-from modules.visualiser.metrics.performance_and_footprint import plot_metrics
-from modules.visualiser.flow_analysis import find_peak_inflow_timestep, plot_hydrograph_clean
-# from modules.visualiser.hydrological_visuals import find_peak_inflow_timestep
 from modules.metrics_reader.metrics_reader import hyperparam_analysis
-from modules.visualiser.quality_metrics import vizualise_test_event
 from modules.models.usrr_1dcnn.reduction.rep_location_finder import find_representative_locations_and_clusters
 from modules.datamanager.datamanager import create_inundation_map_tensors
-from modules.visualiser.metrics.bootstrapping import rmse_stats
+from modules.visualiser.visualiser import plot
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("Main")
@@ -186,56 +181,7 @@ if __name__ == "__main__":
         findRLS(run_id)
         
     elif args.command == PLOT_COMMAND:
-        if not args.plot_type:
-            logger.error("Plot type is required for plotting")
-            exit(1)
-            
-        if args.plot_type == "up_conditions":
-            if not args.event:
-                logger.error("Event ID is required for upstream conditions plotting")
-                exit(1)
-            plot_upstream_conditions(args.event)
-        elif args.plot_type == "rep_locations":
-            if not args.run_id or not args.file:
-                logger.error("Run ID and file are required for representative locations plotting")
-                exit(1)
-            visualise_rep_locations(args.run_id, args.file)
-        elif args.plot_type == "boundary_information":
-            plot_study_area()
-        elif args.plot_type == "animation":
-            create_flood_animation() 
-        elif args.plot_type == "extent":
-            plot_extents_on_same_image()
-        elif args.plot_type == "1dcnn_extent":
-            plot_extent_prediction()
-        elif args.plot_type == "area_check":
-            visualise_area_check_map()  
-        elif args.plot_type == "plot_metrics":
-            plot_metrics()
-        elif args.plot_type == "architecture":
-            # plot_model_architecture()
-            pass
-        elif args.plot_type == "study_area_clean":
-            plot_study_area_satellite()
-        elif args.plot_type == "flow_analysis":
-            find_peak_inflow_timestep()
-            # find_peak_inflow_timestep()
-        elif args.plot_type == "extent_reference":
-            plot_extent_reference()
-            
-        elif args.plot_type == "test_event":
-            vizualise_test_event()
-            
-        elif args.plot_type == "bootstrap":
-            create_inundation_map_tensors()
-            rmse_stats()
-
-            
-        elif args.plot_type == "hydrograph_clean":
-            plot_hydrograph_clean()
-        else:
-            logger.error(f"Unknown plot type: {args.plot_type}")
-            exit(1)
+        plot(args.plot_type)
             
     elif args.command == METRICS_COMMAND:
         hyperparam_analysis(args.model)

@@ -6,15 +6,15 @@ import rasterio as rio
 import glob
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 import torch
-from modules.lib.constants import CARLISLE_DATA_DIR, SIMULATION_DATA_DIR
+from modules.lib.constants import DATA_DIR, SIMULATION_DATA_DIR
 from modules.datamanager.datamanager import DataManager
 from modules.utils.run_util import check_device
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("CNNDataLoader")
 
-elevation_file_path = f'{CARLISLE_DATA_DIR}/Carlisle_5m.asc'
-bc_data_dir = f"{CARLISLE_DATA_DIR}"
+elevation_file_path = f'{DATA_DIR}/Carlisle_5m.asc'
+bc_data_dir = f"{DATA_DIR}"
 lisflood_simulation_dir = SIMULATION_DATA_DIR
 
 class CNNRasterDataManager(DataManager):
@@ -115,7 +115,7 @@ class CNNRasterDataManager(DataManager):
         
         for idx in range(len(event_ids)):
             event_id = event_ids[idx]
-            inflow_file = os.path.join(CARLISLE_DATA_DIR, f"Upstream_Flows_Run{event_id}.csv")
+            inflow_file = os.path.join(DATA_DIR, f"Upstream_Flows_Run{event_id}.csv")
             inflow_data = pd.read_csv(inflow_file)
             # inflow_data = inflow_data[8:]  # Skip the first 8 rows
             
@@ -200,7 +200,7 @@ class CNNRasterDataManager(DataManager):
             
         # Convert to numpy array and shuffle to mix events
         all_indices = np.array(all_indices)
-        rng = np.random.default_rng(341)  # Use same seed for consistency
+        rng = np.random.default_rng(42)  # Use same seed for consistency
         rng.shuffle(all_indices)
         
         # Create batches from mixed indices
@@ -225,7 +225,7 @@ class CNNRasterDataManager(DataManager):
             logger.error("No batches were created! Check your data and batch size.")
             return np.array([])  # Return empty array as fallback
         
-    def idx_prep(self, shuffle=True, random_seed=341):
+    def idx_prep(self, shuffle=True, random_seed=42):
         logger.info(f"Preparing index for batch size: {self.batch_size}")
         self.event_start_id_map = {}
         
@@ -266,6 +266,13 @@ class CNNRasterDataManager(DataManager):
             self.validation_idx = np.array([])
             self.train_batches = 0
             self.val_batches = 0
+            
+        
+    def shuffle_training_data(self, epoch):
+        """Shuffle the training batches at the start of each epoch"""
+        rng = np.random.default_rng(42 + epoch)  # Different seed per epoch for reproducibility
+        rng.shuffle(self.train_idx)
+        logger.info(f"Shuffled training data batches for epoch {epoch}")
             
     def find_event_id(self, idx):
         for event_id, start_idx in self.event_start_id_map.items():
@@ -437,4 +444,3 @@ class CNNRasterDataManager(DataManager):
         if torch.cuda.is_available():
                 self.test_output = test_output.cuda()
         logger.info(f"Test output data shape: {len(self.test_output)}")
-        

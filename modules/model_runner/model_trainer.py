@@ -2,7 +2,6 @@ from modules.utils.run_util import generate_run_id
 from modules.utils.path_util import ensure_dir
 from modules.model_runner.model_factory import create_model
 from modules.models.model_wrapper import ModelConfig
-from modules.visualiser.visualiser import plot_training_history
 from modules.model_runner.metrics_writer import save_training_metrics, save_prediction_metrics
 from modules.models.model_wrapper import ModelWrapper
 from modules.lib.constants import RUN_DIR
@@ -21,9 +20,6 @@ logger.setLevel(logging.INFO)
 
 def save_model_training_history(run_id, run_dir, model_wrapper:ModelWrapper, history, train_time, config, model_file, tuning_mode):
     try:
-        logger.info("Plotting training history")
-        plot_training_history(history, run_dir)
-        
         logger.info("Saving training metrics")
         save_training_metrics(run_id, history, train_time, model_wrapper.model, config, model_file, tuning_mode)
         return True

@@ -1,4 +1,4 @@
-from modules.lib.constants import RUN_DIR, SIMULATION_DATA_DIR, CARLISLE_DATA_DIR, OUTPUT_DIR, CNN1D_V1, HDL_FM_V1, PICNN1D_V1, USRR_CNN1D_COMBINED
+from modules.lib.constants import RUN_DIR, SIMULATION_DATA_DIR, DATA_DIR, OUTPUT_DIR, CNN1D_V1, HDL_FM_V1, PICNN1D_V1, USRR_CNN1D_COMBINED
 from modules.datamanager.datamanager import check_inundation_data_cache
 import os
 import pandas as pd
@@ -34,8 +34,8 @@ def rmse_stats():
     reference_maps_tensor = preload_reference_inundation_maps()
 
     # plot_depth_predictions_by_elevation_percentile()
-    plot_flood_maps(reference_maps_tensor)
-    # rmse_stats_detailed(reference_maps_tensor)
+    # plot_flood_maps(reference_maps_tensor)
+    rmse_stats_detailed(reference_maps_tensor)
     # plot_sequence_hydrographs_with_windows()
     
 def rmse_stats_detailed(reference_maps_tensor):
@@ -132,12 +132,11 @@ def rmse_stats_detailed(reference_maps_tensor):
                 USRR_CNN1D_COMBINED: 'USRR-1DCNN',
                 HDL_FM_V1: 'HDL-FM'
             }
-            
-            # if model_name == CNN1D_V1 or model_name == USRR_CNN1D_COMBINED:  
-            # bootstrap_function(model_name_map.get(model_name), residual_maps, reference_maps_tensor_reshaped, num_samples=10000)
+            if model_name in [CNN1D_V1, PICNN1D_V1]:
+                bootstrap_function(model_name_map.get(model_name), residual_maps, reference_maps_tensor_reshaped, num_samples=10000)
     
     # Plot the RMSE per timestep and RMSE per cell for all models
-    # plot_metrics(model_rmses)
+    plot_metrics(model_rmses)
     plot_rmse_per_cell(model_rmses)
     
     # # Plot hydrograph and number of wet cells over time
@@ -412,20 +411,27 @@ def plot_rmse_per_cell(model_rmses):
             fig, ax = plt.subplots(figsize=(12, 10))
             
             # Plot DEM as background if available (match plot_flood_extent_maps)
-            if dem is not None:
-                # Create a masked version of DEM for better visualization
-                dem_masked = np.ma.masked_equal(dem, dem_nodata)  # Consistent mask with plot_flood_extent_maps
-                # Using origin='upper' ensures correct orientation (north at top)
-                # Don't use extent with the DEM as it can cause scaling issues
-                ax.imshow(dem_masked, cmap='gray', alpha=0.3, origin='upper')
+            # if dem is not None:
+            #     # Create a masked version of DEM for better visualization
+            #     dem_masked = np.ma.masked_equal(dem, dem_nodata)  # Consistent mask with plot_flood_extent_maps
+            #     # Using origin='upper' ensures correct orientation (north at top)
+            #     # Don't use extent with the DEM as it can cause scaling issues
+            #     ax.imshow(dem_masked, cmap='gray', alpha=0.3, origin='upper')
             
-            # Create colormap for RMSE using a grey-orange-red scheme similar to confusion matrix colors
-            from matplotlib.colors import LinearSegmentedColormap
-            # Create custom colormap: grey (good) to orange to red (bad)
-            colors = [(0.5, 0.5, 0.5, 1.0),    # Grey for low RMSE
-                      (1.0, 0.55, 0.0, 1.0),   # Dark orange for medium RMSE
-                      (1.0, 0.0, 0.0, 1.0)]    # Red for high RMSE
-            cmap = LinearSegmentedColormap.from_list('grey_orange_red', colors)
+            # Create colormap for RMSE using a 6-bin discrete scheme
+            from matplotlib.colors import LinearSegmentedColormap, BoundaryNorm
+            # Define RMSE bins and corresponding colors
+            # Bins: 0, (0, 0.15], (0.15, 0.3], (0.3, 0.5], (0.5, 1.0], (1.0, inf)
+            boundaries = [0, 0.1, 0.3, 0.5,100]  # Use large value for upper bound
+            colors_list = [
+                (1.0, 1.0, 1.0),      # White for RMSE = 0
+                (0.5, 0.5, 0.5),      # Grey for 0 < RMSE <= 0.15
+                (1.0, 1.0, 0.0),      # Yellow for 0.15 < RMSE <= 0.3
+                (1.0, 0.55, 0.0),     # Orange for 0.3 < RMSE <= 0.5
+                (1.0, 0.0, 0.0),      # Red for 0.5 < RMSE <= 1.0
+            ]
+            cmap = LinearSegmentedColormap.from_list('rmse_discrete', colors_list, N=len(colors_list))
+            norm = BoundaryNorm(boundaries, cmap.N, clip=True)
             
             # Calculate global min and max for consistent scale across all plots
             # Collect all RMSE values for setting consistent scale
@@ -440,12 +446,11 @@ def plot_rmse_per_cell(model_rmses):
             vmax = np.percentile(all_rmse, 95)  # Use 95th percentile to avoid extreme outliers
             
             # Plot RMSE map with transparency for zeros
-            rmse_masked = np.ma.masked_where(rmse_grid == 0, rmse_grid)  # Mask zeros
-            # Make sure RMSE plot matches DEM dimensions - use the same dimensions
-            im = ax.imshow(rmse_masked, cmap=cmap, alpha=0.7, vmin=vmin, vmax=vmax, origin='upper')
+            # Use the discrete colormap with normalization
+            im = ax.imshow(rmse_grid, cmap=cmap, norm=norm, alpha=0.7, origin='upper')
             
             # Add title and labels
-            ax.set_title(f'{model_display_name} Model', fontsize=20)
+            ax.set_title(f'{model_display_name} Model', fontsize=28)
             
             # Define geographic extent
             west = transform[0]
@@ -491,11 +496,59 @@ def plot_rmse_per_cell(model_rmses):
             ax.set_yticks([])
             
             # Add text with statistics in a box similar to plot_flood_extent_maps
-            stats_text = f"Mean RMSE: {np.mean(rmse_per_cell[rmse_per_cell > 0]):.3f} m\n"
-            stats_text += f"Max RMSE: {np.max(rmse_per_cell):.3f} m"
-            ax.text(0.02, 0.98, stats_text, transform=ax.transAxes, fontsize=18,
+            stats_text = f"Mean RMSE: {np.mean(rmse_per_cell):.3f} m"
+            
+            # Calculate percentages for each color bin
+            high_rmse_percentage = (np.sum(rmse_per_cell > 0.5) / np.sum(rmse_per_cell > 0)) * 100
+            mid_rmse_percentage = (np.sum((rmse_per_cell > 0.3) & (rmse_per_cell <= 0.5)) / np.sum(rmse_per_cell > 0)) * 100
+            lower_rmse_percentage = (np.sum((rmse_per_cell > 0.1) & (rmse_per_cell <= 0.3)) / np.sum(rmse_per_cell > 0)) * 100
+            grey_rmse_percentage = (np.sum((rmse_per_cell > 0) & (rmse_per_cell <= 0.1)) / np.sum(rmse_per_cell > 0)) * 100
+            
+            ax.text(0.02, 0.95, stats_text, transform=ax.transAxes, fontsize=24,
                    verticalalignment='top', horizontalalignment='left',
                    bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.9, edgecolor='gray'))
+            
+            # Create a visual legend with colored rectangles at bottom right
+            from matplotlib.patches import Rectangle
+            
+            # Define legend position and size
+            legend_x = 0.88
+            legend_y = 0.02
+            box_width = 0.03
+            box_height = 0.04
+            spacing = 0.05
+            
+            # Define colors matching the colormap
+            legend_colors = [
+                (0.5, 0.5, 0.5),      # Grey
+                (1.0, 1.0, 0.0),      # Yellow
+                (1.0, 0.55, 0.0),     # Orange
+                (1.0, 0.0, 0.0),      # Red
+            ]
+            
+            legend_labels = [
+                f'0-0.1m ({grey_rmse_percentage:.1f}%)',
+                f'0.1-0.3m ({lower_rmse_percentage:.1f}%)',
+                f'0.3-0.5m ({mid_rmse_percentage:.1f}%)',
+                f'>0.5m ({high_rmse_percentage:.1f}%)'
+            ]
+            
+            # Draw colored boxes and labels from bottom to top
+            for i, (color, label) in enumerate(zip(legend_colors, legend_labels)):
+                y_pos = legend_y + i * spacing
+                
+                # Draw colored rectangle
+                rect = Rectangle((legend_x - box_width, y_pos), box_width, box_height,
+                                transform=ax.transAxes, facecolor=color, 
+                                edgecolor='black', linewidth=1, clip_on=False)
+                ax.add_patch(rect)
+                
+                # Add label text to the left of the box
+                ax.text(legend_x - box_width - 0.01, y_pos + box_height/2, label,
+                       transform=ax.transAxes, fontsize=14, 
+                       verticalalignment='center', horizontalalignment='right',
+                       bbox=dict(boxstyle='round,pad=0.3', fc='white', 
+                                alpha=0.9, edgecolor='gray'))
             
             #save the min, max, median, iqr to rmse_stats_df
             stats_csv_file = os.path.join(out_path, 'rmse_per_cell_summary.csv')
@@ -530,19 +583,27 @@ def plot_rmse_per_cell(model_rmses):
     try:
         logger.info("Creating separate colorbar image for RMSE maps")
         # Create a separate figure for the colorbar
-        fig_cb = plt.figure(figsize=(6, 1))
-        ax_cb = fig_cb.add_axes([0.1, 0.2, 0.8, 0.3])  # [left, bottom, width, height]
+        fig_cb = plt.figure(figsize=(9, 1.5))
+        ax_cb = fig_cb.add_axes([0.1, 0.3, 0.8, 0.4])
         
-        # Create the same colormap as used in the RMSE maps
-        from matplotlib.colors import LinearSegmentedColormap
-        colors = [(0.5, 0.5, 0.5, 1.0),    # Grey for low RMSE
-                 (1.0, 0.55, 0.0, 1.0),   # Dark orange for medium RMSE
-                 (1.0, 0.0, 0.0, 1.0)]    # Red for high RMSE
+        # Create the same discrete colormap as used in the RMSE maps
+        from matplotlib.colors import LinearSegmentedColormap, BoundaryNorm
+        boundaries = [0, 0.10, 0.3, 0.5, 100]
+        colors_list = [
+            (1.0, 1.0, 1.0),      # White
+            (0.5, 0.5, 0.5),      # Grey
+            (1.0, 1.0, 0.0),      # Yellow
+            (1.0, 0.55, 0.0),     # Orange
+            (1.0, 0.0, 0.0),      # Red
+        ]
+        cmap = LinearSegmentedColormap.from_list('rmse_discrete', colors_list, N=len(colors_list))
+        norm = BoundaryNorm(boundaries, cmap.N, clip=True)
         
-        # Create a horizontal colorbar using the same vmin/vmax as the maps
-        norm = plt.Normalize(vmin=0, vmax=vmax)
+        # Create a horizontal colorbar with discrete bins
         cb = plt.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap),
-                        cax=ax_cb, orientation='horizontal')
+                        cax=ax_cb, orientation='horizontal', 
+                        boundaries=boundaries, ticks=[0.075, 0.225, 0.4, 0.75, 1.5])
+        cb.ax.set_xticklabels(['0-0.10', '0.15-0.3', '0.3-0.5', '>0.5'])
         cb.set_label(r'RMSE (m)', fontsize=12, fontweight='bold')
         cb.ax.tick_params(labelsize=10)
         
@@ -825,24 +886,14 @@ def plot_box_rmse_spatial(model_rmses):
         # plt.text(pos + 0.25, q3, f'Q3: {q3:.3f}', ha='left', va='center',
         #          fontsize=8, color='black', backgroundcolor='white', alpha=0.8)
         
-        # # Median line
-        # plt.text(pos - 0.25, median, f'Med: {median:.3f}', ha='right', va='center',
-        #          fontsize=8, color='black', backgroundcolor='white', alpha=0.8)
-        
-        # # Mean value (should be shown as a point in the boxplot)
-        # plt.text(pos + 0.25, mean, f'μ: {mean:.3f}', ha='left', va='center',
-        #          fontsize=8, color='black', backgroundcolor='white', alpha=0.8)
-        
-        # # Q1 value (bottom of box)
-        # plt.text(pos - 0.25, q1, f'Q1: {q1:.3f}', ha='right', va='center',
-        #          fontsize=8, color='black', backgroundcolor='white', alpha=0.8)
-        
-        # Minimum value at the bottom of each whisker
-        # plt.text(pos, minimum, f'{minimum:.3f}', ha='center', va='top',
-        #          fontsize=9, fontweight='bold', color=colors[i % len(colors)])
-        
-        # IQR on the side of the box
+        # Median line - matching IQR style
         model_display_name = display_names[i]
+        model_key = ordered_models[i]
+        plt.text(pos - 0.3, median, f'Med: {median:.3f}', ha='right', va='center', 
+                fontsize=18, rotation=0, color=model_colors[model_key],
+                bbox=dict(boxstyle="round,pad=0.2", fc='white', ec=model_colors[model_key], alpha=0.7))
+        
+         # IQR on the side of the box
         plt.text(pos + 0.3, (q1 + q3)/2, f'IQR: {iqr:.3f}', ha='left', va='center', 
                 fontsize=18, rotation=90, color=model_colors[model_key],
                 bbox=dict(boxstyle="round,pad=0.2", fc='white', ec=model_colors[model_key], alpha=0.7))
@@ -893,7 +944,7 @@ def plot_hydrograph_and_wet_cells(ref_maps_tensor):
     logger.info("Creating hydrograph and wet cells plot")
     
     # Load inflow data
-    inflow_file = os.path.join(CARLISLE_DATA_DIR, 'Upstream_Flows_Run1.csv')
+    inflow_file = os.path.join(DATA_DIR, 'Upstream_Flows_Run1.csv')
     inflow_data = pd.read_csv(inflow_file)
     inflow_data = inflow_data[8:] # Skip header/metadata rows
     
@@ -1107,7 +1158,7 @@ def plot_hydrograph_and_wet_cells(ref_maps_tensor):
     
     # Apply to both axes (ax1 and ax2 since they share x-axis)
     plt.xticks(hour_ticks, [f'{int(h)}' for h in hour_ticks])
-    plt.xlabel('Time (hours)', fontsize=18)
+    ax1.set_xlabel('Time (hours)', fontsize=18)
     
     # Add minor ticks for every hour on both plots
     ax1.xaxis.set_minor_locator(plt.MultipleLocator(1))
@@ -1182,7 +1233,7 @@ def plot_mrmse_temporal(model_rmses):
     
     ax1.set_xlabel('Time (hours)', fontsize=18)
     ax1.set_ylabel(r'$mRMSE_{t}$ (m)', fontsize=18)
-    ax1.set_title('d) Temporal distribution of masked RMSE (wet cells only)', fontsize=20)
+    ax1.set_title('c) Temporal distribution of masked RMSE (wet-cells only)', fontsize=20)
     ax1.grid(True, linestyle='--', alpha=0.7)
     ax1.legend(fontsize=18)
     
@@ -1203,7 +1254,7 @@ def plot_metrics(model_rmses):
     plot_box_rmse_spatial(model_rmses)
     plot_mrmse_temporal(model_rmses)
     plot_box_plot_mrmse_spatial(model_rmses)
-    plot_sequence_hydrographs_with_windows()
+    # plot_sequence_hydrographs_with_windows()
 
 def bootstrap_function(model_name, residual_maps, reference_maps, num_samples=100):
     #overall RMSE
@@ -1549,6 +1600,13 @@ def load_output_maps(model_name):
     ouput_maps_dir = os.path.join(RUN_DIR, 'output_maps', model_name)
     event_inundation_files = glob.glob(f"{ouput_maps_dir}/*.wd")
     event_inundation_files.sort()
+    
+    # find index which is not available
+    for i in range(266):
+        expected_file = os.path.join(ouput_maps_dir, "map_{:04d}.wd".format(i))
+        if not os.path.exists(expected_file):
+            logger.warning(f"Output map file missing: {expected_file}")
+            raise FileNotFoundError(f"Output map file missing: {expected_file}")
 
     ouput_maps = []
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -1619,7 +1677,7 @@ def plot_rmse_boxplot(model_rmses):
             marker='o', 
             markerfacecolor=model_colors[model_key],
             markeredgecolor='gray',
-            markersize=4,
+            markersize=6,
             alpha=0.5,
             linestyle='none'
         )
@@ -1642,35 +1700,16 @@ def plot_rmse_boxplot(model_rmses):
         iqr = q3 - q1
         mean = np.mean(data)
         
-        # Add the values directly to the plot
-        # Maximum value at the top of each whisker
-        # plt.text(pos, maximum, f'{maximum:.3f}', ha='center', va='bottom',
-        #          fontsize=15, fontweight='bold', color=colors[i % len(colors)])
-        
-        # # Q3 value (top of box)
-        # plt.text(pos + 0.25, q3, f'Q3: {q3:.3f}', ha='left', va='center',
-        #          fontsize=8, color='black', backgroundcolor='white', alpha=0.8)
-        
-        # # Median line
-        # plt.text(pos - 0.25, median, f'Med: {median:.3f}', ha='right', va='center',
-        #          fontsize=8, color='black', backgroundcolor='white', alpha=0.8)
-        
-        # # Mean value (should be shown as a point in the boxplot)
-        # plt.text(pos + 0.25, mean, f'μ: {mean:.3f}', ha='left', va='center',
-        #          fontsize=8, color='black', backgroundcolor='white', alpha=0.8)
-        
-        # # Q1 value (bottom of box)
-        # plt.text(pos - 0.25, q1, f'Q1: {q1:.3f}', ha='right', va='center',
-        #          fontsize=8, color='black', backgroundcolor='white', alpha=0.8)
-        
-        # Minimum value at the bottom of each whisker
-        # plt.text(pos, minimum, f'{minimum:.3f}', ha='center', va='top',
-        #          fontsize=9, fontweight='bold', color=colors[i % len(colors)])
-        
-        # IQR on the side of the box
+        # Median line - matching IQR style
         model_display_name = display_names[i]
-        plt.text(pos + 0.3, (q1 + q3)/2, f'IQR: {iqr:.3f}', ha='left', va='center', 
-                fontsize=18, rotation=90, color=model_colors[model_key],
+        model_key = ordered_models[i]
+        # plt.text(pos, median, f'Med: ', ha='right', va='center', 
+        #         fontsize=18, rotation=90, color=model_colors[model_key],
+        #         bbox=dict(boxstyle="round,pad=0.2", fc='white', ec=model_colors[model_key], alpha=0.7))
+         
+         # IQR on the side of the box
+        plt.text(pos + 0.3, (q1 + q3)/2, f'Med: {median:.2f} IQR: {iqr:.2f}', ha='left', va='center', 
+                fontsize=15, rotation=90, color=model_colors[model_key],
                 bbox=dict(boxstyle="round,pad=0.2", fc='white', ec=model_colors[model_key], alpha=0.7))
         
         #save the min, max, median, iqr to rmse_stats_df
@@ -1692,6 +1731,7 @@ def plot_rmse_boxplot(model_rmses):
         rmse_stats_df.to_csv(stats_csv_file, index=False)       
     
     plt.xticks(range(1, len(display_names) + 1), display_names, fontsize=18 , rotation=0)
+    plt.yticks(fontsize=15)
     plt.xlabel('Model', fontsize=18)
     plt.ylabel(r'$RMSE_{t}$ (m)', fontsize=18)
     plt.title(r'a) Distribution of $RMSE_{t}$', fontsize=20)
@@ -1754,11 +1794,12 @@ def plot_mrmse_boxplot(model_rmses):
     # Customize flier (outlier) markers with model-specific colors
     for i, fliers in enumerate(bp['fliers']):
         model_display_name = display_names[i]
+        model_key = ordered_models[i]
         fliers.set(
             marker='o', 
             markerfacecolor=model_colors[model_key],
             markeredgecolor='gray',
-            markersize=4,
+            markersize=6,
             alpha=0.5,
             linestyle='none'
         )
@@ -1779,13 +1820,22 @@ def plot_mrmse_boxplot(model_rmses):
         iqr = q3 - q1
         mean = np.mean(data)
         
-        # IQR on the side of the box
+        # Median line - matching IQR style
         model_display_name = display_names[i]
-        plt.text(pos + 0.3, (q1 + q3)/2, f'IQR: {iqr:.3f}', ha='left', va='center', 
-                fontsize=18, rotation=90, color=model_colors[model_key],
+        model_key = ordered_models[i]
+        # plt.text(pos, median, f'Med: ', ha='right', va='center', 
+        #         fontsize=18, rotation=90, color=model_colors[model_key],
+        #         bbox=dict(boxstyle="round,pad=0.2", fc='white', ec=model_colors[model_key], alpha=0.7))
+        
+         # IQR on the side of the box
+        y_pos = (q1 + q3)/2
+        if i == 3:
+            y_pos += 0.2
+        plt.text(pos + 0.3, y_pos, f'Med: {median:.2f} IQR: {iqr:.2f}', ha='left', va='center', 
+                fontsize=15, rotation=90, color=model_colors[model_key],
                 bbox=dict(boxstyle="round,pad=0.2", fc='white', ec=model_colors[model_key], alpha=0.7))
         
-          #save the min, max, median, iqr to rmse_stats_df
+        #save the min, max, median, iqr to rmse_stats_df
         if os.path.exists(stats_csv_file):
             rmse_stats_df = pd.read_csv(stats_csv_file)
         else:
@@ -1804,6 +1854,7 @@ def plot_mrmse_boxplot(model_rmses):
         rmse_stats_df.to_csv(stats_csv_file, index=False)       
     
     plt.xticks(range(1, len(display_names) + 1), display_names, fontsize=18, rotation=0)
+    plt.yticks(fontsize=15) 
     plt.xlabel('Model', fontsize=18)
     plt.ylabel(r'$mRMSE_{t}$ (m)', fontsize=18)
     plt.title(r'b) Distribution of $mRMSE_{t}$', fontsize=20)
@@ -1877,6 +1928,77 @@ def plot_depth_predictions_by_elevation_percentile():
         f"{elev_thresholds[3]:.1f}m-{elev_thresholds[4]:.1f}m (40th-60th)",
         f">= {elev_thresholds[4]:.1f}m (>= 60th %ile)"
     ]
+    
+    # Plot the elevation ranges in different colors over the DEM for verification
+    plt.figure(figsize=(12, 10))
+    
+    # Create a combined mask array where each cell has a value corresponding to its elevation range
+    elevation_range_map = np.zeros_like(dem_valid.data, dtype=float)
+    elevation_range_map[:] = np.nan  # Initialize with NaN for nodata areas
+    
+    # Assign each cell to its elevation range (0-5)
+    for i, (elev_min, elev_max) in enumerate(elev_ranges):
+        if elev_min == float('-inf'):
+            mask = (dem_valid <= elev_max)
+        elif elev_max == float('inf'):
+            mask = (dem_valid > elev_min)
+        else:
+            mask = (dem_valid > elev_min) & (dem_valid <= elev_max)
+        elevation_range_map[mask] = i
+    
+    # Create discrete colormap with distinct colors for each range
+    colors_discrete = ['#440154', '#3b528b', '#21918c', '#5ec962', '#fde724', '#FFA500']  # Viridis-like + orange
+    cmap_discrete = plt.matplotlib.colors.ListedColormap(colors_discrete[:len(elev_ranges)])
+    bounds = np.arange(len(elev_ranges) + 1) - 0.5
+    norm = plt.matplotlib.colors.BoundaryNorm(bounds, cmap_discrete.N)
+    
+    # Plot the elevation range map
+    im = plt.imshow(elevation_range_map, cmap=cmap_discrete, norm=norm, origin='upper')
+    
+    # Create a custom legend instead of colorbar
+    from matplotlib.patches import Patch
+    legend_elements = []
+    for i, label in enumerate(range_labels):
+        legend_elements.append(Patch(facecolor=colors_discrete[i], edgecolor='black', label=label))
+    
+    # Add legend to the plot at the bottom with two rows
+    ax = plt.gca()
+    legend = ax.legend(handles=legend_elements, 
+                      loc='upper center', 
+                      bbox_to_anchor=(0.5, -0.02),
+                      ncol=3,  # 3 columns to get 2 rows with 6 items
+                    #   title='Elevation Range',
+                      title_fontsize=14,
+                      fontsize=12,
+                      frameon=True,
+                      fancybox=True)
+    
+    # Make the legend title bold
+    legend.get_title().set_fontweight('bold')
+    
+    # plt.title("Spatial distribution of elevation percentiles in the modelling domain", fontsize=18, pad=10)
+    
+    # Remove axis ticks and labels - the colorbar serves as the legend
+    plt.xticks([])
+    plt.yticks([])
+    plt.xlabel('')
+    plt.ylabel('')
+    
+    # Remove the axis frame for a cleaner look
+    # ax = plt.gca()
+    # ax.spines['top'].set_visible(False)
+    # ax.spines['right'].set_visible(False)
+    # ax.spines['bottom'].set_visible(False)
+    # ax.spines['left'].set_visible(False)
+    
+    # Add north arrow
+    plt.text(0.95, 0.05, '↑N', transform=plt.gca().transAxes, fontsize=14, 
+            fontweight='bold', ha='center', bbox=dict(facecolor='white', alpha=0.8))
+    
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_path, "dem_elevation_ranges.png"), dpi=300, bbox_inches='tight')
+    plt.close()
+    logger.info(f"Saved DEM elevation ranges overlay plot. to {os.path.join(output_path, 'dem_elevation_ranges.png')}")
     
     # Dictionary to store model data and results
     model_data = {}
@@ -2021,6 +2143,9 @@ def plot_depth_predictions_by_elevation_percentile():
             global_y_max = 2.0  # Higher upper limit
             global_y_min = -1.0  # More negative to show bias values better
             
+        logger.info(f"Plot y-axis limits: {global_y_min:.3f} to {global_y_max:.3f}")
+        logger.info(f"Min bias: {min_bias:.3f}, Max RMSE: {max_val:.3f}")
+        
         #Plot each model-elevation range combination
         for model_idx, (model_name, model_results) in enumerate(model_data.items()):
             display_name = model_display_names.get(model_name, model_name)
@@ -2071,15 +2196,11 @@ def plot_depth_predictions_by_elevation_percentile():
                 valid_rmse = [x for x in rmse_vals if not np.isnan(x)]
                 valid_bias = [x for x in bias_vals if not np.isnan(x)]
                 
-                if valid_rmse:
-                    mean_rmse = np.mean(valid_rmse)
-                    mean_bias = np.mean(valid_bias)
-                else:
-                    mean_rmse = np.nan
-                    mean_bias = np.nan
+                max_bias = np.max(np.abs(valid_bias)) if valid_bias else 0
+                mean_bias = np.mean(valid_bias) if valid_bias else 0
                 
                 # Add metric annotation
-                metric_text = f'Mean Bias: {mean_bias:.3f}m'
+                metric_text = f'Max Bias: {max_bias:.2f}m'
                 ax.text(0.03, 0.97, metric_text, transform=ax.transAxes, 
                        fontsize=18, verticalalignment='top',
                        bbox=dict(boxstyle="round,pad=0.2", fc='white', alpha=0.8))
@@ -2089,7 +2210,7 @@ def plot_depth_predictions_by_elevation_percentile():
                     ax.set_title(range_labels[range_idx], fontsize=18, pad=20)  # Increase padding between title and plot
                 
                 if range_idx == 0:  # Left column - add model labels
-                    ax.set_ylabel(f"{display_name}\nError (m)", fontsize=18)
+                    ax.set_ylabel(f"{display_name}\n Bias(m)", fontsize=18)
                 
                 if model_idx == n_models - 1:  # Bottom row - add x-labels
                     ax.set_xlabel("Time (hours)", fontsize=18, labelpad=10)  # Add more padding between axis and label
@@ -2101,8 +2222,8 @@ def plot_depth_predictions_by_elevation_percentile():
                 # ax.axvline(x=peak_hour, color='black', linestyle='--', alpha=0.5)
                 
                 # Add legend only to the first plot, positioned lower
-                if model_idx == 0 and range_idx == 0:
-                    ax.legend(loc='lower right', fontsize=18)
+                # if model_idx == 0 and range_idx == 0:
+                #     ax.legend(loc='lower right', fontsize=18)
         
         # Add overall title
         # fig.suptitle('Model Error by Elevation Percentile (Wet Cells Only)', 
@@ -2142,7 +2263,7 @@ def plot_depth_predictions_by_elevation_percentile():
         plt.yticks(fontsize=12)
         plt.xlabel('Elevation Range', fontsize=14)
         plt.ylabel('Mean RMSE (m)', fontsize=14)
-        plt.title('Mean RMSE by Elevation Percentile Range', fontsize=16, fontweight='bold')
+        plt.title('Mean bias over time across six elevation percentile groups', fontsize=18, fontweight='bold')
         plt.grid(axis='y', linestyle='--', alpha=0.7)
         
         # Save summary plot
@@ -2275,7 +2396,7 @@ def plot_flood_maps(reference_maps):
             ax1.set_yticks([])
             
             # Add scale bar and north arrow to prediction
-            ax1.text(0.95, 0.05, '↑N', transform=ax1.transAxes, fontsize=12, 
+            ax1.text(0.95, 0.05, '↑N', transform=ax1.transAxes, fontsize=14, 
                     fontweight='bold', ha='center', bbox=dict(facecolor='white', alpha=0.8))
             
             scalebar_length_m = 500
@@ -2363,7 +2484,7 @@ def plot_flood_maps(reference_maps):
                fontsize=16, fontweight='bold', ha='center')
         # ax.text(0.5, 0.1, 'Blue: Under-prediction (Model < Reference)  |  Red: Over-prediction (Model > Reference)', 
         #        transform=ax.transAxes, fontsize=12, ha='center',
-        #        bbox=dict(boxstyle='round,pad=0.3', fc='lightgray', alpha=0.7))
+        #        bbox=dict(boxstyle="round,pad=0.3", fc='lightgray', alpha=0.7))
         
         plt.tight_layout()
         error_cbar_file = os.path.join(output_dir, "error_colorbar.png")
@@ -2417,7 +2538,7 @@ def plot_sequence_hydrographs_with_windows():
     logger.info("Generating single sequence hydrograph plot with one highlighted 2-hour input window")
     
     # Load flow data for all three upstream sources
-    flow_file = os.path.join(CARLISLE_DATA_DIR, "Upstream_Flows_Run1.csv")
+    flow_file = os.path.join(DATA_DIR, "Upstream_Flows_Run1.csv")
     df = pd.read_csv(flow_file)
     df["TimeHours"] = df["Time"] / 3600
     

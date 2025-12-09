@@ -4,13 +4,13 @@ import numpy as np
 import glob
 import logging
 import matplotlib.pyplot as plt
-from modules.lib.constants import CARLISLE_DATA_DIR, OUTPUT_DIR, GRAPH_OUTPUT_DIR
+from modules.lib.constants import DATA_DIR, OUTPUT_DIR, PLOTS_OUTPUT_DIR
 
 logger = logging.getLogger("Flow Analysis")
 
 def find_peak_inflow_timestep(run_id=None, output_plot=False):
     
-    flow_file_pattern = os.path.join(CARLISLE_DATA_DIR, "Upstream_Flows_Run*.csv")
+    flow_file_pattern = os.path.join(DATA_DIR, "Upstream_Flows_Run*.csv")
     flow_files = glob.glob(flow_file_pattern)
     
     if not flow_files:

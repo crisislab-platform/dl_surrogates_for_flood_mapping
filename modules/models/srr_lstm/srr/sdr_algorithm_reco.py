@@ -2,7 +2,7 @@ from modules.models.srr_lstm.srr.gdal_func import gdal_asarray, gdal_writetiff, 
 from scipy.interpolate import griddata
 import csv, fiona
 import numpy as np
-from modules.lib.constants import GRAPH_OUTPUT_DIR
+from modules.lib.constants import PLOTS_OUTPUT_DIR
 import logging
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -131,8 +131,8 @@ def visualise_convex_hull(points, water_levels, target_xy_grids=None, prefix=0):
     plt.title('Convex Hull of Source Points')
     
     # Save the plot
-    fig.savefig(GRAPH_OUTPUT_DIR + f'/convex_hull_visualization{prefix}.png')
-    logger.info(f'Convex hull visualization saved to {GRAPH_OUTPUT_DIR}/convex_hull_visualization{prefix}.png')
+    fig.savefig(PLOTS_OUTPUT_DIR + f'/convex_hull_visualization{prefix}.png')
+    logger.info(f'Convex hull visualization saved to {PLOTS_OUTPUT_DIR}/convex_hull_visualization{prefix}.png')
     plt.close(fig)  # Close the figure to free memory
 
 

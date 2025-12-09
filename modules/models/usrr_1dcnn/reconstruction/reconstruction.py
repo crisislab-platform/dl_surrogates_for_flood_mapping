@@ -1,4 +1,4 @@
-from modules.lib.constants import OUTPUT_DIR, RUN_DIR, CARLISLE_DATA_DIR, SIMULATION_DATA_DIR
+from modules.lib.constants import OUTPUT_DIR, RUN_DIR, DATA_DIR, SIMULATION_DATA_DIR
 from modules.models.usrr_1dcnn.lib.gdal_lib  import gdal_asarray, read_shp_point, coords2rc, gdal_transform, gdal_writetiff
 from modules.utils.run_util import check_device
 from modules.models.usrr_1dcnn.unet import UNet
@@ -6,7 +6,7 @@ from modules.models.usrr_1dcnn.cnn1d import CNN1DSequential
 from modules.datamanager.raster.raster_loader_usrr import ReconsturctionDataManager
 from modules.datamanager.point.sequential_loader_1dcnn import CNNSequentialDataManager
 from modules.models.usrr_1dcnn.unet import model_name as UNET_MODEL_NAME
-from modules.lib.constants import USRR_1DCNN_V1, GRAPH_OUTPUT_DIR, SIMULATION_DATA_DIR, USRR_CNN1D_COMBINED
+from modules.lib.constants import USRR_1DCNN_V1, PLOTS_OUTPUT_DIR, SIMULATION_DATA_DIR, USRR_CNN1D_COMBINED
 from modules.model_runner.model_utils import find_model_file
 from torch.profiler import profile, ProfilerActivity
 from modules.utils.model_util import profiler_analysis, format_flops, save_prediction_map
@@ -333,7 +333,7 @@ class ReconstructionModule():
         error_dry = error[dry_mask]
         
         # Create output directory
-        vis_dir = os.path.join(GRAPH_OUTPUT_DIR)
+        vis_dir = os.path.join(PLOTS_OUTPUT_DIR)
         os.makedirs(vis_dir, exist_ok=True)
 
         # Reshape the error map to match the DEM dimensions

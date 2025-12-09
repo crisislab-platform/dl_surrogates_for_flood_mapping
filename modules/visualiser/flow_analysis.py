@@ -4,14 +4,14 @@ import numpy as np
 import glob
 import logging
 import matplotlib.pyplot as plt
-from modules.lib.constants import CARLISLE_DATA_DIR, OUTPUT_DIR, GRAPH_OUTPUT_DIR
+from modules.lib.constants import DATA_DIR, OUTPUT_DIR, PLOTS_OUTPUT_DIR
 
 logger = logging.getLogger("Flow Analysis")
 
 def plot_upstream_hydrographs():
     
     logger.info("Generating upstream hydrograph plots")
-    flow_file_pattern = os.path.join(CARLISLE_DATA_DIR, "Upstream_Flows_Run*.csv")
+    flow_file_pattern = os.path.join(DATA_DIR, "Upstream_Flows_Run*.csv")
     flow_files = glob.glob(flow_file_pattern)
     
     if not flow_files:
@@ -45,7 +45,7 @@ def plot_upstream_hydrographs():
         return None
     
     # Create output directory
-    os.makedirs(GRAPH_OUTPUT_DIR, exist_ok=True)
+    os.makedirs(PLOTS_OUTPUT_DIR, exist_ok=True)
     
     output_files = []
     
@@ -114,7 +114,7 @@ def plot_upstream_hydrographs():
         plt.tight_layout()
         
         # Save individual figure
-        output_path = os.path.join(GRAPH_OUTPUT_DIR, f"{source}_all_events.png")
+        output_path = os.path.join(PLOTS_OUTPUT_DIR, f"{source}_all_events.png")
         plt.savefig(output_path, dpi=300, bbox_inches='tight')
         logger.info(f"Saved {display_name} hydrograph to {output_path}")
         output_files.append(output_path)
@@ -188,7 +188,7 @@ def plot_upstream_hydrographs():
     fig.subplots_adjust(top=0.95)  # Make room for the title
     
     # Save the combined figure
-    combined_output_path = os.path.join(GRAPH_OUTPUT_DIR, "all_upstream_hydrographs.png")
+    combined_output_path = os.path.join(PLOTS_OUTPUT_DIR, "all_upstream_hydrographs.png")
     plt.savefig(combined_output_path, dpi=300, bbox_inches='tight')
     logger.info(f"Saved combined hydrograph to {combined_output_path}")
     output_files.append(combined_output_path)
@@ -207,7 +207,7 @@ def plot_hydrograph_clean():
     logger.info("Generating scientific-quality upstream hydrograph for Event 1")
     
     # Load Event 1 flow data
-    flow_file = os.path.join(CARLISLE_DATA_DIR, "Upstream_Flows_Run1.csv")
+    flow_file = os.path.join(DATA_DIR, "Upstream_Flows_Run1.csv")
     
     if not os.path.exists(flow_file):
         logger.error(f"Event 1 flow file not found: {flow_file}")
@@ -228,7 +228,7 @@ def plot_hydrograph_clean():
             time_label = "Time (s)"
         
         # Create output directory
-        os.makedirs(GRAPH_OUTPUT_DIR, exist_ok=True)
+        os.makedirs(PLOTS_OUTPUT_DIR, exist_ok=True)
         
         # Set scientific plot style
         plt.style.use('seaborn-v0_8-whitegrid')
@@ -320,7 +320,7 @@ def plot_hydrograph_clean():
         plt.tight_layout(rect=[0, 0.03, 1, 0.98])
         
         # Save the figure with high resolution required for publication
-        output_path = os.path.join(GRAPH_OUTPUT_DIR, "upstream_hydrographs_event1_scientific.png")
+        output_path = os.path.join(PLOTS_OUTPUT_DIR, "upstream_hydrographs_event1_scientific.png")
         plt.savefig(output_path, dpi=600, bbox_inches='tight', format='png')
         
         

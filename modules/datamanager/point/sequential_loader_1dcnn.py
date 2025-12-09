@@ -1,7 +1,7 @@
 import os
 import pandas as pd
 import numpy as np
-from modules.lib.constants import CARLISLE_DATA_DIR, OUTPUT_DIR, SIMULATION_DATA_DIR
+from modules.lib.constants import DATA_DIR, OUTPUT_DIR, SIMULATION_DATA_DIR
 from modules.models.usrr_1dcnn.lib.gdal_lib import gdal_asarray
 import torch
 import logging
@@ -301,7 +301,7 @@ class CNNSequentialDataManager(DataManager):
             
             # 1. Load all raw data
             for event_id in self.all_event_ids:
-                inflow_file = os.path.join(CARLISLE_DATA_DIR, f"Upstream_Flows_Run{event_id}.csv")
+                inflow_file = os.path.join(DATA_DIR, f"Upstream_Flows_Run{event_id}.csv")
                 inflow_data = pd.read_csv(inflow_file)
                 
                 inflow_data = inflow_data

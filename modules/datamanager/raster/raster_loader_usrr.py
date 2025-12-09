@@ -1,5 +1,5 @@
 # Description: Data loader for U-Net model (PyTorch version)
-from modules.lib.constants import CARLISLE_DATA_DIR, OUTPUT_DIR, SIMULATION_DATA_DIR
+from modules.lib.constants import DATA_DIR, OUTPUT_DIR, SIMULATION_DATA_DIR
 from modules.models.usrr_1dcnn.lib.gdal_lib import coords2rc, rc2coords, gdal_asarray, gdal_transform, gdal_writetiff
 from modules.datamanager.raster.raster_loader_unet import UNetDataManager
 from modules.models.usrr_1dcnn.lib.base_functions import read_shp_point

@@ -125,6 +125,10 @@ class PICNN1DModelWrapper(ModelWrapper):
             epoch_loss = 0
             valid_batches = 0
             self.model.train()
+            
+            if epoch > 0:
+                self.data_manager.shuffle_training_data(epoch) 
+                
             for idx, t_indices in enumerate(self.data_manager.train_idx):
                 self.optimizer.zero_grad()
                 if idx == 0 and epoch == 0:
@@ -132,8 +136,6 @@ class PICNN1DModelWrapper(ModelWrapper):
                     with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], 
                                 profile_memory=True, 
                                 on_trace_ready=torch.profiler.tensorboard_trace_handler(run_dir)) as prof:
-                        
-                        
                         xt, yt, yt_minus1, yt_plus1, bct, bct_plus1  = self.data_manager.get_batch(t_indices)
                         pred = self.model(xt)
                         batch_loss = self.physics_loss_fn(pred, yt, yt_minus1, yt_plus1, bct, bct_plus1)
@@ -279,7 +281,7 @@ class PICNN1DModelWrapper(ModelWrapper):
         physics_loss = torch.mean(term2 + term3)
         
         # Final loss
-        total_loss = mse_loss + 0.5 * physics_loss
+        total_loss = mse_loss + self.physics_weight * physics_loss
         
         return total_loss
     

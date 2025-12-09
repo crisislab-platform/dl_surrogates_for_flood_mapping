@@ -8,6 +8,8 @@
 
 # python main.py plot --plot_type test_event
 
-parallel --line-buffer -j 1 CUDA_VISIBLE_DEVICES={1} python3.11 main.py plot \
- --plot_type bootstrap \
- ::: 0 
+# parallel --line-buffer -j 1 CUDA_VISIBLE_DEVICES={1} python3.11 main.py plot \
+#  --plot_type bootstrap \
+#  ::: 0 
+
+python main.py plot --plot_type boundary_information

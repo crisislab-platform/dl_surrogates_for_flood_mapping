@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 from modules.models.usrr_1dcnn.lib.gdal_lib import read_shp_point, gdal_asarray
 from modules.models.usrr_1dcnn.lib.base_functions import save_pts_to_shp
 import logging
-from modules.lib.constants import GRAPH_OUTPUT_DIR
+from modules.lib.constants import PLOTS_OUTPUT_DIR
 import pandas as pd
 
 logging.basicConfig(level=logging.INFO)
@@ -49,7 +49,7 @@ class RLClusterFinder:
         
         # Visualize if requested and possible
         if visualize and hasattr(coordinates, 'shape') and len(coordinates.shape) > 1 and coordinates.shape[1] in [2, 3]:
-            viz_path = os.path.join(GRAPH_OUTPUT_DIR, f'clusters_{self.sampling_distance}.png')
+            viz_path = os.path.join(PLOTS_OUTPUT_DIR, f'clusters_{self.sampling_distance}.png')
             # self.visualize_clusters(coordinates, labels, viz_path)
             
     def run_clustering_new(self, visualize=True):
@@ -149,7 +149,7 @@ class RLClusterFinder:
         plt.ylabel('Y (Row)')
         
         # Save the visualization
-        raster_viz_path = os.path.join(GRAPH_OUTPUT_DIR, f'cluster_raster_{self.sampling_distance}.png')
+        raster_viz_path = os.path.join(PLOTS_OUTPUT_DIR, f'cluster_raster_{self.sampling_distance}.png')
         plt.savefig(raster_viz_path, dpi=300, bbox_inches='tight')
         plt.close()
         logger.info(f"Saved cluster visualization on DEM to: {raster_viz_path}")

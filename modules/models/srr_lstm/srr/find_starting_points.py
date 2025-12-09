@@ -2,7 +2,7 @@ from modules.models.srr_lstm.srr.gdal_func import rc2coords, gdal_asarray
 from modules.models.srr_lstm.srr.nc_func import *
 import matplotlib.pyplot as plt
 import numpy as np
-from modules.lib.constants import GRAPH_OUTPUT_DIR, SIMULATION_DATA_DIR
+from modules.lib.constants import PLOTS_OUTPUT_DIR, SIMULATION_DATA_DIR
 import os
 import logging
 
@@ -81,7 +81,7 @@ def visualise_starting_points(starting_pts):
         plt.colorbar(label='Starting Points')
         
         # Save the visualization
-        starting_pts_viz_path = os.path.join(GRAPH_OUTPUT_DIR, "starting_points_visualization.png")
+        starting_pts_viz_path = os.path.join(PLOTS_OUTPUT_DIR, "starting_points_visualization.png")
         plt.savefig(starting_pts_viz_path, dpi=300, bbox_inches='tight')
         plt.close()
         

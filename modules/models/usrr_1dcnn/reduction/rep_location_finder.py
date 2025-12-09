@@ -1,4 +1,4 @@
-from modules.lib.constants import CARLISLE_DATA_DIR, OUTPUT_DIR, SIMULATION_DATA_DIR, RUN_DIR
+from modules.lib.constants import DATA_DIR, OUTPUT_DIR, SIMULATION_DATA_DIR, RUN_DIR
 from modules.models.usrr_1dcnn.lib.base_functions import *
 from modules.models.usrr_1dcnn.lib.gdal_lib import gdal_asarray, gdal_transform, rc2coords, gdal_writeasc
 from modules.models.usrr_1dcnn.reduction.rl_culster_finder import RLClusterFinder
