@@ -1,0 +1,5 @@
+Model,True Positives,False Positives,False Negatives,True Negatives,Hit Rate,CSI,F2 Score,F3 Score
+Tier-1,172216,2649,5776,400420,0.97,0.95,0.92,0.94
+Tier-2,177857,15658,135,387411,1.00,0.92,0.92,0.84
+Tier-3,177905,11435,87,391634,1.00,0.94,0.94,0.88
+Tier-4,176015,478,1977,402591,0.99,0.99,0.98,0.98

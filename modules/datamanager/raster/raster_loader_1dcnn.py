@@ -6,7 +6,7 @@ import rasterio as rio
 import glob
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 import torch
-from modules.lib.constants import DATA_DIR, SIMULATION_DATA_DIR, DEM_FILE
+from modules.lib.constants import INPUT_FILE_DIR, SIMULATION_DATA_DIR, DEM_FILE
 from modules.datamanager.datamanager import DataManager
 from modules.utils.run_util import check_device
 
@@ -14,7 +14,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("CNNDataLoader")
 
 elevation_file_path = DEM_FILE
-bc_data_dir = f"{DATA_DIR}"
+bc_data_dir = INPUT_FILE_DIR
 lisflood_simulation_dir = SIMULATION_DATA_DIR
 
 class CNNRasterDataManager(DataManager):
@@ -111,7 +111,7 @@ class CNNRasterDataManager(DataManager):
         
         for idx in range(len(event_ids)):
             event_id = event_ids[idx]
-            inflow_file = os.path.join(DATA_DIR, f"Upstream_Flows_Run{event_id}.csv")
+            inflow_file = os.path.join(INPUT_FILE_DIR, f"Upstream_Flows_Run{event_id}.csv")
             inflow_data = pd.read_csv(inflow_file)
             # inflow_data = inflow_data[8:]  # Skip the first 8 rows
             

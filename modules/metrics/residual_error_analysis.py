@@ -35,9 +35,9 @@ model_colors = {
 models = [USRR_CNN1D_COMBINED,CNN1D_V1,PICNN1D_V1, HDL_FM_V1]
 
 def compute_and_plot_metrics():
-    # residual_error_analysis()
+    residual_error_analysis()
     plot_flood_extent_maps()
-    # rmse_vs_elevation_percentile()
+    rmse_vs_elevation_percentile()
     
 def residual_error_analysis():
     reference_maps_tensor = preload_reference_inundation_maps()
@@ -123,8 +123,8 @@ def residual_error_analysis():
             }
             
 
-            if model_name in [CNN1D_V1]:
-                bootstrap_function(model_name_map.get(model_name), residual_maps, reference_maps_tensor_reshaped, num_samples=10000)
+            # if model_name in [CNN1D_V1]:
+            #     bootstrap_function(model_name_map.get(model_name), residual_maps, reference_maps_tensor_reshaped, num_samples=10000)
     
     # Plot the RMSE per timestep and RMSE per cell for all models
     plot_metrics(residual_metrics)
@@ -209,6 +209,7 @@ def plot_temporal(residual_metrics, metric_key, ylabel, title, filename, add_pea
     ax1.grid(True, linestyle='--', alpha=0.7)
     ax1.legend(fontsize=18)
     
+    os.makedirs(os.path.join(OUTPUT_DIR, 'quality_metrics'), exist_ok=True)
     outfile = os.path.join(OUTPUT_DIR, 'quality_metrics', filename)
     plt.tight_layout()
     plt.savefig(outfile, dpi=300, bbox_inches='tight')
@@ -1271,7 +1272,7 @@ def preload_reference_inundation_maps():
     event_id = 1
 
     if check_inundation_data_cache(event_id):
-        inundation_data = torch.load(os.path.join(OUTPUT_DIR, "preprocessed_inundation", f"event_{event_id}_inundation.pt"))
+        inundation_data = torch.load(os.path.join(DATA_DIR, "preprocessed_inundation", f"event_{event_id}_inundation.pt"))
         inundation_data = inundation_data.to(device)
         return inundation_data
     else:

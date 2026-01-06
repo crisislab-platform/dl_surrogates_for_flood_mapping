@@ -32,12 +32,12 @@ PARAMS = "Parameters"
 #Paths
 study_area = "carlisle"
 PROJECT_ROOT = f"/home/91/23016891/projects/{study_area}"
-OUTPUT_DIR = f"/data/{study_area}/out"
-RUN_DIR = f"{OUTPUT_DIR}/runs"
-PLOTS_OUTPUT_DIR = f"{OUTPUT_DIR}/plots"
-SIMULATION_DATA_DIR = "/data/carlisle/simulation/DEM5m_2D"
-GRAPH_OUTPUT_DIR = PLOTS_OUTPUT_DIR
+DATA_DIR = f"/data/{study_area}"
+INPUT_FILE_DIR = f"{PROJECT_ROOT}/data/{study_area}"
 
-DEM_FILE = f"/data/carlisle/simulation/Carlisle_5m.asc"
-DATA_DIR = f"{PROJECT_ROOT}/data/{study_area}"
-SIMULATION_OUTPUT_DIR =  f"/data/{study_area}/simulation_output"
+RUN_DIR = f"/{DATA_DIR}/runs"
+OUTPUT_DIR = f"{PROJECT_ROOT}/results"
+PLOTS_OUTPUT_DIR = f"{OUTPUT_DIR}/plots"
+SIMULATION_DATA_DIR = f"{DATA_DIR}/simulation/DEM5m_2D"
+DEM_FILE = f"{DATA_DIR}/simulation/Carlisle_5m.asc"
+

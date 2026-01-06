@@ -1,7 +1,6 @@
 import logging
 import numpy as np
-from modules.lib.constants import RMSE, MRMSE, HITRATE, CSI, F2SCORE, F3SCORE, INFERENCE_TIMES, INFERENCE_MEMORY_USAGE, FLOPS, PARAMS
-from modules.lib.constants import OUTPUT_DIR
+from modules.lib.constants import RMSE, MRMSE, HITRATE, CSI, F2SCORE, F3SCORE, INFERENCE_TIMES, INFERENCE_MEMORY_USAGE, FLOPS, PARAMS, OUTPUT_DIR
 import os
 import pandas as pd
 
@@ -78,7 +77,7 @@ def create_radar_chart(models, normalised_matrix, output_dir):
 
 def topsis(models, model_metrics):
     nomralised_matrix = normalise_metrics(models, model_metrics)
-    output_dir = os.path.join(OUTPUT_DIR,"plots", "perf_plots")
+    output_dir = os.path.join(OUTPUT_DIR,"topsis_analysis")
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
         
@@ -108,7 +107,7 @@ def topsis(models, model_metrics):
         topsis_df.to_csv(os.path.join(output_dir, f"topsis_scores_settings_{settings_index}.csv"), index=False)
         
     # Write to csv
-    output_file = os.path.join(OUTPUT_DIR,"plots", "perf_plots", "topsis_scores.csv")
+    output_file = os.path.join(output_dir, "topsis_scores.csv")
     all_scores = []
     for setting_index, scores in model_scores.items():
         for score_entry in scores:

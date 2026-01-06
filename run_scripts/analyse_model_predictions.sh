@@ -1,0 +1,1 @@
+parallel --line-buffer -j 1 CUDA_VISIBLE_DEVICES={1} python3.11 "${PROJECT_DIR}/main.py" metrics

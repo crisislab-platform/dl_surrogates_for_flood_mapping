@@ -4,12 +4,14 @@ from datetime import datetime
 
 from modules.model_runner.model_trainer import train_model
 from modules.models.model_wrapper import ModelConfig
-from lib.constants import TRAIN_COMMAND, SRR_CLUSTER_COMMAND, METRICS_COMMAND
 from modules.models.usrr_1dcnn.reduction.rep_location_finder import find_representative_locations_and_clusters
 from modules.datamanager.datamanager import create_inundation_map_tensors
 from utils.utils import check_if_already_run
 from modules.metrics.metrics import metrics_analysis
 
+TRAIN_COMMAND = "train"
+SRR_CLUSTER_COMMAND = "srr_cluster"
+METRICS_COMMAND = "metrics"
 
 
 logging.basicConfig(level=logging.INFO)

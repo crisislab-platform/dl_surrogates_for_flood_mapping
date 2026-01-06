@@ -3,8 +3,6 @@ from modules.models.usrr_1dcnn.lib.gdal_lib import coords2rc,gdal_asarray, gdal_
 import torch
 import logging
 import numpy as np
-import pandas as pdf
-from modules.lib.constants import DEM_FILE
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("USRRDataManager")

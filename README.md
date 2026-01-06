@@ -1,6 +1,6 @@
 # Deep Learning Based Flood Inundation Modeling
 
-This project implements deep learning models to predict flood inundation patterns using LISFLOOD-FP simulation data. The system is trained on historical flood data from Carlisle, UK to predict future flood extents.
+This project implements deep learning models to predict flood inundation extent and depth maps. The system is trained on historical flood data from Carlisle, UK to predict future flood extents.
 
 ## Prerequisites
 
@@ -16,9 +16,9 @@ This project implements deep learning models to predict flood inundation pattern
 ## Project Structure
 
 ```
-carlisle/
-├── carlisle-data/         # Simulation data and parameters
-├── models/                # Trained model checkpoints
+deeplearning-flood/
+├── data/                  # Data used for simulating flood events using LISFLOOD-FP
+├── exploratory/           # Exploratory data analysis notebooks
 ├── src/                   # Source code
 ├── train.sh              # Training script
 ├── simulation_data_generator.sh  # Data generation script
@@ -42,7 +42,7 @@ The script will:
 - Generate output files for each simulation
 - Create a log file (simulation.log) tracking progress
 
-### 2. Train the Model
+### 2. Train the Models
 
 The training script uses GNU Parallel to experiment with different hyperparameters:
 

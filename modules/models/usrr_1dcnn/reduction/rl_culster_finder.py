@@ -35,24 +35,6 @@ class RLClusterFinder:
 
             
     def run_clustering(self, visualize=True):
-        coords_df = pd.read_csv(self.coordinates_file)
-        coordinates = coords_df[['x', 'y']].values
-        coordinates = np.array(coordinates)
-        labels = self.cluster_locations(coordinates, self.n_clusters)
-    
-        coords_df['cluster'] = labels
-        
-        # Save all clusters to a single CSV file
-        out_file = os.path.join(self.output_dir, f'clusters_ss_{self.sampling_distance}_{self.n_clusters}.csv')
-        coords_df.to_csv(out_file, index=False)
-        logger.info(f"Saved all clusters to a single CSV file: {out_file}")
-        
-        # Visualize if requested and possible
-        if visualize and hasattr(coordinates, 'shape') and len(coordinates.shape) > 1 and coordinates.shape[1] in [2, 3]:
-            viz_path = os.path.join(PLOTS_OUTPUT_DIR, f'clusters_{self.sampling_distance}.png')
-            # self.visualize_clusters(coordinates, labels, viz_path)
-            
-    def run_clustering_new(self, visualize=True):
         rl_arr = gdal_asarray(self.coordinates_file)
         rows, cols = np.where(rl_arr == 1)
         

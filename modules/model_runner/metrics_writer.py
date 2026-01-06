@@ -4,8 +4,7 @@ from modules.lib.constants import RUN_DIR
 from modules.models.model_wrapper import ModelConfig
 import logging
 import pandas as pd
-import json
-from modules.lib.constants import USRR_1DCNN_V1, USRR_UNET_V1, USRR_CNN1D_COMBINED, LSTM_SRR_V1, SRR_LSTM_COMBINED, USRR_LSTM
+from modules.lib.constants import USRR_1DCNN_V1, USRR_UNET_V1, LSTM_SRR_V1, USRR_LSTM
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("MetricsWriter")

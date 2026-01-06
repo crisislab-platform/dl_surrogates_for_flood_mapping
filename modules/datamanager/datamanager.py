@@ -4,7 +4,7 @@ import numpy as np
 import torch
 import logging
 
-from modules.lib.constants import SIMULATION_DATA_DIR, OUTPUT_DIR
+from modules.lib.constants import SIMULATION_DATA_DIR, DATA_DIR
 from modules.models.usrr_1dcnn.lib.gdal_lib import gdal_asarray
 
 logger = logging.getLogger(__name__)
@@ -28,7 +28,7 @@ def shuffle_training_data(self, epoch):
     pass
     
 def check_inundation_data_cache(event_id):
-    cache_dir = os.path.join(OUTPUT_DIR, "preprocessed_inundation")
+    cache_dir = os.path.join(DATA_DIR, "preprocessed_inundation")
     if not os.path.exists(cache_dir):
         return False
     cache_file = os.path.join(cache_dir, f"event_{event_id}_inundation.pt")
@@ -39,7 +39,7 @@ def check_inundation_data_cache(event_id):
 
 def create_inundation_map_tensors():
     """Preprocess all inundation data and save to disk for fast loading"""
-    output_dir = os.path.join(OUTPUT_DIR, "preprocessed_inundation")
+    output_dir = os.path.join(DATA_DIR, "preprocessed_inundation")
     if os.path.exists(output_dir):
         logger.info(f"Preprocessed inundation directory {output_dir} already exists.")
         return
