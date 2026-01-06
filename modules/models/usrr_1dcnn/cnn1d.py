@@ -21,13 +21,13 @@ logger = logging.getLogger("CNN1D_USRR_ModelWrapper")
 class CNN1DSequential(nn.Module):
     def __init__(self, model_structure, seq_h, convo_kernel=4, pool_kernel=3):
         super(CNN1DSequential, self).__init__()
-        self.convo_1 = nn.Conv1d(in_channels=model_structure[0], out_channels=model_structure[1], dilation=1, 
-                                 kernel_size=convo_kernel, stride=3, padding=2)
+        self.convo_1 = nn.Conv1d(in_channels=model_structure[0], out_channels=model_structure[1],
+                                 kernel_size=convo_kernel, padding=1)
         
         self.pooling_1 = nn.MaxPool1d(pool_kernel, ceil_mode=True)
         
-        self.convo_2 = nn.Conv1d(in_channels=model_structure[1],out_channels=model_structure[1], dilation=2,
-                                 kernel_size=convo_kernel, stride=3, padding=2)
+        self.convo_2 = nn.Conv1d(in_channels=model_structure[1],out_channels=model_structure[1],
+                                 kernel_size=convo_kernel, padding=1)
         
         self.pooling_2 = nn.MaxPool1d(pool_kernel, ceil_mode=True)
         
@@ -36,7 +36,7 @@ class CNN1DSequential(nn.Module):
         self.bn1 = nn.BatchNorm1d(model_structure[1])
         self.bn2 = nn.BatchNorm1d(model_structure[1]*2)
         self.bn3 = nn.BatchNorm1d(model_structure[1]*2)
-        self.dropout = nn.Dropout(0.3)
+        self.dropout = nn.Dropout(0.1)
     
         with torch.no_grad():
             dummy = torch.zeros(1, model_structure[0], int(seq_h))
@@ -62,66 +62,6 @@ class CNN1DSequential(nn.Module):
         x = self.dropout(self.relu(self.hidden_1(x)))
         x = self.lyr_out(x)
         return x
-            
-    
-class CNN1DSequential2(nn.Module):
-    def __init__(self, model_structure, seq_h, convo_kernel=2):
-        super(CNN1DSequential2, self).__init__()
-        # For lagged features approach, input channels is 1, features (model_structure[0]) go into sequence dimension
-        self.conv1 = nn.Conv1d(in_channels=1, out_channels=model_structure[1], kernel_size=convo_kernel)
-        self.bn1 = nn.BatchNorm1d(model_structure[1])
-        self.conv2 = nn.Conv1d(in_channels=model_structure[1], out_channels=model_structure[1] * 4, kernel_size=convo_kernel)
-        self.bn2 = nn.BatchNorm1d(model_structure[1] * 4)
-        self.relu = nn.ReLU()
-        
-        with torch.no_grad():
-            # Create correct dummy tensor with shape [batch=1, channels=1, features=model_structure[0]]
-            # This matches the shape after transpose in forward()
-            dummy = torch.zeros(1, 1, model_structure[0])
-            flat_dim = self._forward_features(dummy).view(1, -1).size(1)
-
-        self.flatten = nn.Flatten()
-        self.fc1 = nn.Linear(flat_dim, model_structure[-2]* 4)
-        self.bn_fc1 = nn.BatchNorm1d(model_structure[-2] *  4)
-        self.dropout = nn.Dropout(0.2)
-        self.fc2 = nn.Linear(model_structure[-2] * 4 , model_structure[-2] * 2)
-        self.bn_fc2 = nn.BatchNorm1d(model_structure[-2] // 2)
-        self.dropout2 = nn.Dropout(0.2)
-        self.fc3 = nn.Linear(model_structure[-2] * 2, model_structure[-2])
-        self.bn_fc3 = nn.BatchNorm1d(model_structure[-2] // 4)
-        self.fc4 = nn.Linear(model_structure[-2], model_structure[-1])
-        
-    def _forward_features(self, x):
-        x = self.bn1(self.relu(self.conv1(x)))
-        x = self.bn2(self.relu(self.conv2(x)))
-        return x
-    
-    def forward(self, x):
-        # Conv1d expects input shape: [batch_size, channels, sequence_length]
-        # But our data comes in as: [batch_size, sequence_length, features]
-        x = self._forward_features(x)
-        x = self.flatten(x)
-        
-        # First fully connected block with batch norm and dropout
-        x = self.fc1(x)
-        # x = self.bn_fc1(x)
-        # x = self.relu(x)
-
-        # Second fully connected block with batch norm and dropout
-        x = self.fc2(x)
-        # x = self.bn_fc2(x)
-        # x = self.relu(x)
-     
-        # Third fully connected block with batch norm
-        x = self.fc3(x)
-        x = self.dropout(x)
-        # x = self.bn_fc3(x)
-        # x = self.relu(x)
-        
-        # Output layer
-        x = self.fc4(x)
-        return x
-            
             
 class CNN1DModelWrapper(ModelWrapper):
     

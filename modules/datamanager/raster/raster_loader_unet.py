@@ -1,5 +1,5 @@
 # Description: Data loader for U-Net model (PyTorch version)
-from modules.lib.constants import DATA_DIR, OUTPUT_DIR, SIMULATION_DATA_DIR
+from modules.lib.constants import DATA_DIR, OUTPUT_DIR, SIMULATION_DATA_DIR, DEM_FILE
 from modules.models.usrr_1dcnn.lib.gdal_lib import coords2rc, rc2coords, gdal_asarray, gdal_transform, gdal_writetiff
 from modules.models.usrr_1dcnn.lib.base_functions import read_shp_point
 from modules.utils.run_util import check_device
@@ -30,7 +30,7 @@ class UNetDataManager(USRRDataManager):
         
         # Paths
         self.rep_loc_file_path = f"{OUTPUT_DIR}/rls/rl_{sampling_dist}.asc"
-        self.dem_asc_file = f"{SIMULATION_DATA_DIR}/Carlisle_5m.asc"
+        self.dem_asc_file = DEM_FILE
         self.simulation_dir = SIMULATION_DATA_DIR
         self.max_inundation_file = None
         
@@ -61,7 +61,7 @@ class UNetDataManager(USRRDataManager):
         self.prepare_batch_idxs()
         self.prepare_test_event_batches()
         
-    def shuffle_training_data(self):
+    def shuffle_training_data(self, epoch):
         pass
         
     def prepare_test_event_batches(self):

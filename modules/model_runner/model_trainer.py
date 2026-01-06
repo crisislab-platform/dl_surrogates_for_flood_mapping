@@ -5,7 +5,6 @@ from modules.models.model_wrapper import ModelConfig
 from modules.model_runner.metrics_writer import save_training_metrics, save_prediction_metrics
 from modules.models.model_wrapper import ModelWrapper
 from modules.lib.constants import RUN_DIR
-from modules.lib.constants import USRR_CNN1D_COMBINED
 
 import json
 import torch

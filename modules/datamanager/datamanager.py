@@ -40,6 +40,10 @@ def check_inundation_data_cache(event_id):
 def create_inundation_map_tensors():
     """Preprocess all inundation data and save to disk for fast loading"""
     output_dir = os.path.join(OUTPUT_DIR, "preprocessed_inundation")
+    if os.path.exists(output_dir):
+        logger.info(f"Preprocessed inundation directory {output_dir} already exists.")
+        return
+ 
     os.makedirs(output_dir, exist_ok=True)
     
     for event_id in range(1, 10):

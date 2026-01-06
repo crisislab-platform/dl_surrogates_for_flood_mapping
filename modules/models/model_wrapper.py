@@ -11,7 +11,7 @@ from modules.utils.model_util import profiler_analysis, format_flops, save_predi
 from modules.datamanager.datamanager import DataManager
 import json
 import pandas as pd
-from modules.lib.constants import OUTPUT_DIR, SIMULATION_DATA_DIR, RUN_DIR
+from modules.lib.constants import OUTPUT_DIR, SIMULATION_DATA_DIR, RUN_DIR, USRR_UNET_V1
 import rasterio
 
 logger = logging.getLogger("Model")
@@ -96,12 +96,6 @@ class ModelWrapper:
                     logger.warning(f"Error getting batch {idx}, skipping")
                     continue
                 
-                # Log tensor device information for debugging
-                if idx == 0 and epoch == 0:
-                    logger.info(f"Input batch device: {input_batch.device}")
-                    logger.info(f"Input batch shape: {input_batch.shape}")
-                    logger.info(f"Output batch device: {output_batch.device}")
-                    logger.info(f"Output batch shape: {output_batch.shape}")
                 
                 # Profile only the first batch ofx the first epoch
                 if idx == 0 and epoch == 0:
@@ -111,10 +105,12 @@ class ModelWrapper:
                                 on_trace_ready=torch.profiler.tensorboard_trace_handler(run_dir)) as prof:
                         pred = self.model(input_batch)
                         # Handle single pixel output (no squeezing needed for 1D output)
-                        if len(pred.shape) > 1 and pred.shape[1] > 1:
+                        if len(pred.shape) > 1 and pred.shape[1] == 1:
                             pred = pred.squeeze(1)  # Only squeeze if there's a channel dimension
                         # Handle single pixel output (no squeezing needed for 1D output) 
-                        if len(output_batch.shape) > 1 and output_batch.shape[1] > 1:
+                        # if len(output_batch.shape) > 1 and output_batch.shape[1] == 1:
+                        #     output_batch = output_batch.squeeze(1)  # Only squeeze if needed
+                        if self.model_name == USRR_UNET_V1:
                             output_batch = output_batch.squeeze(1)  # Only squeeze if needed
                         batch_loss = self.loss_fn(pred, output_batch)
                         batch_loss.backward()
@@ -126,11 +122,17 @@ class ModelWrapper:
                     # Normal processing for all other batches
                     pred = self.model(input_batch)
                     # Handle single pixel output (no squeezing needed for 1D output)
-                    if len(pred.shape) > 1 and pred.shape[1] > 1:
+                    if len(pred.shape) > 1 and pred.shape[1] == 1:
                         pred = pred.squeeze(1)  # Only squeeze if there's a channel dimension
                     # Handle single pixel output (no squeezing needed for 1D output) 
-                    if len(output_batch.shape) > 1 and output_batch.shape[1] > 1:
+                    if self.model_name == USRR_UNET_V1:
+                    # if len(output_batch.shape) > 1 and output_batch.shape[1] == 1:
                         output_batch = output_batch.squeeze(1)  # Only squeeze if needed
+                        
+                    if pred.shape != output_batch.shape:
+                        logger.warning(f"Shape mismatch between prediction {pred.shape} and output {output_batch.shape}, skipping batch")
+                        continue
+                    
                     batch_loss = self.loss_fn(pred, output_batch)
                     batch_loss.backward()
                     self.optimizer.step()
@@ -144,10 +146,10 @@ class ModelWrapper:
             history["loss"].append(epoch_loss)
             
             # Step the learning rate scheduler with epoch loss
-            if hasattr(self, 'scheduler'):
-                self.scheduler.step(epoch_loss)
-                current_lr = self.optimizer.param_groups[0]['lr']
-                logger.info(f"Current learning rate: {current_lr:.2e}")
+            # if hasattr(self, 'scheduler'):
+            #     self.scheduler.step(epoch_loss)
+            #     current_lr = self.optimizer.param_groups[0]['lr']
+            #     logger.info(f"Current learning rate: {current_lr:.2e}")
             
             # Epoch Validation
             if tuning_mode:
@@ -438,18 +440,39 @@ class ModelWrapper:
         return nse 
     
     def mRMSE_fn(self, pred, ref_out):
-        # Define threshold for wet cells (typically > 0.01m is considered wet)
+        """
+        Calculate masked RMSE for wet cells only.
+        Only considers cells that are wet (>threshold) in the reference/ground truth map.
+        
+        Args:
+            pred: Model predictions
+            ref_out: Reference/ground truth values
+            
+        Returns:
+            mRMSE value for wet cells only
+        """
+        # Define threshold for wet cells (typically > 0.3m is considered wet)
         threshold = 0.3
         
-        # Create binary masks
-        pred_wet = (pred > threshold).float()
-        ref_wet = (ref_out > threshold).float()
+        # Create mask for cells that are wet in the REFERENCE map only
+        wet_mask = (ref_out > threshold).float()
         
-        # Calculate RMSE for wet cells only
-        pred_wet_values = pred * ref_wet
-        ref_wet_values = ref_out * ref_wet
-        wet_loss = self.loss_fn(pred_wet_values, ref_wet_values)
-        rmse_wet = np.sqrt(wet_loss.item())
+        # Count number of wet cells
+        num_wet_cells = wet_mask.sum()
+        
+        # If no wet cells, return 0 or NaN
+        if num_wet_cells == 0:
+            logger.warning("No wet cells found in reference map for mRMSE calculation")
+            return 0.0
+        
+        # Calculate squared error only for wet cells
+        squared_error = ((pred - ref_out) ** 2) * wet_mask
+        
+        # Calculate mean squared error for wet cells only
+        mse_wet = squared_error.sum() / num_wet_cells
+        
+        # Return RMSE
+        rmse_wet = torch.sqrt(mse_wet).item()
         return rmse_wet
     
     def calculate_flops(self):

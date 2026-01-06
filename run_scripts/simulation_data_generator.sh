@@ -4,7 +4,7 @@
 base_name="carlisle_run"
 start_index=1
 end_index=1
-command_to_run="/home/91/23016891/software/LISFLOOD-FP/build/lisflood"
+command_to_run="/home/91/23016891/lisflood/LISFLOOD-FP/build/lisflood"
 log_file="simulation.log"
 # Path to parameter files (add this line to specify where parameter files are located)
 param_dir="/data/carlisle/DEM5m_2D"

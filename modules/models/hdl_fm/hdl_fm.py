@@ -103,8 +103,11 @@ class HDLFMModelWrapper(ModelWrapper):
     
     def init_model(self):
         self.device = check_device()
+        if torch.cuda.is_available():
+            logger.info(f"Using GPU: {torch.cuda.get_device_name(0)}")
+            torch.cuda.empty_cache()
         self.create_dataset()
-        self.model = HDLFMModel().to(self.device)
+        self.model = HDLFMModel().to(self.device).float()
         self.loss_fn= nn.MSELoss()
         self.optimizer = optim.Adam(self.model.parameters(), lr=self.config.learning_rate)
         return True

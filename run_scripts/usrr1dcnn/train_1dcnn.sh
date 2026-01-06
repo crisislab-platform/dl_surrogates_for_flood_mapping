@@ -26,12 +26,10 @@ parallel --line-buffer -j 6 --memfree 4G  CUDA_VISIBLE_DEVICES={1} python3.11 "$
   ::: 50 \
   ::: 50 \
   ::: $(seq 0 49) \
-  ::: 12 \
+  ::: 8 \
   ::: 3 \
   ::: 3 \
   ::: 10 \
   ::: 0.2 \
   ::: 16 \
   ::: 64
-
-  

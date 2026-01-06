@@ -1,25 +1,21 @@
-from modules.model_runner.model_trainer import train_model
-from modules.models.model_wrapper import ModelConfig
 import logging
 import argparse
 from datetime import datetime
-from modules.metrics_reader.metrics_reader import hyperparam_analysis
+
+from modules.model_runner.model_trainer import train_model
+from modules.models.model_wrapper import ModelConfig
+from lib.constants import TRAIN_COMMAND, SRR_CLUSTER_COMMAND, METRICS_COMMAND
 from modules.models.usrr_1dcnn.reduction.rep_location_finder import find_representative_locations_and_clusters
 from modules.datamanager.datamanager import create_inundation_map_tensors
-from modules.visualiser.visualiser import plot
+from utils.utils import check_if_already_run
+from modules.metrics.metrics import metrics_analysis
+
+
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("Main")
 
-TRAIN_COMMAND = "train"
-PREDICT_COMMAND = "predict"
-GENERATE_SEQUENCES_COMMAND = "generate_sequences"
-GENERATE_GRID_SEQUENCES_COMMAND = "generate_grid_sequences"
-GENERATE_GRID_SEQUENCES_LIGHT_COMMAND = "generate_grid_sequences_light"
-SRR_CLUSTER_COMMAND = "srr_cluster"
-PLOT_COMMAND = "plot"
-METRICS_COMMAND = "metrics"
-SRR_LSTM_REDUCTION_COMMAND = "srr_lstm_reduction"
+valid_commands = [TRAIN_COMMAND,  SRR_CLUSTER_COMMAND,  METRICS_COMMAND]
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -57,99 +53,17 @@ def parse_args():
     parser.add_argument('--hidden_size', type=int, default=64, help='Hidden size for LSTM models')
     return parser.parse_args()
 
-def check_if_already_run(args):
-    from modules.lib.constants import RUN_DIR
-    import os
-    import pandas as pd
-   
-    if args.model == "LSTM_SRR_V1":
-        rl_group = args.rl_id
-    else:
-        rl_group = args.rl_group
-        
-    logger.info(f"Logger info {rl_group}")
-    
-    if args.tuning_mode:
-        metrics_file = f"{RUN_DIR}/{args.model}/tuning_metrics.csv"
-        hyperparams = {
-            "batch_size": args.batch_size,
-            "learning_rate": args.learning_rate,
-            "epochs": args.epochs,
-            "input_time_len_h": args.input_time_len_h,
-            "sampling_dist": args.sampling_dist,
-            "n_clusters": args.n_clusters,
-            "rl_group": rl_group,
-            "lag": args.lag,
-            "horizon": args.horizon,
-            "patience": args.patience
-        }
-        compare_keys = ["batch_size", "learning_rate", "epochs", "patience", "lag", "horizon", "rl_group", "sampling_dist", "n_clusters", "input_time_len_h"]
-    else:
-        metrics_file = f"{RUN_DIR}/{args.model}/final_training_metrics.csv"
-        # Define the hyperparameters to check for duplicates
-        hyperparams = {
-            # "batch_size": args.batch_size,
-            # "learning_rate": args.learning_rate,
-            # "epochs": args.epochs,
-            # "input_time_len_h": args.input_time_len_h,
-            # "sampling_dist": args.sampling_dist,
-            # "n_clusters": args.n_clusters,
-            "rl_group": rl_group,
-            # "lag": args.lag,
-            # "horizon": args.horizon,
-            # "patience": args.patience,
-            # "dropout": args.dropout,
-            # "output_channel_size": args.output_channel_size,
-            # "fc_layer_size": args.fc_layer_size
-        }
-
-        # Only keep keys that are relevant for comparison
-        #compare_keys = ["batch_size", "learning_rate", "epochs", "patience", "lag", "horizon", "rl_group", "sampling_dist", "n_clusters", "input_time_len_h", "dropout", "output_channel_size", "fc_layer_size"]
-        compare_keys = ["rl_group"]
-    if not os.path.exists(metrics_file):
-        return  # No previous runs, so continue
-
-    try:
-        df = pd.read_csv(metrics_file)
-    except Exception as e:
-        logger.warning(f"Could not read {metrics_file}: {e}")
-        return
-    
-    # Prepare current run's hyperparameters as strings for comparison
-    current_hyperparams = {k: hyperparams[k] for k in compare_keys if k in hyperparams}
-
-    import ast
-    for idx, row in df.iterrows():
-        if row.get("model") != args.model:
-            continue
-        if args.tuning_mode and row.get("fold") != args.fold:
-            continue
-        try:
-            row_hyperparams = ast.literal_eval(row.get("hyperparameters", "{}"))
-        except Exception:
-            continue
-        # Only compare keys present in both
-        if all(str(row_hyperparams.get(k)) == str(current_hyperparams.get(k)) for k in current_hyperparams):
-            logger.warning("A run with the same hyperparameters already exists. Exiting to avoid duplicate runs.")
-            exit(0)
-
 
 if __name__ == "__main__":
-    args = parse_args()
-    valid_commands = [TRAIN_COMMAND, PREDICT_COMMAND,  SRR_CLUSTER_COMMAND,
-                     PLOT_COMMAND, METRICS_COMMAND, SRR_LSTM_REDUCTION_COMMAND]
     
+    args = parse_args()
     if args.command not in valid_commands:
         logger.error(f"Invalid command '{args.command}'")
         exit(1)
 
     elif args.command == TRAIN_COMMAND:
-            
-        if args.model == "USSR_1DCNN_V1" or args.model == "USRR_LSTM_V1":
-            # check_if_already_run(args)
-            create_inundation_map_tensors()
-            
-        if args.model == "LSTM_SRR_V1":
+        create_inundation_map_tensors()
+        if args.tuning_mode:
             check_if_already_run(args)
             
         config = ModelConfig(
@@ -164,6 +78,7 @@ if __name__ == "__main__":
             save_model=args.save_model,
             dropout=args.dropout,
         )
+        
         logger.info(f"Training model with configuration: {config}")
         train_model(config, args)
         
@@ -175,16 +90,7 @@ if __name__ == "__main__":
         run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
         find_representative_locations_and_clusters(run_id, args.sampling_dist, args.n_clusters, args.random_state, args.n_init)
         
-    elif args.command == SRR_LSTM_REDUCTION_COMMAND:
-        from modules.models.srr_lstm.srr.srr_main import findRLS
-        run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-        findRLS(run_id)
-        
-    elif args.command == PLOT_COMMAND:
-        plot(args.plot_type)
-            
     elif args.command == METRICS_COMMAND:
-        hyperparam_analysis(args.model)
-        
+        metrics_analysis()
     logger.info("Commands executed successfully")
 

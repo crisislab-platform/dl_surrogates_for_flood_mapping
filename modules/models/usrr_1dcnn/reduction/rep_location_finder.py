@@ -1,10 +1,11 @@
-from modules.lib.constants import DATA_DIR, OUTPUT_DIR, SIMULATION_DATA_DIR, RUN_DIR
+from modules.lib.constants import DATA_DIR, OUTPUT_DIR, SIMULATION_DATA_DIR, RUN_DIR, DEM_FILE
 from modules.models.usrr_1dcnn.lib.base_functions import *
 from modules.models.usrr_1dcnn.lib.gdal_lib import gdal_asarray, gdal_transform, rc2coords, gdal_writeasc
 from modules.models.usrr_1dcnn.reduction.rl_culster_finder import RLClusterFinder
 from modules.utils.path_util import ensure_dir
 from torch.profiler import profile, ProfilerActivity
 from modules.utils.model_util import profiler_analysis, format_flops, save_prediction_map
+from modules.datamanager.datamanager import check_inundation_data_cache
 
 import logging
 import numpy as np
@@ -24,6 +25,7 @@ class RepLocation:
     def __init__(self, results_dir):
         self.work_dir = results_dir
         ensure_dir(self.work_dir)
+        self.all_event_ids = [1, 2, 3, 4, 5, 6, 7, 8, 9]
         logger.info(f"Representative Location Finder initialized with work directory: {self.work_dir}")
         
     
@@ -55,7 +57,6 @@ class RepLocation:
                 
     
                 curr_dem_block_arr = dem_arr[start_0:end_0, start_1:end_1]
-   
                 masked_dem = curr_dem_block_arr.clone()
                 masked_dem[~inundation_block] = float('inf')
                 argmin_dem = torch.argmin(masked_dem.view(-1)).item()
@@ -197,7 +198,7 @@ def find_representative_locations_and_clusters(run_id, sampling_dist, n_clusters
     
 def reducer_func(run_id, sampling_dist, n_clusters=10, random_state=42, n_init=10):
     work_dir = f"{OUTPUT_DIR}/rls"
-    dem_asc_file = f"{SIMULATION_DATA_DIR}/Carlisle_5m.asc"
+    dem_asc_file = DEM_FILE
     simulation_dir = SIMULATION_DATA_DIR
     max_inunundation_file = f"{simulation_dir}/Run3-0094.wd"
     run_meta_data_file = f"{work_dir}/run_meta_data.csv"

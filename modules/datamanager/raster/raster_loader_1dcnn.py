@@ -6,14 +6,14 @@ import rasterio as rio
 import glob
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 import torch
-from modules.lib.constants import DATA_DIR, SIMULATION_DATA_DIR
+from modules.lib.constants import DATA_DIR, SIMULATION_DATA_DIR, DEM_FILE
 from modules.datamanager.datamanager import DataManager
 from modules.utils.run_util import check_device
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("CNNDataLoader")
 
-elevation_file_path = f'{DATA_DIR}/Carlisle_5m.asc'
+elevation_file_path = DEM_FILE
 bc_data_dir = f"{DATA_DIR}"
 lisflood_simulation_dir = SIMULATION_DATA_DIR
 
@@ -70,11 +70,7 @@ class CNNRasterDataManager(DataManager):
     
     def get_no_time_steps(self, event_id):
         inundation_files = glob.glob(f"{lisflood_simulation_dir}/Run{event_id}-*.wd")
-        if not self.pinn:
-            return len(inundation_files) - 8 - self.lag # Exclude the first 8 files and lag files
-        else: 
-            return len(inundation_files) - 8 - self.lag - 1 # Exclude the first 8 files, lag files, and the last file for PINN
-    
+        return len(inundation_files) - 8
     def preload_inundation_data(self, event_ids):
         """Preload and cache all inundation data for specified event IDs"""
         logger.info(f"Preloading inundation data for events: {event_ids}")
@@ -334,8 +330,8 @@ class CNNRasterDataManager(DataManager):
                 input_tensor = input_tensor.cuda()
   
             # Get output data for this event
-            output_idxs = valid_idxs + self.lag
-            output_tensors = self.inundation_data_cache[event_id]  # Exclude first lag files
+            output_idxs = valid_idxs
+            output_tensors = self.inundation_data_cache[event_id]
             
             valid_output_mask = (output_idxs >= 0) & (output_idxs < len(output_tensors))
             valid_output_idxs = output_idxs[valid_output_mask]
@@ -358,7 +354,6 @@ class CNNRasterDataManager(DataManager):
 
     def get_batch_pinn(self, indices):
         event_indices_map = self.find_indices(indices)
-
         input_data = []  # Store paired input/output tensors
         output_data = [] #yt
         yt_plus1_data = []
@@ -388,21 +383,28 @@ class CNNRasterDataManager(DataManager):
             # Get output data for this event
             inundation_output = self.inundation_data_cache[event_id]
             
-            output_idxs = valid_idxs + self.lag
+            output_idxs = valid_idxs
             valid_output_mask = (output_idxs >= 0) & (output_idxs < len(inundation_output))
             valid_output_idxs = valid_idxs[valid_output_mask]
 
-            output_tensor = torch.stack([inundation_output[i] for i in valid_output_idxs])
-            
             # Handle next timestep data for PINN
             next_idxs = np.array([idx + 1 for idx in valid_output_idxs])
             prev_idxs = np.array([idx - 1 for idx in valid_output_idxs])
-
+            
+            valid_next_mask = (next_idxs >= 0) & (next_idxs < len(inundation_output))
+            valid_prev_mask = (prev_idxs >= 0) & (prev_idxs < len(inundation_output))
+            
+            valid_output_idxs = valid_output_idxs[valid_next_mask & valid_prev_mask]
+            next_idxs = next_idxs[valid_next_mask & valid_prev_mask]
+            prev_idxs = prev_idxs[valid_next_mask & valid_prev_mask]
+            
+            input_tensor = input_tensor[valid_next_mask & valid_prev_mask]
+            output_tensor = torch.stack([inundation_output[i] for i in valid_output_idxs])
             yt_minus1_tensor = torch.stack([inundation_output[i] for i in prev_idxs])
             yt_plus1_tensor = torch.stack([inundation_output[i] for i in next_idxs])
             
             # Get boundary conditions
-            bct_tensor = torch.from_numpy(self.get_boundary_conditions(event_id, valid_idxs)).to(self.device)
+            bct_tensor = torch.from_numpy(self.get_boundary_conditions(event_id, valid_output_idxs)).to(self.device)
             bct_plus1_tensor = torch.from_numpy(self.get_boundary_conditions(event_id, next_idxs) if len(next_idxs) > 0 else np.array([])).to(self.device)
             
             # Append to our collection
@@ -420,9 +422,20 @@ class CNNRasterDataManager(DataManager):
         yt_plus1_batch = torch.cat(yt_plus1_data, dim=0) if yt_plus1_data else torch.tensor([], device=self.device)
         bct_batch = torch.cat(bc_data, dim=0) if bc_data else torch.tensor([], device=self.device)
         bct_plus1_batch = torch.cat(bc_plus1_data, dim=0) if bc_plus1_data else torch.tensor([], device=self.device)
+        
+        # Shuffle data
+        if input_batch.shape[0] > 1:
+            indices = torch.randperm(input_batch.shape[0])
+            input_batch = input_batch[indices]
+            output_batch = output_batch[indices]
+            yt_minus1_batch = yt_minus1_batch[indices]
+            yt_plus1_batch = yt_plus1_batch[indices]
+            bct_batch = bct_batch[indices]
+            bct_plus1_batch = bct_plus1_batch[indices]
+            logger.debug(f"Shuffled PINN batch with {len(indices)} samples")
+        
         return input_batch, output_batch, yt_minus1_batch, yt_plus1_batch, bct_batch, bct_plus1_batch
-
-
+    
     def get_boundary_conditions(self, event_id, indices):
         bc_data = np.zeros((len(indices), 3))
         event_data = self.event_data_map_unscaled[event_id]

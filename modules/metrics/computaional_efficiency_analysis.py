@@ -2,29 +2,140 @@ import os
 import logging
 import pandas as pd
 import matplotlib.pyplot as plt
-import numpy as np  # Make sure this import is at the module level
+import numpy as np
 from modules.lib.constants import RUN_DIR, PLOTS_OUTPUT_DIR
 from modules.lib.constants import USRR_CNN1D_COMBINED, PICNN1D_V1, SRR_LSTM_COMBINED, CNN1D_V1, HDL_FM_V1
+from modules.metrics.topsis_analysis import topsis
+
+from modules.lib.constants import RMSE, MRMSE, HITRATE, CSI, F2SCORE, F3SCORE, INFERENCE_TIMES, INFERENCE_MEMORY_USAGE, FLOPS, PARAMS
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 OUTPUT_DIR = os.path.join(PLOTS_OUTPUT_DIR, "perf_plots")
 
+model_colors = {
+    "Tier-1": "#0173B2", 
+    "Tier-2": "#DE8F05",   
+    "Tier-3": "#029E73",       
+    "Tier-4": "#D55E00",      
+}
 
+def computational_efficiency():
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    
+    # Generate and save comparative performance visualizations of different models
+    training_metrics_file = os.path.join(RUN_DIR, "final_training_metrics.csv")
+    performance_metrics_file = os.path.join(RUN_DIR, "final_performance_metrics.csv")
+    
+    try:
+        train_metrics = pd.read_csv(training_metrics_file)
+        # Avoid model SLTM-SRR as it is not a valid model
+        train_metrics = train_metrics[train_metrics['model'] != SRR_LSTM_COMBINED]
+        training_metrics = train_metrics.groupby('model').last().reset_index()
+        perf_metrics = pd.read_csv(performance_metrics_file)
+        
+        # Filter performance metrics to only include models in training metrics
+        perf_metrics = perf_metrics[perf_metrics['run_id'].isin(training_metrics['run_id'])]
+        training_metrics = training_metrics[training_metrics['run_id'].isin(perf_metrics['run_id'])]
+        
+        perf_metrics = perf_metrics.sort_values(by='model')
+        training_metrics = training_metrics.sort_values(by='model')
+        
+        model_names = perf_metrics['model'].values
+        rmse = perf_metrics['rmse'].values
+        mrmse = perf_metrics['mRMSE'].values
+        csi = perf_metrics['csi'].values
+        hit_rate = perf_metrics['hit_rate'].values
+        f2_score = perf_metrics['f2_score'].values
+        f3_score = perf_metrics['f3_score'].values
+        inference_times = perf_metrics['inference_latency'].values
+        params = training_metrics['trainable_params'].values
+        flops = perf_metrics['flops'].values
+   
+
+        gflops = [round(float(flop / 1e9), 1) for flop in flops]  # Convert to GFLOPs with 1 decimal place
+        params = [round(param / 1e6, 2) for param in params]  # Convert to Millions with 2 decimal places
+        
+        # Extract inference memory usage
+        inference_memory_usage = []
+        for inference_memory in perf_metrics['pred_memory_usage'].values:
+            if isinstance(inference_memory, str) and inference_memory.startswith('{'):
+                try:
+                    mem_dict = eval(inference_memory)
+                    inference_memory_usage.append(mem_dict.get('max_cuda_memory', 0) / (1024**3))
+                except:
+                    inference_memory_usage.append(0)
+            else:
+                inference_memory_usage.append(0)
+                
+             
+        metrics_dict = {
+            RMSE: rmse, 
+            MRMSE: mrmse, 
+            CSI: csi, 
+            HITRATE: hit_rate,
+            F2SCORE: f2_score, 
+            F3SCORE: f3_score,
+            INFERENCE_TIMES: inference_times,
+            PARAMS: params,
+            FLOPS: gflops,
+            INFERENCE_MEMORY_USAGE: inference_memory_usage
+        }
+        
+        # Calculate speed up
+        speed_up = 20 * 60 / perf_metrics['inference_latency'].values
+        logger.info(f"Generating performance comparisons for {len(model_names)} models")
+        
+        create_performance_plot(gflops, rmse, inference_times, model_names,
+                              'GFLOPs', 'RMSE (m)', 'Inference Time (s)',
+                              '(a) FLOPs vs RMSE vs Inference Latency', 'flops_vs_rmse_vs__inference_time.png')
+        
+        create_performance_plot(params,rmse, inference_memory_usage, model_names,
+                        'Parameters (Million)', 'RMSE (m)', 'Maximum GPU Memory Usage (GB)',
+                        '(b) Model Parameters vs RMSE vs Max GPU Memory', 'parameters_vs_rmse_vs_memory.png')
+
+        # create_performance_plot(gflops, inference_memory_usage, params, model_names, 'GFLOPs', 
+        #                         'Inference Memory Usage (GB)', 'Inference Time (s)',
+        #                         'GFLOPs vs Inference Memory Usage vs Prameters', 
+        #                         'flops_vs_inference_memory_vs_parameters.png')
+        
+        # create_performance_plot(inference_memory_usage, rmse_inverse, inference_times, model_names,
+        #                         'Inference Memory Usage (GB)', rmse_inverse_lable, 'Inference Time (s)',
+        #                         'Inference Memory Usage vs RMSE vs Inference Latency', 
+        #                         'inference_memory_vs_rmse_vs_inference_time.png')
+        
+        # create_performance_plot(compound_footprint, rmse, inference_times, model_names, 'Compound Computational Footprint \n (Inference Time, GFLOPs, Parameters, Memory Usage)',
+        #                         rmse_inverse_lable, 'Inference Time (s)',
+        #                         'Compound Computational Footprint vs Model Accuracy', 
+        #                         'compound_footprint_vs_rmse_vs_inference_time.png')
+        
+        # create_performance_plot(params, inference_times, flops, model_names,
+        #                       'Parameters (Million)', 'Inference Time (seconds)', 'FLOPs (Billion)',
+        #                       'Model Complexity vs Inference Time', 'model_complexity_vs_inference_time.png')
+        
+        # create_performance_plot(flops, rmse, inference_times, model_names,
+        #                       'FLOPs (Billion)', 'RMSE (m)', 'Inference Time (s)',
+        #                       'Model Complexity and Latency vs Performance', 'flops_rmse_time.png')
+        
+        # create_performance_plot(inference_memory_usage, rmse, params, model_names,
+        #                       'Inference Memory Usage (GB)', 'RMSE (m)', 'Parameters (Million)',
+        #                       'Inference Memory Usage vs Parameters vs RMSE', 'inference_memory_usage_vs_rmse.png')
+        
+        topsis(model_names, metrics_dict)
+        logger.info("Completed generating performance visualizations and topsis analysis.")
+    
+    except Exception as e:
+        logger.error(f"Error generating metrics visualizations: {e}")
+        return None
+        
+    
 def create_performance_plot(x_values, y_values, z_values, model_names, x_label, y_label, z_label, title, filename):
     fig, ax = plt.subplots(figsize=(10, 6))
     
     # Set scientific color scheme - white background with dark elements
     fig.patch.set_facecolor('white')
     ax.set_facecolor('white')
-    
-    # # Add title as an enhanced text box at the top
-    # if title:
-    #     ax.text(0.5, 1.05, title, transform=ax.transAxes, fontsize=14, fontweight='bold',
-    #            ha='center', va='bottom',
-    #            bbox=dict(boxstyle="round,pad=0.5", facecolor='aliceblue', 
-    #                    ec="steelblue", alpha=0.8))
     
     # Rename model_names to standard values
     for i, model in enumerate(model_names):
@@ -100,15 +211,7 @@ def create_performance_plot(x_values, y_values, z_values, model_names, x_label, 
     
     bubble_sizes = normalize_bubble_sizes(numeric_z_values)
     
-    # Use colorblind-friendly colors for each model type (consistent with other plots)
-    model_colors = {
-        "Tier-1": "#0173B2",  # Blue - safe for all colorblind types
-        "Tier-2": "#DE8F05",     # Orange - distinguishable from blue
-        "SRR-LSTM": "#CC78BC",    # Light purple/magenta - safe alternative to pink
-        "Tier-3": "#029E73",       # Green - deuteranopia safe
-        "Tier-4": "#D55E00",      # Vermillion/red-orange - protanopia safe
-    }
-    
+
     # Assign colors based on model names, fallback to tab10 colors if model not in mapping
     colors = []
     for model in model_names:
@@ -390,405 +493,6 @@ def draw_memory_usage_plot(train_memory_usage, pred_memory_usage, model_names, r
     logger.info(f"Saved enhanced scatter plot visualization to {output_file}")
     plt.close()
     
-def draw_radar_chart(model_names, metrics_dict):
-    
-    for i, model in enumerate(model_names):
-        if model == USRR_CNN1D_COMBINED:
-            model_names[i] = "Tier-1"
-        elif model == PICNN1D_V1:
-            model_names[i] = "Tier-3"
-        elif model == SRR_LSTM_COMBINED:
-            model_names[i] = "SRR-LSTM"
-        elif model == CNN1D_V1:
-            model_names[i] = "Tier-2"
-        elif model == HDL_FM_V1:
-            model_names[i] = "Tier-4"
-    
-    try:
-        # Convert all inputs to numeric values
-        def ensure_numeric(values):
-            result = []
-            for val in values:
-                if isinstance(val, str):
-                    try:
-                        if val.startswith('{'):
-                            # Handle memory usage dictionaries
-                            mem_dict = eval(val)
-                            result.append(mem_dict.get('max_cuda_memory', 0) / (1024**3))
-                        else:
-                            result.append(float(val))
-                    except:
-                        logger.warning(f"Could not convert value: {val} to numeric, using 1.0")
-                        result.append(1.0)  # Use 1.0 instead of 0 to avoid division by zero
-                else:
-                    result.append(float(val) if val is not None else 1.0)
-            return result
-        
-        # Convert all metrics to numeric values
-        numeric_rmse = ensure_numeric(metrics_dict['rmse'])
-        numeric_mrmse = ensure_numeric(metrics_dict['mrmse'])
-        numeric_hit_rate = ensure_numeric(metrics_dict['hit_rate'])
-        numeric_csi = ensure_numeric(metrics_dict['csi'])
-        numeric_f2_score = ensure_numeric(metrics_dict['f2_score'])
-        numeric_f3_score = ensure_numeric(metrics_dict['f3_score'])
-        numeric_inference_times = ensure_numeric(metrics_dict['inference_times'])
-        numeric_pred_memory = ensure_numeric(metrics_dict['inference_memory_usage'])
-        numeric_flops = ensure_numeric(metrics_dict['flops'])
-        numeric_params = ensure_numeric(metrics_dict['params'])
-
-        
-        weight_profiles = [{'E_RMSE': 1, 'E_mRMSE':1,  'E_Hitrate':1, 'E_CSI':1, 'E_F2Score':1, 'E_F3Score':1, 'E_Latency':1, 'E_Memory':1, 'E_FLOPs':1, 'E_Parameters':1},
-                           {'E_RMSE': 1, 'E_mRMSE':1,  'E_Hitrate':1, 'E_CSI':1, 'E_F2Score':1, 'E_F3Score':1, 'E_Latency':0.5, 'E_Memory':0.5, 'E_FLOPs':0.5, 'E_Parameters':0.5},
-                           {'E_RMSE': 0.5, 'E_mRMSE':0.5,  'E_Hitrate':0.5, 'E_CSI':0.5 , 'E_F2Score':0.5, 'E_F3Score':0.5, 'E_Latency':1, 'E_Memory':1, 'E_FLOPs':1, 'E_Parameters':1},
-                           {'E_RMSE': 1, 'E_mRMSE':1,  'E_Hitrate':1, 'E_CSI':1, 'E_F2Score':1, 'E_F3Score':1, 'E_Latency':1, 'E_Memory':0.25, 'E_FLOPs':0.25, 'E_Parameters':0.25},]
-        
-
-        inverted_metrics = ['E_RMSE', 'E_Latency', 'E_Memory', 'E_FLOPs', 'E_Parameters'] # metrics where lower is better
-        non_inverted_metrics = ['E_Hitrate', 'E_CSI', 'E_F2Score', 'E_F3Score'] # metrics where higher is better
-        
-        def normalize_and_invert(values, metric, settings_index=0):
-            """
-            Logarithmic normalization and inversion for radar chart visualization.
-            
-            Mathematical Formula:
-            For a set of values X = {x₁, x₂, ..., xₙ} where all xᵢ > 0:
-            
-            Step 1: Logarithmic transformation
-            Y = {ln(x₁), ln(x₂), ..., ln(xₙ)}
-            
-            Step 2: Min-max normalization in log space
-            Yₙₒᵣₘ = (ln(xᵢ) - min(Y)) / (max(Y) - min(Y))
-            
-            Step 3: Inversion for "higher is better" visualization
-            E_metric = 1 - Yₙₒᵣₘ
-            
-            Combined equation:
-            E_metric = 1 - (ln(xᵢ) - ln(xₘᵢₙ)) / (ln(xₘₐₓ) - ln(xₘᵢₙ))
-            
-            Simplified form using logarithm properties:
-            E_metric = 1 - ln(xᵢ/xₘᵢₙ) / ln(xₘₐₓ/xₘᵢₙ)
-            
-            Where:
-            - xᵢ is the original metric value for model i
-            - xₘᵢₙ = min(X), xₘₐₓ = max(X) across all models
-            - E_metric ∈ [0,1] with higher values indicating better performance
-            - Fallback to linear normalization if any xᵢ ≤ 0
-            """
-            max_val = max(values)
-            min_val = min(values)
-            if max_val == min_val:
-                return [1.0] * len(values)
-            if max_val == 0 or min_val <= 0:
-                # Fallback to linear normalization if log not possible
-                values = [(v - min_val) / (max_val - min_val) for v in values]
-                return [1 - v for v in values]
-            
-            # Use log scale normalization for better sensitivity to small differences
-            log_values = [np.log(v) for v in values]
-            log_min = min(log_values)
-            log_max = max(log_values)
-            
-            if log_max == log_min:
-                return [1.0] * len(values)
-                
-            # Normalize log values to [0, 1]
-            norm_log_values = [(v - log_min) / (log_max - log_min) for v in log_values]
-            
-            weight = weight_profiles[settings_index].get(metric, 1)
-            if metric in non_inverted_metrics:
-                # For metrics where higher is better, do not invert
-                return [max(0.01, weight * v) for v in norm_log_values]
-            # Invert for radar chart (higher is better)
-            return [max(0.01, weight * (1 - v)) for v in norm_log_values]
-        
-        for i in range(len(weight_profiles)):
-            #normalise before inverting
-            norm_rmse = normalize_and_invert(numeric_rmse, 'E_RMSE', i)  # Normalize RMSE
-            norm_mrmse = normalize_and_invert(numeric_mrmse, 'E_mRMSE', i)  # Normalize RMSE
-            norm_inf_time = normalize_and_invert(numeric_inference_times, 'E_Latency', i)  # Normalize inference time
-            norm_pred_memory = normalize_and_invert(numeric_pred_memory, 'E_Memory', i)  # Normalize memory
-            norm_flops = normalize_and_invert(numeric_flops, 'E_FLOPs', i)  # Normalize FLOPs
-            norm_params = normalize_and_invert(numeric_params, 'E_Parameters', i)  # Normalize parameters
-            norm_hit_rate = normalize_and_invert(numeric_hit_rate, 'E_Hitrate', i)  # Normalize hit rate
-            norm_csi = normalize_and_invert(numeric_csi, 'E_CSI', i)  # Normalize CSI
-            norm_f2_score = normalize_and_invert(numeric_f2_score, 'E_F2Score', i)  # Normalize F2 Score
-            norm_f3_score = normalize_and_invert(numeric_f3_score, 'E_F3Score', i)  # Normalize F3 Score
-            
-            efficiency_metrics = {
-                'E_RMSE': norm_rmse,
-                'E_mRMSE': norm_mrmse, 
-                'E_Hitrate': norm_hit_rate,
-                'E_CSI': norm_csi,
-                'E_F2Score': norm_f2_score,
-                'E_F3Score': norm_f3_score,
-                'E_Latency': norm_inf_time,
-                'E_Memory': norm_pred_memory,
-                'E_FLOPs': norm_flops,
-                'E_Parameters': norm_params
-            }
-            
-            # Pass actual inference times to the radar chart function
-            # draw_radar_chart_single(model_names, efficiency_metrics, i, numeric_inference_times)
-        
-        # Create a separate legend figure
-
-        
-        #Add a model vs efficieny plot
-        # draw_model_efficiency_plot(model_names, model_area, rmse, inference_times, pred_memory, flops, params)
-        
-    except Exception as e:
-        logger.error(f"Error creating comprehensive radar chart: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
-        
-def draw_radar_chart_single(model_names, efficiency_metrics, weighting_index=0):
-    # Calculate the area of each model's radar chart
-        def calculate_area(values):
-            """
-            Calculate the area of a radar chart polygon using the shoelace formula.
-            
-            Args:
-                values: List of normalized metric values [0,1] for each radar chart axis
-                
-            Returns:
-                float: Area of the polygon formed by connecting the radar chart points
-            """
-            if not values or len(values) < 3:
-                return 0.0
-            
-            # Convert the values to cartesian coordinates using angles on a unit circle
-            angles = np.linspace(0, 2 * np.pi, len(values), endpoint=False)  # Don't include 2π
-            
-            # Calculate x,y coordinates for each point on the radar chart
-            x = [values[i] * np.cos(angles[i]) for i in range(len(values))]
-            y = [values[i] * np.sin(angles[i]) for i in range(len(values))]
-            
-            # Calculate area using the shoelace formula - FIXED VERSION
-            area = 0.0
-            n = len(x)
-            for i in range(n):
-                j = (i + 1) % n  # Use modulo to wrap around to first point
-                area += x[i] * y[j] - x[j] * y[i]
-            
-            return 0.5 * abs(area)
-        
-        # List of lists containing the normalized metric values for each model
-        model_effiency_metrics_map = {}
-        for i, model in enumerate(model_names):
-            model_effiency_metrics_map[model] = [
-                efficiency_metrics['E_RMSE'][i],
-                efficiency_metrics['E_mRMSE'][i],
-                efficiency_metrics['E_Hitrate'][i],
-                efficiency_metrics['E_CSI'][i],
-                efficiency_metrics['E_F2Score'][i],
-                efficiency_metrics['E_F3Score'][i],
-                efficiency_metrics['E_Latency'][i],
-                efficiency_metrics['E_Memory'][i],
-                efficiency_metrics['E_FLOPs'][i],
-                efficiency_metrics['E_Parameters'][i]
-            ]
-        model_area = {}
-        for i, model in enumerate(model_names):
-            area = calculate_area(model_effiency_metrics_map[model])
-            model_area[model] = area
-        
-                
-        #save normalized values and the area of each model to a csv file
-        df = pd.DataFrame({
-            'Model': model_names,
-            'E_RMSE': efficiency_metrics['E_RMSE'],
-            'E_mRMSE': efficiency_metrics['E_mRMSE'],
-            'E_Hitrate': efficiency_metrics['E_Hitrate'],
-            'E_CSI': efficiency_metrics['E_CSI'],
-            'E_F2Score': efficiency_metrics['E_F2Score'],
-            'E_F3Score': efficiency_metrics['E_F3Score'],
-            'E_Latency': efficiency_metrics['E_Latency'],
-            'E_Memory':efficiency_metrics['E_Memory'],
-            'E_FLOPs': efficiency_metrics['E_FLOPs'],
-            'E_Parameters':efficiency_metrics['E_Parameters'],
-            'Area': [model_area[model] for model in model_names],
-            'Weighting_Profile': [weighting_index + 1 for _ in model_names]
-        })
-        
-        #save to csv
-        output_csv = os.path.join(OUTPUT_DIR, f'radar_chart_data_{weighting_index}.csv')
-        os.makedirs(os.path.dirname(output_csv), exist_ok=True)
-        df.to_csv(output_csv, index=False)
-        
-        # Create radar chart data with all metrics - use more descriptive labels
-        categories = [
-            'E$_{RMSE}$',
-            'E$_{mRMSE}$',
-            'E$_{Hitrate}$',
-            'E$_{CSI}$',
-            'E$_{F2Score}$',
-            'E$_{F3Score}$',
-            'E$_{Latency}$',
-            'E$_{Memory}$',
-            'E$_{FLOPs}$',
-            'E$_{Parameters}$',
-        ]
-        
-        # Create descriptions for the metrics legend
-        metric_descriptions = [
-            ('A: Model Accuracy', 'Higher is better - Inverse of RMSE error'),
-            ('B: Inference Speed', 'Higher is better - Inverse of inference time'),
-            ('C: Memory Efficiency', 'Higher is better - Inverse of memory usage'),
-            ('D: Computation Efficiency', 'Higher is better - Inverse of FLOPs'),
-            ('E: Model Size Efficiency', 'Higher is better - Inverse of parameter count')
-        ]
-        
-        # Create single figure with a larger size to accommodate side legends
-        fig, ax = plt.subplots(figsize=(12, 10), subplot_kw=dict(polar=True))
-        
-        # Use colorblind-friendly colors matching the comprehensive subplot
-        model_colors = {
-            "Tier-1": "#0173B2",  # Blue - safe for all colorblind types
-            "Tier-3": "#DE8F05",     # Orange - distinguishable from blue   # Light purple/magenta - safe alternative to pink
-            "Tier-2": "#029E73",       # Green - deuteranopia safe
-            "Tier-4": "#D55E00",      # Vermillion/red-orange - protanopia safe
-        }
-        
-        # Assign colors based on model names, with fallback to colorblind-friendly palette
-        custom_colors = [
-            "#0173B2",  # Blue
-            "#DE8F05",  # Orange
-            "#CC78BC",  # Light purple
-            "#029E73",  # Green
-            "#D55E00",  # Vermillion
-            "#56B4E9",  # Sky blue (additional colorblind-safe colors)
-            "#E69F00",  # Yellow-orange
-            "#009E73",  # Bluish green
-            "#F0E442",  # Yellow
-            "#0072B2",  # Blue
-        ]
-        
-        colors = []
-        for model in model_names:
-            if model in model_colors:
-                colors.append(model_colors[model])
-            else:
-                # Use fallback colorblind-friendly colors
-                idx = len(colors) % len(custom_colors)
-                colors.append(custom_colors[idx])
-        
-        # Number of categories
-        N = len(categories)
-        angles = [n / float(N) * 2 * np.pi for n in range(N)]
-        angles += angles[:1]  # Close the loop
-        
-        # Add background grid with more visible concentric circles
-        ax.set_facecolor('#f8f8f8')
-        for level in [0.2, 0.4, 0.6, 0.8, 1.0]:
-            circle = plt.Circle((0, 0), level, fill=False, color='gray', 
-                             linewidth=0.5, alpha=0.5)
-            ax.add_patch(circle)
-            
-        # Draw level labels on one of the axes
-        ax.text(0, 0.2, '0.2', transform=ax.transData, ha='center', va='bottom', fontsize=8, color='gray')
-        ax.text(0, 0.4, '0.4', transform=ax.transData, ha='center', va='bottom', fontsize=8, color='gray')
-        ax.text(0, 0.6, '0.6', transform=ax.transData, ha='center', va='bottom', fontsize=8, color='gray')
-        ax.text(0, 0.8, '0.8', transform=ax.transData, ha='center', va='bottom', fontsize=8, color='gray')
-        ax.text(0, 1.0, '1.0', transform=ax.transData, ha='center', va='bottom', fontsize=8, color='gray')
-        
-        # Draw the radar chart for each model
-        for i, model in enumerate(model_names):
-            values = [
-                efficiency_metrics['E_RMSE'][i], 
-                efficiency_metrics['E_mRMSE'][i], 
-                efficiency_metrics['E_Hitrate'][i], 
-                efficiency_metrics['E_CSI'][i], 
-                efficiency_metrics['E_F2Score'][i], 
-                efficiency_metrics['E_F3Score'][i], 
-                efficiency_metrics['E_Latency'][i], 
-                efficiency_metrics['E_Memory'][i],
-                efficiency_metrics['E_FLOPs'][i],
-                efficiency_metrics['E_Parameters'][i]   
-            ]
-            values += values[:1]  # Close the loop
-            
-            # Plot values with thicker lines
-            ax.plot(angles, values, linewidth=2.5, linestyle='solid', 
-                   label=model, color=colors[i], zorder=10)
-            ax.fill(angles, values, alpha=0.25, color=colors[i], zorder=5)
-            
-            # Add markers at each data point
-            ax.scatter(angles[:-1], values[:-1], s=80, 
-                      color=colors[i], edgecolor='white', linewidth=1, zorder=15)
-            
-            # Add inference time annotation near the model's data point
-            # Find the position with maximum value for this model (best place for annotation)
-            max_value_idx = np.argmax(values[:-1])
-            max_angle = angles[max_value_idx]
-            max_value = values[max_value_idx]
-            
-            # Calculate position for annotation (slightly outside the data point)
-            annotation_radius = max_value + 0.15
-            
-            # Add inference time annotation
-            # Note: We need to get the actual inference time value, not the normalized one
-            # This should be passed from the calling function
-            ax.annotate(f'{model}', 
-                       xy=(max_angle, max_value),
-                       xytext=(max_angle, annotation_radius),
-                       fontsize=10,
-                       fontweight='bold',
-                       color=colors[i],
-                       ha='center',
-                       va='center',
-                       bbox=dict(boxstyle="round,pad=0.3", fc='white', 
-                               ec=colors[i], alpha=0.8, linewidth=2),
-                       zorder=20)
-        
-        # Set category labels with enhanced styling
-        ax.set_xticks(angles[:-1])
-        ax.set_xticklabels(categories, fontsize=16, fontweight='bold')
-        
-        # Add padding to move tick labels slightly away from the circle
-        ax.tick_params(axis='x', pad=25)
-        
-        # Remove radial labels and set grid
-        ax.set_yticklabels([])
-        ax.grid(True, alpha=0.3, linewidth=0.5, zorder=0)
-        
-        # Set title based on weighting profile index
-        weighting_labels = {
-            0: '(a) Weighting Setting 1: Equal Weights',
-            1: '(b) Weighting Setting 2: Emphasize Accuracy', 
-            2: '(c) Weighting Setting 3: Emphasize Less Computational Demand',
-            3: '(d) Weighting Setting 4: Emphasize Accuracy & Speed',
-        }
-        ax.set_title(weighting_labels.get(weighting_index, f'Weighting Setting {weighting_index + 1}'), 
-                    fontsize=20, pad=30)
-        
-        # Move the polar plot to the left side to make space for legends
-        plt.subplots_adjust(right=0.7)  # Adjusted for better spacing
-        
-        # Create a text box for models on the right side - closer to the plot
-        handles, labels = ax.get_legend_handles_labels()
-        # model_legend = fig.legend(handles, labels, 
-        #           loc='upper right', 
-        #           frameon=True, fancybox=True, shadow=True,
-        #           title="Models",
-        #           title_fontsize=16,
-        #           fontsize=14)
-        
-        # Add the model legend to the figure
-        # fig.add_artist(model_legend)
-    
-        logger.info(f"Created radar chart with {len(model_names)} models")
-        logger.info(f"Model areas: {model_area}")
-        # Save with a much larger bbox to ensure annotations are included
-        output_file = os.path.join(OUTPUT_DIR, f'comprehensive_model_comparison_radar_setting{weighting_index}.png')
-        os.makedirs(os.path.dirname(output_file), exist_ok=True)
-        plt.savefig(output_file, dpi=300, bbox_inches='tight')
-        logger.info(f"Saved enhanced radar chart visualization to {output_file}")
-        plt.close()
-        
-        create_separate_legend_figure(labels, model_colors)
-        
-        
-
 def draw_model_efficiency_plot(model_names, model_areas, rmse=None, inference_times=None, pred_memory=None, flops=None, params=None):
     """Create an accuracy vs computational demand plot."""
     try:
@@ -1131,147 +835,6 @@ def create_multi_dimensional_comparison(model_names, rmse, inference_times, flop
         logger.error(f"Error creating multi-dimensional comparison: {e}")
         import traceback
         logger.error(traceback.format_exc())
-
-def plot_metrics():
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    
-    # Generate and save comparative performance visualizations of different models
-    training_metrics_file = os.path.join(RUN_DIR, "final_training_metrics.csv")
-    performance_metrics_file = os.path.join(RUN_DIR, "final_performance_metrics.csv")
-    
-    try:
-        train_metrics = pd.read_csv(training_metrics_file)
-        # Avoid model SLTM-SRR as it is not a valid model
-        train_metrics = train_metrics[train_metrics['model'] != SRR_LSTM_COMBINED]
-        training_metrics = train_metrics.groupby('model').last().reset_index()
-        perf_metrics = pd.read_csv(performance_metrics_file)
-        
-        # Filter performance metrics to only include models in training metrics
-        perf_metrics = perf_metrics[perf_metrics['run_id'].isin(training_metrics['run_id'])]
-        training_metrics = training_metrics[training_metrics['run_id'].isin(perf_metrics['run_id'])]
-        
-        perf_metrics = perf_metrics.sort_values(by='model')
-        training_metrics = training_metrics.sort_values(by='model')
-        
-        model_names = perf_metrics['model'].values
-        rmse = perf_metrics['rmse'].values
-        mrmse = perf_metrics['mRMSE'].values
-        csi = perf_metrics['csi'].values
-        hit_rate = perf_metrics['hit_rate'].values
-        f2_score = perf_metrics['f2_score'].values
-        f3_score = perf_metrics['f3_score'].values
-        inference_times = perf_metrics['inference_latency'].values
-        params = training_metrics['trainable_params'].values
-        flops = perf_metrics['flops'].values
-   
-
-        gflops = [round(float(flop / 1e9), 1) for flop in flops]  # Convert to GFLOPs with 1 decimal place
-        params = [round(param / 1e6, 2) for param in params]  # Convert to Millions with 2 decimal places
-        
-        # Extract inference memory usage
-        inference_memory_usage = []
-        for inference_memory in perf_metrics['pred_memory_usage'].values:
-            if isinstance(inference_memory, str) and inference_memory.startswith('{'):
-                try:
-                    mem_dict = eval(inference_memory)
-                    inference_memory_usage.append(mem_dict.get('max_cuda_memory', 0) / (1024**3))
-                except:
-                    inference_memory_usage.append(0)
-            else:
-                inference_memory_usage.append(0)
-                
-             
-        metrics_dict = {
-            'rmse': rmse, 'mrmse': mrmse, 'csi': csi, 'hit_rate': hit_rate,
-            'f2_score': f2_score, 'f3_score': f3_score,
-            'inference_times': inference_times,
-            'params': params,
-            'flops': gflops,
-            'inference_memory_usage': inference_memory_usage
-        }
-        
-        # Calculate speed up
-        speed_up = 20 * 60 / perf_metrics['inference_latency'].values
-        logger.info(f"Generating performance comparisons for {len(model_names)} models")
-        
-        rmse_inverse = [1 - (r / max(rmse)) for r in rmse]  # Inverse RMSE for better visualization
-        rmse_inverse_lable = 'Inverse RMSE (Accuracy)'
-        create_performance_plot(gflops, rmse, inference_times, model_names,
-                              'GFLOPs', 'RMSE (m)', 'Inference Time (s)',
-                              '(a) FLOPs vs RMSE vs Inference Latency', 'flops_vs_rmse_vs__inference_time.png')
-        
-        create_performance_plot(params,rmse, inference_memory_usage, model_names,
-                        'Parameters (Million)', 'RMSE (m)', 'Maximum GPU Memory Usage (GB)',
-                        '(b) Model Parameters vs RMSE vs Max GPU Memory', 'parameters_vs_rmse_vs_memory.png')
-
-        # create_performance_plot(gflops, inference_memory_usage, params, model_names, 'GFLOPs', 
-        #                         'Inference Memory Usage (GB)', 'Inference Time (s)',
-        #                         'GFLOPs vs Inference Memory Usage vs Prameters', 
-        #                         'flops_vs_inference_memory_vs_parameters.png')
-        
-        # create_performance_plot(inference_memory_usage, rmse_inverse, inference_times, model_names,
-        #                         'Inference Memory Usage (GB)', rmse_inverse_lable, 'Inference Time (s)',
-        #                         'Inference Memory Usage vs RMSE vs Inference Latency', 
-        #                         'inference_memory_vs_rmse_vs_inference_time.png')
-        
-        #compound footprint calculated based on the normalized values of flops, params and memory usage
-        def normalize_metric(values):
-            max_val = max(values)
-            min_val = min(values)
-            if max_val == min_val:
-                return [0.5] * len(values)
-            return [(val - min_val) / (max_val - min_val) for val in values]
-        
-        # Normalize each metric
-        norm_gflops = normalize_metric(gflops)
-        norm_params = normalize_metric(params)
-        norm_memory = normalize_metric(inference_memory_usage)
-        
-        compound_footprint = []
-        for i in range(len(model_names)):
-            # Calculate compound footprint as weighted average of normalized metrics
-            footprint = (norm_gflops[i] + norm_params[i] + norm_memory[i]) / 3
-            compound_footprint.append(footprint)
-        
-        # create_performance_plot(compound_footprint, rmse, inference_times, model_names, 'Compound Computational Footprint \n (Inference Time, GFLOPs, Parameters, Memory Usage)',
-        #                         rmse_inverse_lable, 'Inference Time (s)',
-        #                         'Compound Computational Footprint vs Model Accuracy', 
-        #                         'compound_footprint_vs_rmse_vs_inference_time.png')
-        
-        # create_performance_plot(params, inference_times, flops, model_names,
-        #                       'Parameters (Million)', 'Inference Time (seconds)', 'FLOPs (Billion)',
-        #                       'Model Complexity vs Inference Time', 'model_complexity_vs_inference_time.png')
-        
-        # create_performance_plot(flops, rmse, inference_times, model_names,
-        #                       'FLOPs (Billion)', 'RMSE (m)', 'Inference Time (s)',
-        #                       'Model Complexity and Latency vs Performance', 'flops_rmse_time.png')
-        
-        # create_performance_plot(inference_memory_usage, rmse, params, model_names,
-        #                       'Inference Memory Usage (GB)', 'RMSE (m)', 'Parameters (Million)',
-        #                       'Inference Memory Usage vs Parameters vs RMSE', 'inference_memory_usage_vs_rmse.png')
-        
-        # # Create the enhanced radar chart with all metrics
-        draw_radar_chart(model_names, metrics_dict)
-            
-        logger.info("Metrics visualizations generated successfully.")
-    
-    except Exception as e:
-        logger.error(f"Error generating metrics visualizations: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
-        return None
-
-    # Create comprehensive 6-subplot visualization in landscape orientation
-    # create_comprehensive_performance_subplot(model_names, gflops, rmse_inverse, inference_times, 
-    #                                        params, inference_memory_usage, compound_footprint, 
-    #                                        rmse_inverse_lable)
-        
-    # # Create separate compound footprint plot
-    # create_compound_footprint_plot(model_names, compound_footprint, rmse_inverse, inference_times, rmse_inverse_lable)
-    
-    # # Create separate parameters vs accuracy plot
-    # create_parameters_vs_accuracy_plot(model_names, gflops, rmse, params, inference_times, 'RMSE - Predictive Error (m)')
-        
 
 def create_parameters_vs_accuracy_plot(model_names, gflops, rmse, params, inference_times, rmse_inverse_label):
     """Create a separate parameters vs accuracy plot."""

@@ -1,7 +1,7 @@
 import os
 import pandas as pd
 import numpy as np
-from modules.lib.constants import DATA_DIR, OUTPUT_DIR, SIMULATION_DATA_DIR
+from modules.lib.constants import DATA_DIR, OUTPUT_DIR, SIMULATION_DATA_DIR, DEM_FILE
 from modules.models.usrr_1dcnn.lib.gdal_lib import gdal_asarray
 import torch
 import logging
@@ -14,7 +14,7 @@ logger = logging.getLogger("CNNDataManager")
 
 class CNNSequentialDataManager(DataManager):
     def __init__(self, batch_size=32, input_time_len_h=1, rl_group=1,sampling_dist=20, num_of_clusters=100, fold=1, 
-                 tuning_mode=True, reconstruction_mode=False, reco_data_manager:ReconsturctionDataManager=None):
+                 tuning_mode=True, reconstruction_mode=False, reco_data_manager:ReconsturctionDataManager=None, stride=1):
         torch.cuda.empty_cache()
         with torch.no_grad():
             super().__init__()
@@ -23,7 +23,7 @@ class CNNSequentialDataManager(DataManager):
                 
             # Directories
             self.simulation_data_dir = SIMULATION_DATA_DIR
-            self.dem_file = os.path.join(self.simulation_data_dir, "Carlisle_5m.asc")
+            self.dem_file = DEM_FILE
             self.reconstruction_mode = reconstruction_mode
             self.tuning_mode = tuning_mode
             self.device = check_device()
@@ -55,6 +55,7 @@ class CNNSequentialDataManager(DataManager):
             self.tuning_mode = tuning_mode
             self.event_seq_data = {}
             self.input_seq_length = int(input_time_len_h * 4)
+            self.stride = stride
             
             # RL variables
             self.rl_group_size = None
@@ -94,7 +95,9 @@ class CNNSequentialDataManager(DataManager):
                 if check_inundation_data_cache(event_id):
                     inundation_data = torch.load(os.path.join(OUTPUT_DIR, "preprocessed_inundation", f"event_{event_id}_inundation.pt"))
                     inundation_data = inundation_data.float()
+                    # No need to skip first 8 maps here as they were skipped during preprocessing
                     event_inundation_data = inundation_data[:, self.filter_mask]
+                    event_inundation_data = event_inundation_data.to(self.device)
                     # if event_id == 1:
                     #     self.visualise_depth_curve(event_inundation_data)
                     self.inundation_data_cache[event_id] = event_inundation_data
@@ -122,8 +125,14 @@ class CNNSequentialDataManager(DataManager):
             raise ValueError(f"Invalid subset: {subset}. Choose 'train' or 'val'.")
             
         with torch.no_grad():    
+            # Shuffle sequences within the batch
             input_tensor = torch.stack(input_sequences, dim=0).float().to(self.device)
             output_tensor = torch.stack(output_sequences, dim=0).float().to(self.device)
+            
+            indices = np.arange(len(input_sequences))
+            np.random.shuffle(indices)
+            input_tensor = input_tensor[indices]
+            output_tensor = output_tensor[indices]
             return input_tensor, output_tensor
     
     def shuffle_training_data(self, epoch):
@@ -304,7 +313,7 @@ class CNNSequentialDataManager(DataManager):
                 inflow_file = os.path.join(DATA_DIR, f"Upstream_Flows_Run{event_id}.csv")
                 inflow_data = pd.read_csv(inflow_file)
                 
-                inflow_data = inflow_data
+                inflow_data = inflow_data[8:]  # Skip first 8 rows (warm-up period)
                 inflow_data = inflow_data.values
                 inflow_data = inflow_data[:, 1:] 
                 input_arr = np.array(inflow_data)
@@ -316,15 +325,12 @@ class CNNSequentialDataManager(DataManager):
                 if event_id in self.train_event_ids:
                     all_train_data.append(input_arr)
             
-            # 2. Normalize the data using MinMaxScaler feature by feature
-            from sklearn.preprocessing import StandardScaler
-            
             # Combine all training data
             all_train_data = np.vstack(all_train_data)
             
             # Create and fit a scaler for each feature independently
             from sklearn.preprocessing import MinMaxScaler
-            self.scaler = MinMaxScaler(feature_range=(0.01, 0.99))  # Avoid exact 0 and 1
+            self.scaler = MinMaxScaler(feature_range=(0,1))  # Avoid exact 0 and 1
             self.scaler.fit(all_train_data)
                 
             
@@ -338,44 +344,66 @@ class CNNSequentialDataManager(DataManager):
             self.train_sequences = []
             for event_id, raw_data in raw_inflow_data.items():
                 normalized_data = self.scaler.transform(raw_data)
-                lowest_base_flow = normalized_data[0, :]   
-                
-                # Calculate padding needed
-                padding_length = max(0, self.input_seq_length - 8 -1)
-                
-                # Create smooth interpolated padding
-                if padding_length > 0:
-                    padding = np.zeros((padding_length, normalized_data.shape[1]))
-                    normalized_data = np.vstack((padding, normalized_data))
-                    normalized_data[0:padding_length, :] = np.linspace(lowest_base_flow, normalized_data[padding_length, :], padding_length)
-                
-                n_samples = len(normalized_data) - self.input_seq_length + 1
-                
-                # Create base sequences
-                input_sequences = []
-                for i in range(n_samples):
-                    seq = normalized_data[i:i + self.input_seq_length, :]
-                    input_sequences.append(seq)
-                input_sequences = np.array(input_sequences)
-                input_sequences = torch.from_numpy(input_sequences).float()
-                output_sequences = self.inundation_data_cache[event_id]
-
-                # Store sequences by event ID
+                normalized_data = normalized_data.astype(np.float32)
+                normalized_data = np.clip(normalized_data, 0, 1)
                 if event_id in self.test_event_ids:
-                    self.test_sequences_by_event[event_id] = input_sequences
-                    if self.reconstruction_mode:
-                        return
-                elif event_id in self.train_event_ids:
-                    # Apply temporal shifting with edge padding (creates NEW sequences)
-                    augmented_input_seqs, augmented_output_seqs = self.create_temporal_shifted_sequences(
-                        normalized_data, self.inundation_data_cache[event_id], event_id
-                    )
+                    lowest_base_flow = normalized_data[0, :]   
+                
+                    # Calculate padding needed
+                    padding_length = max(0, self.input_seq_length-1)
+                
+                    # Create smoothh interpolated padding
+                    if padding_length > 0:
+                        padding = np.zeros((padding_length, normalized_data.shape[1]))
+                        normalized_data = np.vstack((padding, normalized_data))
+                        normalized_data[0:padding_length, :] = np.linspace(lowest_base_flow, normalized_data[padding_length, :], padding_length)
+                    
+                    n_samples = (len(normalized_data) - self.input_seq_length) + 1
+                    
+                    # Create base sequences
+                    input_sequences = []
+                    for i in range(n_samples):
+                        start_idx = i
+                        seq = normalized_data[start_idx:start_idx + self.input_seq_length, :]
+                        input_sequences.append(seq)
+                        
+                    input_sequences = np.array(input_sequences)
+                    input_sequences = torch.from_numpy(input_sequences).float()             
+                    self.test_sequences_by_event[event_id] = input_sequences          
+                else:
+                    n_samples = (len(normalized_data) - self.input_seq_length) // self.stride + 1
+                    
+                    # Create base sequences
+                    input_sequences = []
+                    for i in range(n_samples):
+                        start_idx = i * self.stride
+                        seq = normalized_data[start_idx:start_idx + self.input_seq_length, :]
+                        input_sequences.append(seq)
+                        
+                    input_sequences = np.array(input_sequences)
+                    input_sequences = torch.from_numpy(input_sequences).float()
+                    # Get output at the end of each input sequence, accounting for stride
+                    output_indices = np.arange(self.input_seq_length - 1, len(normalized_data), self.stride)
+                    output_sequences = self.inundation_data_cache[event_id][output_indices[:len(input_sequences)]]
+
+                    # Store sequences by event ID
+                    if event_id in self.test_event_ids:
+                        self.test_sequences_by_event[event_id] = input_sequences
+                        if self.reconstruction_mode:
+                            return
+                    
+                if event_id in self.train_event_ids:
+                    # # Apply temporal shifting with edge padding (creates NEW sequences)
+                    # augmented_input_seqs, augmented_output_seqs = self.create_temporal_shifted_sequences(
+                    #     normalized_data, self.inundation_data_cache[event_id], event_id
+                    # )
                     
                     # Combine original and augmented sequences
-                    self.train_sequences_by_event[event_id] = torch.cat([input_sequences, augmented_input_seqs], dim=0)
-                    self.train_output_sequences_by_event[event_id] = torch.cat([output_sequences, augmented_output_seqs], dim=0)
-                    
-                    logger.info(f"Event {event_id}: {len(input_sequences)} original + {len(augmented_input_seqs)} augmented = {len(self.train_sequences_by_event[event_id])} total sequences")
+                    # self.train_sequences_by_event[event_id] = torch.cat([input_sequences, augmented_input_seqs], dim=0)
+                    # self.train_output_sequences_by_event[event_id] = torch.cat([output_sequences, augmented_output_seqs], dim=0)
+                    self.train_sequences_by_event[event_id] = input_sequences
+                    self.train_output_sequences_by_event[event_id] = output_sequences
+                    logger.info(f"Event {event_id}: Prepared {len(self.train_sequences_by_event[event_id])} training sequences")
                 elif event_id in self.val_event_ids:
                     self.val_sequences_by_event[event_id] = input_sequences
                     

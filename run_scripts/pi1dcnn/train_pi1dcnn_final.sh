@@ -1,5 +1,5 @@
 # Set memory limit of 2GB for each process
-parallel --line-buffer -j 1 CUDA_VISIBLE_DEVICES={1} python3.11 main.py train \
+parallel --line-buffer -j 2 CUDA_VISIBLE_DEVICES={1} python3.11 main.py train \
   --model PICNN1D_V1 \
   --lag {2} \
   --horizon {3} \
@@ -12,5 +12,5 @@ parallel --line-buffer -j 1 CUDA_VISIBLE_DEVICES={1} python3.11 main.py train \
   ::: 1 \
   ::: 64 \
   ::: 0.001 \
-  ::: 10 \
+  ::: 20 \
   ::: 1

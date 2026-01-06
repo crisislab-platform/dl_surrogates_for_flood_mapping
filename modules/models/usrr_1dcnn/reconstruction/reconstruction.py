@@ -6,7 +6,7 @@ from modules.models.usrr_1dcnn.cnn1d import CNN1DSequential
 from modules.datamanager.raster.raster_loader_usrr import ReconsturctionDataManager
 from modules.datamanager.point.sequential_loader_1dcnn import CNNSequentialDataManager
 from modules.models.usrr_1dcnn.unet import model_name as UNET_MODEL_NAME
-from modules.lib.constants import USRR_1DCNN_V1, PLOTS_OUTPUT_DIR, SIMULATION_DATA_DIR, USRR_CNN1D_COMBINED
+from modules.lib.constants import USRR_1DCNN_V1, PLOTS_OUTPUT_DIR, SIMULATION_DATA_DIR, USRR_CNN1D_COMBINED, DEM_FILE
 from modules.model_runner.model_utils import find_model_file
 from torch.profiler import profile, ProfilerActivity
 from modules.utils.model_util import profiler_analysis, format_flops, save_prediction_map
@@ -35,7 +35,7 @@ class ReconstructionModule():
     def __init__(self, sampling_distance, cluster_size, run_dir, batch_size):
         
         # Initialize directories and files
-        self.dem_asc_file = os.path.join(SIMULATION_DATA_DIR, "Carlisle_5m.asc")
+        self.dem_asc_file = DEM_FILE
         self.simulation_dir  =  SIMULATION_DATA_DIR
         self.rep_loc_file_path = os.path.join(OUTPUT_DIR, "rls", f"rl_{sampling_distance}.asc")
         self.device =  check_device()
@@ -291,8 +291,6 @@ class ReconstructionModule():
         }
         return metrics
                 
-        
-    
     def visualise_error_distribution(self, depth_map, ref_map):
         """
         Visualize the error distribution between predicted depth map and reference map.
@@ -428,7 +426,7 @@ class ReconstructionModule():
         preds_lock = threading.Lock()
         
         #Use ProcessPoolExecutor for parallel execution
-        with concurrent.futures.ThreadPoolExecutor(max_workers=50) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
             # Submit all prediction tasks
             future_to_group = {
                 executor.submit(self.get_rl_group_predictions, rl_group, model): rl_group
@@ -531,18 +529,39 @@ class ReconstructionModule():
         return nse
     
     def mRMSE_fn(self, pred, ref_out):
-        # Define threshold for wet cells
+        """
+        Calculate masked RMSE for wet cells only.
+        Only considers cells that are wet (>threshold) in the reference/ground truth map.
+        
+        Args:
+            pred: Model predictions
+            ref_out: Reference/ground truth values
+            
+        Returns:
+            mRMSE value for wet cells only
+        """
+        # Define threshold for wet cells (typically > 0.3m is considered wet)
         threshold = 0.3
         
-        # Create binary mask
-        ref_wet = (ref_out > threshold).float()
+        # Create mask for cells that are wet in the REFERENCE map only
+        wet_mask = (ref_out > threshold).float()
         
-        # Calculate RMSE for wet cells only
-        pred_wet_values = pred * ref_wet
-        ref_wet_values = ref_out * ref_wet
-        wet_loss = self.loss_fn(pred_wet_values, ref_wet_values)
-        rmse_wet = np.sqrt(wet_loss.item())
-        logger.info(f"Wet cells RMSE: {rmse_wet}")
+        # Count number of wet cells
+        num_wet_cells = wet_mask.sum()
+        
+        # If no wet cells, return 0 or NaN
+        if num_wet_cells == 0:
+            logger.warning("No wet cells found in reference map for mRMSE calculation")
+            return 0.0
+        
+        # Calculate squared error only for wet cells
+        squared_error = ((pred - ref_out) ** 2) * wet_mask
+        
+        # Calculate mean squared error for wet cells only
+        mse_wet = squared_error.sum() / num_wet_cells
+        
+        # Return RMSE
+        rmse_wet = torch.sqrt(mse_wet).item()
         return rmse_wet
                        
     def single_construct(self, map_i, pred_depths):

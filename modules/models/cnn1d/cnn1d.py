@@ -51,17 +51,19 @@ class CNNModel(nn.Module):
         x = self.fc1(x)
         x = self.bn_fc1(x)
         x = self.relu(x)
+        x = self.dropout1(x)
 
         # Second fully connected block with batch norm and dropout
         x = self.fc2(x)
         x = self.bn_fc2(x)
         x = self.relu(x)
+        x = self.dropout2(x)
      
         # Third fully connected block with batch norm
         x = self.fc3(x)
         x = self.bn_fc3(x)
         x = self.relu(x)
-        
+    
         # Output layer
         x = self.fc4(x)
         return x
