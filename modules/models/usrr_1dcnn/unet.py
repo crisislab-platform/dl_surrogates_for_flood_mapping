@@ -112,62 +112,59 @@ class UNetModelWrapper(ModelWrapper):
         batch_nse = 0
         start_time = time.time()
         
-        with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], profile_memory=True, on_trace_ready=torch.profiler.tensorboard_trace_handler(self.config.run_dir)) as prof:
-            with torch.no_grad():
-                for idx, batch_list in enumerate(self.data_manager.test_input_batches): 
-                    output_batch_list = self.data_manager.test_output_batches[idx]
-                    
-                    # Process each individual tensor in the batch list
-                    batch_preds = []
-                    batch_losses = []
-                    batch_mrmses = []
-                    batch_nses = []
-                    
-                    for i, input_tensor in enumerate(batch_list):
-                        output_tensor = output_batch_list[i]
-                        # Ensure input is a proper tensor with batch dimension
-                        if not isinstance(input_tensor, torch.Tensor):
-                            logger.error(f"Expected tensor, got {type(input_tensor)}")
-                            continue
-                            
-                        # Process a single tensor through the model
-                        pred = self.model(input_tensor)
-                        loss = self.loss_fn(pred, output_tensor)
-                        batch_losses.append(loss.item())
-                        mRMSE = self.mRMSE_fn(pred, output_tensor)
-                        nse = self.nse_fn(output_tensor, pred)
-                        batch_mrmses.append(mRMSE)
-                        batch_nses.append(nse)
-                        batch_preds.append(pred)
-                    
-                    # Compute average metrics for this batch
-                    avg_loss = np.mean(batch_losses) if batch_losses else 0
-                    avg_mRMSE = np.mean(batch_mrmses) if batch_mrmses else 0
-                    avg_nse = np.mean(batch_nses) if batch_nses else 0
-                    
-                    batch_loss += avg_loss
-                    batch_mRMSE += avg_mRMSE
-                    batch_nse += avg_nse
-                    prof.step()
-                    logger.info(f"Test Loss for batch {idx}: {avg_loss} mRMSE: {avg_mRMSE} NSE: {avg_nse}")
+        with torch.no_grad():
+            for idx, batch_list in enumerate(self.data_manager.test_input_batches): 
+                output_batch_list = self.data_manager.test_output_batches[idx]
                 
-                end_time = time.time()
-                # Calculate final metrics
-                num_batches = len(self.data_manager.test_input_batches)
-                mse = batch_loss / num_batches if num_batches > 0 else 0
-                rmse = np.sqrt(mse)
-                mRMSE = batch_mRMSE / num_batches if num_batches > 0 else 0
-                nse = batch_nse / num_batches if num_batches > 0 else 0
+                # Process each individual tensor in the batch list
+                batch_preds = []
+                batch_losses = []
+                batch_mrmses = []
+                batch_nses = []
                 
-                logger.info(f"Test Loss : {mse} mRMSE: {mRMSE} NSE: {nse} RMSE: {rmse}")
+                for i, input_tensor in enumerate(batch_list):
+                    output_tensor = output_batch_list[i]
+                    # Ensure input is a proper tensor with batch dimension
+                    if not isinstance(input_tensor, torch.Tensor):
+                        logger.error(f"Expected tensor, got {type(input_tensor)}")
+                        continue
+                        
+                    # Process a single tensor through the model
+                    pred = self.model(input_tensor)
+                    loss = self.loss_fn(pred, output_tensor)
+                    batch_losses.append(loss.item())
+                    mRMSE = self.mRMSE_fn(pred, output_tensor)
+                    nse = self.nse_fn(output_tensor, pred)
+                    batch_mrmses.append(mRMSE)
+                    batch_nses.append(nse)
+                    batch_preds.append(pred)
                 
-        # Calculate NSEß
-        key_averages = prof.key_averages()
+                # Compute average metrics for this batch
+                avg_loss = np.mean(batch_losses) if batch_losses else 0
+                avg_mRMSE = np.mean(batch_mrmses) if batch_mrmses else 0
+                avg_nse = np.mean(batch_nses) if batch_nses else 0
+                
+                batch_loss += avg_loss
+                batch_mRMSE += avg_mRMSE
+                batch_nse += avg_nse
+                logger.info(f"Test Loss for batch {idx}: {avg_loss} mRMSE: {avg_mRMSE} NSE: {avg_nse}")
+            
+            end_time = time.time()
+            # Calculate final metrics
+            num_batches = len(self.data_manager.test_input_batches)
+            mse = batch_loss / num_batches if num_batches > 0 else 0
+            rmse = np.sqrt(mse)
+            mRMSE = batch_mRMSE / num_batches if num_batches > 0 else 0
+            nse = batch_nse / num_batches if num_batches > 0 else 0
+            
+            logger.info(f"Test Loss : {mse} mRMSE: {mRMSE} NSE: {nse} RMSE: {rmse}")
+                
+        # Calculate NSE
         pred_time = end_time - start_time
         logger.info(f"Validation prediction_time:{pred_time} loss MSE: {mse} RMSE: {rmse}  NSE: {nse} mRMSE: {mRMSE}")
         flops = self.calculate_flops()
         
-        analysis_results = profiler_analysis(key_averages)
+        analysis_results = ""
         metrics = {
             "mse": mse,
             "rmse": rmse,
@@ -178,7 +175,6 @@ class UNetModelWrapper(ModelWrapper):
             "pred_memory_usage": analysis_results
         }
     
-        logger.info(prof.key_averages().table(sort_by="cuda_memory_usage", row_limit=10))
         return metrics
 
 
@@ -209,3 +205,9 @@ class UNetModelWrapper(ModelWrapper):
             "model_name": self.model_name,
             "run_id": self.config.run_id
         }
+        
+    def save_predictions(self, pred):
+        pass
+    
+    def save_predictions_at_points(self, predictions, ground_truth, points_csv):
+        pass

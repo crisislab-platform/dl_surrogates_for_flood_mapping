@@ -9,6 +9,6 @@ parallel --line-buffer --memfree 4G CUDA_VISIBLE_DEVICES={1} python3.11 main.py 
   ::: 0 \
   ::: 1 \
   ::: 1 \
-  ::: 32 \
+  ::: 8 \
   ::: 0.001 \
   ::: 50 \

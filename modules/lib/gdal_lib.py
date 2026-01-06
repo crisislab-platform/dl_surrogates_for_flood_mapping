@@ -7,7 +7,7 @@ import numpy as np
 import geopandas
 import os
 from sys import platform
-from modules.lib.constants import CARLISLE_DATA_DIR
+from modules.lib.constants import DATA_DIR
 
 import logging
 
@@ -56,7 +56,7 @@ def read_shp_line(filename):
 
 def gdal_read_prj():
     """Read projection file and return as WKT string"""
-    prj_path = f'{CARLISLE_DATA_DIR}/New_500Samples.prj'
+    prj_path = f'{DATA_DIR}/New_500Samples.prj'
     with open(prj_path, 'r') as f:
         prj_txt = f.read()
     

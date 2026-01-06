@@ -3,7 +3,6 @@ import os
 import logging
 import time
 import torch
-from torch.profiler import profile, ProfilerActivity
 import numpy as np
 import time
 from torch.utils.flop_counter import FlopCounterMode
@@ -12,8 +11,7 @@ from modules.utils.model_util import profiler_analysis, format_flops, save_predi
 from modules.datamanager.datamanager import DataManager
 import json
 import pandas as pd
-from modules.lib.constants import OUTPUT_DIR, SIMULATION_DATA_DIR, RUN_DIR
-from modules.lib.constants import USRR_1DCNN_V1, USRR_UNET_V1
+from modules.lib.constants import OUTPUT_DIR, SIMULATION_DATA_DIR, RUN_DIR, USRR_UNET_V1
 import rasterio
 
 logger = logging.getLogger("Model")
@@ -51,6 +49,7 @@ class ModelWrapper:
         self.data_manager:DataManager = None
         self.optimizer = None
         self.device = None
+        self.profiler = None
         
     def init_model(self) -> bool:
         pass
@@ -85,32 +84,72 @@ class ModelWrapper:
             valid_batches = 0
             self.model.train()
             
+            if epoch > 0:
+                self.data_manager.shuffle_training_data(epoch)  # Shuffle training data at the start of each epoch
+            
             for idx, t_indices in enumerate(self.data_manager.train_idx):
                 self.optimizer.zero_grad()
                 input_batch, output_batch = self.data_manager.get_batch(t_indices, subset="train")
+                input_batch = input_batch.to(device)
+                output_batch = output_batch.to(device)
                 if input_batch is None or output_batch is None:
                     logger.warning(f"Error getting batch {idx}, skipping")
                     continue
                 
-                # Log tensor device information for debugging
-                if idx == 0 and epoch == 0:
-                    logger.info(f"Input batch device: {input_batch.device}")
-                    logger.info(f"Input batch shape: {input_batch.shape}")
-                    logger.info(f"Output batch device: {output_batch.device}")
-                    logger.info(f"Output batch shape: {output_batch.shape}")
                 
-                pred = self.model(input_batch)
-                pred = pred.squeeze(1)  # Remove the channel dimension if present
-                batch_loss = self.loss_fn(pred, output_batch)
+                # Profile only the first batch ofx the first epoch
+                if idx == 0 and epoch == 0:
+                    logger.info("Starting memory profiling for the first batch")
+                    with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], 
+                                profile_memory=True, with_flops=True,
+                                on_trace_ready=torch.profiler.tensorboard_trace_handler(run_dir)) as prof:
+                        pred = self.model(input_batch)
+                        # Handle single pixel output (no squeezing needed for 1D output)
+                        if len(pred.shape) > 1 and pred.shape[1] == 1:
+                            pred = pred.squeeze(1)  # Only squeeze if there's a channel dimension
+                        # Handle single pixel output (no squeezing needed for 1D output) 
+                        # if len(output_batch.shape) > 1 and output_batch.shape[1] == 1:
+                        #     output_batch = output_batch.squeeze(1)  # Only squeeze if needed
+                        if self.model_name == USRR_UNET_V1:
+                            output_batch = output_batch.squeeze(1)  # Only squeeze if needed
+                        batch_loss = self.loss_fn(pred, output_batch)
+                        batch_loss.backward()
+                        self.optimizer.step()
+                    # Store profiler for later analysis
+                    self.profiler = prof
+                    logger.info("First batch profiling completed")
+                else:
+                    # Normal processing for all other batches
+                    pred = self.model(input_batch)
+                    # Handle single pixel output (no squeezing needed for 1D output)
+                    if len(pred.shape) > 1 and pred.shape[1] == 1:
+                        pred = pred.squeeze(1)  # Only squeeze if there's a channel dimension
+                    # Handle single pixel output (no squeezing needed for 1D output) 
+                    if self.model_name == USRR_UNET_V1:
+                    # if len(output_batch.shape) > 1 and output_batch.shape[1] == 1:
+                        output_batch = output_batch.squeeze(1)  # Only squeeze if needed
+                        
+                    if pred.shape != output_batch.shape:
+                        logger.warning(f"Shape mismatch between prediction {pred.shape} and output {output_batch.shape}, skipping batch")
+                        continue
+                    
+                    batch_loss = self.loss_fn(pred, output_batch)
+                    batch_loss.backward()
+                    self.optimizer.step()
+                
                 epoch_loss += batch_loss.item()
                 valid_batches += 1  # Increment valid batch counter
-                batch_loss.backward()
-                self.optimizer.step()
                 logger.info(f"Batch train loss: {batch_loss.item()}")
                 
             # Divide by actual number of valid batches processed
             epoch_loss = epoch_loss / valid_batches if valid_batches > 0 else float('inf')
             history["loss"].append(epoch_loss)
+            
+            # Step the learning rate scheduler with epoch loss
+            # if hasattr(self, 'scheduler'):
+            #     self.scheduler.step(epoch_loss)
+            #     current_lr = self.optimizer.param_groups[0]['lr']
+            #     logger.info(f"Current learning rate: {current_lr:.2e}")
             
             # Epoch Validation
             if tuning_mode:
@@ -125,6 +164,11 @@ class ModelWrapper:
 
                     with torch.no_grad():
                         pred_val = self.model(input_batch)
+                        # Handle single pixel output for validation
+                        if len(pred_val.shape) > 1 and pred_val.shape[1] > 1:
+                            pred_val = pred_val.squeeze(1)
+                        if len(output_batch.shape) > 1 and output_batch.shape[1] > 1:
+                            output_batch = output_batch.squeeze(1)
                         # If pred < 0.3 then set to 0
                         pred_val = torch.where(pred_val < 0.3, torch.tensor(0.0).to(device), pred_val)
                         batch_val_loss = self.loss_fn(pred_val, output_batch).item()
@@ -137,6 +181,8 @@ class ModelWrapper:
                 history["val_loss"].append(epoch_val_loss)
                 logger.info(f"Epoch {epoch} loss: {epoch_loss}  validation loss: {epoch_val_loss} ")
             
+
+                
                 if epoch_val_loss < best_val_loss:
                     best_val_loss = epoch_val_loss
                     epochs_no_improvement = 0
@@ -179,21 +225,19 @@ class ModelWrapper:
             logger.info("Tuning mode is enabled, skipping profiling")
             return self.train_model(run_dir, tuning_mode)
 
-        if self.config.model_name == USRR_UNET_V1 or self.config.model_name == USRR_1DCNN_V1:
-            history, train_time, model_file = self.train_model(run_dir, tuning_mode)
-            history['memory'] = ""
-            logger.info("Training completed, no profiling for UNet model")
-            return history, train_time, model_file
+        logger.info("Starting model training with memory profiling for first batch")
+        history, train_time, model_file = self.train_model(run_dir, tuning_mode)
+        
+        if self.profiler is not None:
+            logger.info("Training completed, analyzing memory usage")
+            key_averages = self.profiler.key_averages()
+            analysis_results = profiler_analysis(key_averages)
+            logger.info(f"Memory profiling results: {key_averages.table(sort_by='cuda_memory_usage', row_limit=10)}")
+            logger.info(f"Profiler analysis results: {analysis_results}")
+            history['memory'] = analysis_results
+        else:
+            history['memory'] = "No profiling data available"
             
-        with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], profile_memory=True, on_trace_ready=torch.profiler.tensorboard_trace_handler(run_dir)) as prof:
-            logger.info("Starting model training with memory profiling")
-            history, train_time, model_file = self.train_model(run_dir, tuning_mode)
-
-        # logger.info("Training completed, profiling memory usage")
-        # key_averages = prof.key_averages()
-        # analysis_results = profiler_analysis(key_averages)
-        # logger.info(f"Memory profiling results: {key_averages.table(sort_by='cuda_memory_usage', row_limit=10)}")
-        # logger.info(f"Profiler analysis results: {analysis_results}")
         return history, train_time, model_file
     
     def create_hyperparameters_dict(self):
@@ -208,18 +252,34 @@ class ModelWrapper:
         return hyperparameters
     
     def test_model(self):
-        
         logger.info("Testing model")
         self.model.eval()
         
         with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], profile_memory=True, on_trace_ready=torch.profiler.tensorboard_trace_handler(self.config.run_dir)) as prof:
             with torch.no_grad():
-                input_data = self.data_manager.test_input
-                ref_out = self.data_manager.test_output
+                # For single pixel training, we need to get all test data combined
+                if hasattr(self.data_manager, 'get_all_test_data'):
+                    input_data, ref_out = self.data_manager.get_all_test_data()
+                    input_data = input_data.to(self.device)
+                    ref_out = ref_out.to(self.device)
+                else:
+                    # Fallback to old method
+                    input_data = self.data_manager.test_input.to(self.device)
+                    ref_out = self.data_manager.test_output.to(self.device)
+                
                 start_time = time.time()
                 pred = self.model(input_data)
+                
+                # Handle single pixel output - no squeezing needed for 1D output
+                if len(pred.shape) > 1 and pred.shape[1] > 1:
+                    pred = pred.squeeze(1)
+                if len(ref_out.shape) > 1 and ref_out.shape[1] > 1:
+                    ref_out = ref_out.squeeze(1)
+                
                 # If pred < 0.3 then set to 0
                 pred = torch.where(pred < 0.3, torch.tensor(0.0).to(self.device), pred)
+                ref_out = torch.where(ref_out < 0.3, torch.tensor(0.0).to(self.device), ref_out)
+                
                 end_time = time.time()
                 loss = self.loss_fn(pred, ref_out)
                 mse = loss.item()
@@ -227,7 +287,32 @@ class ModelWrapper:
                 
                 # Calculate mRMSE for wet cells
                 mRMSE = self.mRMSE_fn(pred, ref_out)
-
+                
+                #calculate confusion matrix at 0.3m threshold
+                threshold = 0.3
+                pred_binary = (pred > threshold).float()
+                ref_binary = (ref_out > threshold).float()
+                tp = ((pred_binary == 1) & (ref_binary == 1)).sum().item()
+                tn = ((pred_binary == 0) & (ref_binary == 0)).sum().item()
+                fp = ((pred_binary == 1) & (ref_binary == 0)).sum().item()
+                fn = ((pred_binary == 0) & (ref_binary == 1)).sum().item()
+                
+                logger.info(f"Confusion Matrix at {threshold}m threshold - TP: {tp}, TN: {tn}, FP: {fp}, FN: {fn}")
+                
+                # Hit Rate
+                hit_rate = tp / (tp + fn) if (tp + fn) > 0 else 0
+                logger.info(f"Hit Rate: {hit_rate}")
+                
+                # Critical Success Index (CSI)
+                csi = tp / (tp + fp + fn) if (tp + fp + fn) > 0 else 0
+                logger.info(f"Critical Success Index (CSI): {csi}")
+                
+                # F2 Score
+                f2_score = (tp - fn) / (tp + fp + fn) if (tp + fp + fn) > 0 else 0
+                
+                # F3 Score
+                f3_score = (tp - fp) / (tp + fp + fn) if (tp + fp + fn) > 0 else 0
+                
                 # Calculate NSE
                 observed = ref_out
                 predicted = pred
@@ -237,22 +322,25 @@ class ModelWrapper:
         logger.info(f"Validation prediction_time:{pred_time} loss MSE: {mse} RMSE: {rmse}  NSE: {nse} mRMSE: {mRMSE}")
         
         flops = self.calculate_flops()
-        self.save_predictions(pred)
+        self.save_predictions_all(pred)
                 
-        if self.config.model_name != USRR_1DCNN_V1:
-            # Save predictions at points of interest
-            poi_path = os.path.join(OUTPUT_DIR, "points_of_interest.csv")
-            if os.path.exists(poi_path):
-                self.save_predictions_at_points(pred, ref_out, poi_path)
-            else:
-                logger.warning(f"Points of interest file not found at {poi_path}")
-                
+        # Save predictions at points of interest
+        poi_path = os.path.join(OUTPUT_DIR, "points_of_interest.csv")
+        if os.path.exists(poi_path):
+            self.save_predictions_at_points(pred, ref_out, poi_path)
+        else:
+            logger.warning(f"Points of interest file not found at {poi_path}")
+            
         analysis_results = profiler_analysis(prof.key_averages())
         metrics = {
             "mse": mse,
             "rmse": rmse,
             "nse": nse,
             "mRMSE": mRMSE,
+            "hit_rate": hit_rate,
+            "csi": csi,
+            "f2_score": f2_score,
+            "f3_score": f3_score,
             "pred_time": pred_time,
             "flops": flops,
             "pred_memory_usage": analysis_results
@@ -260,7 +348,7 @@ class ModelWrapper:
         
         logger.info(prof.key_averages().table(sort_by="cuda_memory_usage", row_limit=10))
         return metrics
-    
+     
     def save_predictions_at_points(self, predictions, ground_truth, points_csv):
         """
         Save model predictions at specific points of interest to a CSV file
@@ -352,18 +440,39 @@ class ModelWrapper:
         return nse 
     
     def mRMSE_fn(self, pred, ref_out):
-        # Define threshold for wet cells (typically > 0.01m is considered wet)
+        """
+        Calculate masked RMSE for wet cells only.
+        Only considers cells that are wet (>threshold) in the reference/ground truth map.
+        
+        Args:
+            pred: Model predictions
+            ref_out: Reference/ground truth values
+            
+        Returns:
+            mRMSE value for wet cells only
+        """
+        # Define threshold for wet cells (typically > 0.3m is considered wet)
         threshold = 0.3
         
-        # Create binary masks
-        pred_wet = (pred > threshold).float()
-        ref_wet = (ref_out > threshold).float()
+        # Create mask for cells that are wet in the REFERENCE map only
+        wet_mask = (ref_out > threshold).float()
         
-        # Calculate RMSE for wet cells only
-        pred_wet_values = pred * ref_wet
-        ref_wet_values = ref_out * ref_wet
-        wet_loss = self.loss_fn(pred_wet_values, ref_wet_values)
-        rmse_wet = np.sqrt(wet_loss.item())
+        # Count number of wet cells
+        num_wet_cells = wet_mask.sum()
+        
+        # If no wet cells, return 0 or NaN
+        if num_wet_cells == 0:
+            logger.warning("No wet cells found in reference map for mRMSE calculation")
+            return 0.0
+        
+        # Calculate squared error only for wet cells
+        squared_error = ((pred - ref_out) ** 2) * wet_mask
+        
+        # Calculate mean squared error for wet cells only
+        mse_wet = squared_error.sum() / num_wet_cells
+        
+        # Return RMSE
+        rmse_wet = torch.sqrt(mse_wet).item()
         return rmse_wet
     
     def calculate_flops(self):
@@ -405,8 +514,53 @@ class ModelWrapper:
             return None
         
     def save_predictions(self, pred):
-        idx = 146
+        idx = 136
         pred_max = pred.detach().cpu().numpy()[idx]
-        output_dir = os.path.join(self.config.run_dir, "output_maps")
+        output_dir = os.path.join(RUN_DIR, "output_maps", self.config.model_name)
+        os.makedirs(output_dir, exist_ok=True)
+        logger.info(f"Saving prediction map to {output_dir}")
         save_prediction_map(pred_max, output_dir, idx, self.config.model_name)
-
+        
+    def save_predictions_all(self, pred):
+        """
+        Save predictions for single pixel training
+        For single pixel training, pred is 1D [num_samples], so we need to handle it differently
+        """
+        try:
+            output_dir = os.path.join(RUN_DIR, "output_maps", self.config.model_name)
+            os.makedirs(output_dir, exist_ok=True)
+            logger.info(f"Saving single pixel predictions to {output_dir}")
+            
+            # Convert to numpy
+            pred_np = pred.detach().cpu().numpy()
+            
+            # For single pixel training, we save the predictions as a CSV file
+            # since we don't have spatial maps anymore
+            predictions_df = pd.DataFrame({
+                'sample_idx': range(len(pred_np)),
+                'predicted_depth': pred_np
+            })
+            
+            csv_path = os.path.join(output_dir, "single_pixel_predictions.csv")
+            predictions_df.to_csv(csv_path, index=False)
+            logger.info(f"Saved single pixel predictions to {csv_path}")
+            
+        except Exception as e:
+            logger.error(f"Error saving single pixel predictions: {e}")
+            # If the above fails, try the old method for backward compatibility
+            try:
+                output_dir = os.path.join(RUN_DIR, "output_maps", self.config.model_name)
+                os.makedirs(output_dir, exist_ok=True)
+                logger.info(f"Saving all prediction maps to {output_dir}")
+                for idx in range(pred.shape[0]):
+                    pred_map = pred.detach().cpu().numpy()[idx]
+                    save_prediction_map(pred_map, output_dir, idx, self.config.model_name)
+            except Exception as e2:
+                logger.error(f"Error with fallback prediction saving: {e2}")
+        
+    def find_and_load_model(self, model_name):
+        training_metrics = os.path.join(RUN_DIR,"final_training_metrics.csv")
+        if not os.path.exists(training_metrics):
+            logger.error(f"Training metrics file not found at {training_metrics}")
+            return None
+        df = pd.read_csv(training_metrics)

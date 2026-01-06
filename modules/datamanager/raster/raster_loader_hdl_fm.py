@@ -6,7 +6,7 @@ import rasterio as rio
 import glob
 from sklearn.preprocessing import MinMaxScaler
 import torch
-from modules.lib.constants import CARLISLE_DATA_DIR, SIMULATION_DATA_DIR, OUTPUT_DIR
+from modules.lib.constants import DATA_DIR, SIMULATION_DATA_DIR, OUTPUT_DIR, DEM_FILE
 from modules.datamanager.datamanager import DataManager
 from modules.utils.run_util import check_device
 from modules.lib.gdal_lib import gdal_asarray, coords2rc
@@ -31,7 +31,7 @@ class HDLFMRasterDataManager(DataManager):
         self.all_event_ids = np.concatenate([self.train_event_ids, self.test_event_ids, self.val_event_ids])
         
         self.simulation_data_dir = SIMULATION_DATA_DIR
-        self.dem_file = os.path.join(self.simulation_data_dir, "Carlisle_5m.asc")
+        self.dem_file = DEM_FILE
         
         #Remove duplicates
         self.all_event_ids = np.unique(self.all_event_ids)
@@ -65,6 +65,10 @@ class HDLFMRasterDataManager(DataManager):
             logger.error(f"Error during initialization: {e}")
             raise e
             
+    def shuffle_training_data(self, epoch):
+        rng = np.random.default_rng(seed=epoch + 41)  # Different seed each epoch
+        rng.shuffle(self.train_idx)
+        logger.info(f"Shuffled training data for epoch {epoch}")
     
     def preload_inundation_data(self, event_ids):
         """Preload and cache all inundation data for specified event IDs"""
@@ -96,7 +100,7 @@ class HDLFMRasterDataManager(DataManager):
         
         for idx in range(len(event_ids)):
             event_id = event_ids[idx]
-            inflow_file = os.path.join(CARLISLE_DATA_DIR, f"Upstream_Flows_Run{event_id}.csv")
+            inflow_file = os.path.join(DATA_DIR, f"Upstream_Flows_Run{event_id}.csv")
             inflow_data = pd.read_csv(inflow_file)
             inflow_data = inflow_data[8:] #Skip the first 8 rows
             inflow_data = inflow_data.dropna()
@@ -157,7 +161,7 @@ class HDLFMRasterDataManager(DataManager):
         
         input_batch = torch.stack(input_data, dim=0)
         output_batch = torch.stack(output_data, dim=0)
-        # Shuffle the input and output batches together
+        #Shuffle the input and output batches together
         # if input_batch.shape[0] > 1:  #Only shuffle if we have more than one sample
         #     indices = torch.randperm(input_batch.shape[0])
         #     input_batch = input_batch[indices]
@@ -176,7 +180,7 @@ class HDLFMRasterDataManager(DataManager):
         end_idx = self.test_end_index + 1
         
         # Generate indices for the test event
-        test_indices = np.arange(start_idx, end_idx + 1)
+        test_indices = np.arange(start_idx, end_idx)
         self.test_index = test_indices
 
     def get_test_batch(self, local_index):
@@ -187,17 +191,29 @@ class HDLFMRasterDataManager(DataManager):
         
         local_indices = [local_index]  # Assuming local_index is a single index for the test event
         for local_idx in local_indices:
-            # Get input data
-            flow_tensor = self.zero_dem_raster.clone()
-            flow_tensor[self.upstream_filters['upstream1']] = float(input_arr[local_idx-1, 0])
-            flow_tensor[self.upstream_filters['upstream2']] = float(input_arr[local_idx-1, 1])
-            flow_tensor[self.upstream_filters['upstream3']] = float(input_arr[local_idx-1, 2])
+            
+            if local_idx == 0:
+                # For the first index, we cannot use the previous timestep so use the first timestep
+                flow_tensor = self.zero_dem_raster.clone()
+                flow_tensor[self.upstream_filters['upstream1']] = float(input_arr[local_idx, 0])
+                flow_tensor[self.upstream_filters['upstream2']] = float(input_arr[local_idx, 1])
+                flow_tensor[self.upstream_filters['upstream3']] = float(input_arr[local_idx, 2])
+            else:   
+                # Get input data
+                flow_tensor = self.zero_dem_raster.clone()
+                flow_tensor[self.upstream_filters['upstream1']] = float(input_arr[local_idx-1, 0])
+                flow_tensor[self.upstream_filters['upstream2']] = float(input_arr[local_idx-1, 1])
+                flow_tensor[self.upstream_filters['upstream3']] = float(input_arr[local_idx-1, 2])
             
             if torch.cuda.is_available():
                 flow_tensor = flow_tensor.cuda()
             
             dem_input_tensor = self.dem_raster.clone()
-            water_depth_tensor = self.inundation_data_cache[test_event_id][local_idx]
+            if local_idx == 0:
+                # For the first index, we cannot use the previous timestep so use the first timestep
+                water_depth_tensor = self.inundation_data_cache[test_event_id][0]
+            else:
+                water_depth_tensor = self.inundation_data_cache[test_event_id][local_idx-1]
             
             input_tensor = torch.stack([flow_tensor, dem_input_tensor, water_depth_tensor], dim=0).cuda()
             test_input_data.append(input_tensor)
@@ -388,5 +404,4 @@ class HDLFMRasterDataManager(DataManager):
             event_indices_map[event_id].append(local_idx)
         
         # Return the event IDs and their corresponding local indices
-        return event_indices_map
         return event_indices_map

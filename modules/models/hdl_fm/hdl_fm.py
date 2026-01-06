@@ -103,8 +103,11 @@ class HDLFMModelWrapper(ModelWrapper):
     
     def init_model(self):
         self.device = check_device()
+        if torch.cuda.is_available():
+            logger.info(f"Using GPU: {torch.cuda.get_device_name(0)}")
+            torch.cuda.empty_cache()
         self.create_dataset()
-        self.model = HDLFMModel().to(self.device)
+        self.model = HDLFMModel().to(self.device).float()
         self.loss_fn= nn.MSELoss()
         self.optimizer = optim.Adam(self.model.parameters(), lr=self.config.learning_rate)
         return True
@@ -113,23 +116,28 @@ class HDLFMModelWrapper(ModelWrapper):
         return super().train(run_dir, tuning_mode)
     
     def test_model(self):
-        
         logger.info("Testing model")
         self.model.eval()
         predictions =  []
         ground_truth = []
+        start_time = time.time()
+        
+        
         with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], profile_memory=True, on_trace_ready=torch.profiler.tensorboard_trace_handler(self.config.run_dir)) as prof:
             with torch.no_grad():
                 total_loss = 0.0
                 total_mRMSE = 0.0
                 total_nse = 0.0
+                all_tp = 0
+                all_tn = 0
+                all_fp = 0
+                all_fn = 0
                 for index in self.data_manager.test_index:
                     input_data, ref_out = self.data_manager.get_test_batch(index)
-                    start_time = time.time()
                     pred = self.model(input_data)
                     # If pred < 0.3 then set to 0
                     pred = torch.where(pred < 0.3, torch.tensor(0.0).to(self.device), pred)
-                    end_time = time.time()
+                    
                     loss = self.loss_fn(pred, ref_out)
                     
                     # Calculate MSE
@@ -139,14 +147,27 @@ class HDLFMModelWrapper(ModelWrapper):
                     # Calculate mRMSE for wet cells
                     batch_mRMSE = self.mRMSE_fn(pred, ref_out)
                     total_mRMSE += batch_mRMSE
+                    
+                    # confusion matrix components
+                     #calculate confusion matrix at 0.3m threshold
+                    threshold = 0.3
+                    pred_binary = (pred > threshold).float()
+                    ref_binary = (ref_out > threshold).float()
+                    tp = ((pred_binary == 1) & (ref_binary == 1)).sum().item()
+                    tn = ((pred_binary == 0) & (ref_binary == 0)).sum().item()
+                    fp = ((pred_binary == 1) & (ref_binary == 0)).sum().item()
+                    fn = ((pred_binary == 0) & (ref_binary == 1)).sum().item()
+                    
+                    all_tp += tp
+                    all_tn += tn
+                    all_fp += fp
+                    all_fn += fn
 
                     # Calculate NSE
                     observed = ref_out
                     predicted = pred
                     batch_nse = self.nse_fn(observed, predicted)
                     total_nse += batch_nse
-                    if index == 146:
-                        self.save_predictions(pred)
                     predictions.append(pred)
                     ground_truth.append(ref_out)
                     logger.info(f"Test index: {index}, Loss: {batch_mse}, mRMSE: {batch_mRMSE}, NSE: {batch_nse}")
@@ -157,17 +178,31 @@ class HDLFMModelWrapper(ModelWrapper):
                 mRMSE = total_mRMSE / len(self.data_manager.test_index)
                 nse = total_nse / len(self.data_manager.test_index)
                 rmse = np.sqrt(mse)
-                pred_time = end_time - start_time
-                logger.info(f"Validation prediction_time:{pred_time} loss MSE: {mse} RMSE: {rmse}  NSE: {nse} mRMSE: {mRMSE}")
+                
+                # Calculate Hit Ratio and Critical Success Index (CSI)
+                hit_ratio = (all_tp + all_tn) / (all_tp + all_tn + all_fp + all_fn) if (all_tp + all_tn + all_fp + all_fn) > 0 else 0
+                csi = all_tp / (all_tp + all_fp + all_fn) if (all_tp + all_fp + all_fn) > 0 else 0
+                # F2 Score
+                f2_score = (all_tp - all_fn) / (all_tp + all_fp + all_fn) if (all_tp + all_fp + all_fn) > 0 else 0
+                # F3 Score
+                f3_score = (all_tp - all_fp) / (all_tp + all_fp + all_fn) if (all_tp + all_fp + all_fn) > 0 else 0
+               
+        
+        end_time = time.time()
+        pred_time = end_time - start_time
+        logger.info(f"Validation prediction_time:{pred_time} loss MSE: {mse} RMSE: {rmse}  NSE: {nse} mRMSE: {mRMSE} Hit Ratio: {hit_ratio} CSI: {csi} F2 Score: {f2_score} F3 Score: {f3_score}")
         
         predictions = torch.cat(predictions, dim=0)
         ground_truth = torch.cat(ground_truth, dim=0)
-        
+
+        # Save predictions as raster
         flops = self.calculate_flops()
+        self.save_predictions_all(predictions)
+                
         # Save predictions at points of interest
         poi_path = os.path.join(OUTPUT_DIR, "points_of_interest.csv")
         if os.path.exists(poi_path):
-            self.save_predictions_at_points(pred, ref_out, poi_path)
+            self.save_predictions_at_points(predictions, ground_truth, poi_path)
         else:
             logger.warning(f"Points of interest file not found at {poi_path}")
                 
@@ -179,90 +214,13 @@ class HDLFMModelWrapper(ModelWrapper):
             "mRMSE": mRMSE,
             "pred_time": pred_time,
             "flops": flops,
-            "pred_memory_usage": analysis_results
+            "pred_memory_usage": analysis_results, 
+            "hit_rate": hit_ratio,
+            "csi": csi,
+            "f2_score": f2_score,
+            "f3_score": f3_score
         }
         
         logger.info(prof.key_averages().table(sort_by="cuda_memory_usage", row_limit=10))
         return metrics
     
-    def save_predictions(self, pred):
-        idx = 146
-        pred_max = pred.detach().cpu().numpy()
-        output_dir = os.path.join(self.config.run_dir, "output_maps")
-        save_prediction_map(pred_max, output_dir, idx, self.config.model_name)
-        
-    def save_predictions_at_points(self, predictions, ground_truth, points_csv):
-        """
-        Save model predictions at specific points of interest to a CSV file
-        
-        Args:
-            predictions: Model predictions tensor
-            ground_truth: Ground truth tensor
-            points_csv: Path to the CSV file containing points of interest
-        """
-        try:
-            logger.info(f"Saving predictions at points of interest from {points_csv}")
-            
-            # Read points of interest
-            poi_df = pd.read_csv(points_csv)
-            
-            # Convert tensors to numpy arrays for easier handling
-            pred_np = predictions.detach().cpu().numpy()
-            truth_np = ground_truth.detach().cpu().numpy()
-            
-            ref_file = os.path.join(SIMULATION_DATA_DIR, "Run1-0000.wd")
-            with rasterio.open(ref_file) as src:
-                height = src.height
-                width = src.width
-                profile = src.profile
-                transform = src.transform
-                crs = src.crs
-                
-            pred_np = pred_np.reshape(pred_np.shape[0],height, width)
-            truth_np = truth_np.reshape(truth_np.shape[0], height, width)
-           
-            # Extract predictions and ground truth at each point
-            results = []
-            timesteps = min(pred_np.shape[0], truth_np.shape[0])
-            
-            for _, point in poi_df.iterrows():
-                point_id = point['Point_ID']
-                row = int(point['Row'])
-                col = int(point['Column'])
-                elev = point['Elevation_m']
-                label = point['Label']
-                percentile = point['Percentile']
-                
-                # For each timestep, get the prediction and ground truth at this point
-                for t in range(timesteps):
-                    # Check if indices are in bounds
-                    if (t < pred_np.shape[0] and 
-                        row < pred_np.shape[1] and 
-                        col < pred_np.shape[2]):
-                        
-                        pred_depth = pred_np[t, row, col]
-                        true_depth = truth_np[t, row, col]
-                        
-                        results.append({
-                            'Point_ID': point_id,
-                            'Label': label,
-                            'Percentile': percentile,
-                            'Row': row,
-                            'Column': col,
-                            'Elevation_m': elev,
-                            'Timestep': t,
-                            'Predicted_Depth_m': pred_depth,
-                            'True_Depth_m': true_depth,
-                            'Error_m': pred_depth - true_depth,
-                            'Model_Name': self.config.model_name,
-                            'Run_ID': self.config.run_id
-                        })
-            
-            # Create DataFrame and save to CSV
-            results_df = pd.DataFrame(results)
-            output_path = os.path.join(RUN_DIR, self.config.model_name,  f"predictions_at_points_final.csv")
-            results_df.to_csv(output_path, index=False)
-            logger.info(f"Saved point predictions to {output_path}")
-            
-        except Exception as e:
-            logger.error(f"Error saving predictions at points: {e}")

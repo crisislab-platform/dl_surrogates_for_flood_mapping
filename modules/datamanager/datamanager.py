@@ -16,13 +16,16 @@ class DataManager:
         self.test_input = None
         self.test_output = None
         self.batch_size = None
-        self.test_start_timestep = (17 * 4) - 2 * 4 # 17 hours, 4 timesteps per hour, -2 for the initialization period
-        self.test_end_timestep = (65 * 4) - 2 * 4 # 65 hours, 4 timesteps per hour, -2 for the initialization period
+        self.test_start_timestep = 1 
+        self.test_end_timestep = 266
         self.test_start_index = self.test_start_timestep -1 
         self.test_end_index = self.test_end_timestep - 1
         
     def get_batch(self, indices, subset="train"):
         pass
+    
+def shuffle_training_data(self, epoch):
+    pass
     
 def check_inundation_data_cache(event_id):
     cache_dir = os.path.join(OUTPUT_DIR, "preprocessed_inundation")
@@ -37,6 +40,10 @@ def check_inundation_data_cache(event_id):
 def create_inundation_map_tensors():
     """Preprocess all inundation data and save to disk for fast loading"""
     output_dir = os.path.join(OUTPUT_DIR, "preprocessed_inundation")
+    if os.path.exists(output_dir):
+        logger.info(f"Preprocessed inundation directory {output_dir} already exists.")
+        return
+ 
     os.makedirs(output_dir, exist_ok=True)
     
     for event_id in range(1, 10):
@@ -57,7 +64,6 @@ def create_inundation_map_tensors():
         event_inundation_data = []
         for inundation_file in event_inundation_files:
             inundation_map = gdal_asarray(inundation_file)
-            inundation_map[inundation_map < 0.3] = 0
             event_inundation_data.append(inundation_map)
         event_inundation_data = np.array(event_inundation_data)
         

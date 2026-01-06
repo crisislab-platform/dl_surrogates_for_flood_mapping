@@ -4,6 +4,6 @@ parallel --line-buffer CUDA_VISIBLE_DEVICES={1} python3.11 main.py train \
   --sampling_dist {3} \
   --n_clusters {4} \
   ::: 0 \
-  ::: 16 \
+  ::: 19 \
   ::: 50 \
-  ::: 150 
+  ::: 50

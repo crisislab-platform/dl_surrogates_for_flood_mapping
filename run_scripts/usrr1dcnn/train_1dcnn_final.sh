@@ -7,7 +7,7 @@ parallel --line-buffer -j 6 CUDA_VISIBLE_DEVICES={1} python3.11 "${PROJECT_DIR}/
   --learning_rate {4} \
   --epochs {5} \
   --n_clusters {6} \
-  --sampling_dist {7} \Manu
+  --sampling_dist {7} \
   --rl_group {8} \
   --input_time_len_h {9} \
   --usrr_conv_kernel {10} \

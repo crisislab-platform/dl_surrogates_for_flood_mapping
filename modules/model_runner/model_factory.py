@@ -1,22 +1,21 @@
 import logging
-# from modules.models.lstm.lstm import SimpleLSTMModel
-from modules.models.cnn1d.cnn1d import CNN1DSAModelWrapper
+
 from modules.models.usrr_1dcnn.ussr1dcnn import USSR1DCNNModelWrapper
 from modules.models.usrr_1dcnn.unet import UNetModelWrapper
 from modules.models.usrr_1dcnn.cnn1d import CNN1DModelWrapper
 from modules.models.pi1dcnn.pi1dcnn import PICNN1DModelWrapper
 from modules.models.hdl_fm.hdl_fm import HDLFMModelWrapper
-from modules.models.srr_lstm.srr_lstm import LSTMModelWrapper
-from modules.models.srr_lstm.srr_lstm_combined import SRRLSTMModelWrapper
+from modules.models.cnn1d.cnn1d import CNN1DSAModelWrapper
+
 from modules.models.model_wrapper import ModelConfig, ModelWrapper
 
-from modules.lib.constants import (CNN1D_V1, USRR_UNET_V1, USRR_1DCNN_V1, USRR_CNN1D_COMBINED, PICNN1D_V1, POD_BNN_V1, TCN_V1, HDL_FM_V1, LSTM_SRR_V1, SRR_LSTM_COMBINED)
+from modules.lib.constants import (CNN1D_V1, USRR_UNET_V1, USRR_1DCNN_V1, USRR_CNN1D_COMBINED, PICNN1D_V1, HDL_FM_V1)
 logger = logging.getLogger("ModelFactory")
 
 def create_model(config: ModelConfig, args)-> ModelWrapper:
     
     model_factories = {
-        CNN1D_V1: lambda: create_1dcnn_standalone_model(config, args),
+        CNN1D_V1: lambda: create_1dcnn_model(config, args),
         
         USRR_UNET_V1: lambda: create_unet_model(config, args),
         
@@ -26,15 +25,7 @@ def create_model(config: ModelConfig, args)-> ModelWrapper:
         
         PICNN1D_V1: lambda:create_pi1dcnn_model(config, args),
         
-        POD_BNN_V1: lambda: create_pod_bnn_model(config, args),
-        
-        LSTM_SRR_V1: lambda: create_lstm_srr_model(config, args),
-        
-        TCN_V1: lambda: create_tcn_model(config, args),
-        
         HDL_FM_V1: lambda: create_hdl_fm_model(config, args), 
-        
-        SRR_LSTM_COMBINED: lambda: create_lstm_srr_combined_model(config, args)
     }
     
     try:
@@ -51,12 +42,12 @@ def create_model(config: ModelConfig, args)-> ModelWrapper:
         logger.error(f"Error creating model {config.model_name}: {str(e)}")
         return None
     
-def create_1dcnn_standalone_model(config: ModelConfig, args):
+def create_1dcnn_model(config: ModelConfig, args):
     tuning_mode = args.tuning_mode
     config.args = {
         'tuning_mode': tuning_mode, 
     }
-    cnn_model =  CNN1DSAModelWrapper(config)
+    cnn_model = CNN1DSAModelWrapper(config)
     logger.info(f"Created 1DCNN model again")
     return cnn_model
 
@@ -92,6 +83,7 @@ def create_rl1dcnn_model(config, args):
     }
     return CNN1DModelWrapper(config)
 
+
 def create_combined_model(config, args):
     config.args = {
         'sampling_dist': args.sampling_dist,
@@ -110,43 +102,8 @@ def create_pi1dcnn_model(config, args):
     # Create Pi1DCNNModel with combined configuration
     return PICNN1DModelWrapper(config)
 
-def create_pod_bnn_model(config, args):
-    config.args = {
-        'tuning_mode': args.tuning_mode
-    }
-
-    # Create POD_BNN model with combined configuration
-    return HDLFMModelWrapper(config)
-
-def create_tcn_model(config, args):
-    # Create TCN model with combined configuration
-    config.args = {
-
-    }
-    return None
 
 def create_hdl_fm_model(config, args):
     # Create HDL_FM model with combined configuration
     config.args = {}
     return HDLFMModelWrapper(config)
-
-def create_lstm_srr_combined_model(config, args):
-    # Create LSTM_SRR model with combined configuration
-    config.args = {
-        'sampling_dist': args.sampling_dist,
-        'n_clusters': args.n_clusters,
-        'rl_group': args.rl_group,
-        'input_time_len_h': args.input_time_len_h,
-        'tuning_mode': args.tuning_mode
-    }
-    return SRRLSTMModelWrapper(config)
-
-def create_lstm_srr_model(config, args):
-    config.args = {
-        'sampling_dist': args.sampling_dist,
-        'n_clusters': args.n_clusters,
-        'rl_group': args.rl_group,
-        'input_time_len_h': args.input_time_len_h,
-        'tuning_mode': args.tuning_mode
-    }
-    return LSTMModelWrapper(config)

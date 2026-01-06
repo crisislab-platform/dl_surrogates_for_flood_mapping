@@ -1,5 +1,5 @@
 # Description: Data loader for U-Net model (PyTorch version)
-from modules.lib.constants import CARLISLE_DATA_DIR, OUTPUT_DIR, SIMULATION_DATA_DIR
+from modules.lib.constants import DATA_DIR, OUTPUT_DIR, SIMULATION_DATA_DIR, DEM_FILE
 from modules.models.usrr_1dcnn.lib.gdal_lib import coords2rc, rc2coords, gdal_asarray, gdal_transform, gdal_writetiff
 from modules.models.usrr_1dcnn.lib.base_functions import read_shp_point
 from modules.utils.run_util import check_device
@@ -21,16 +21,16 @@ class UNetDataManager(USRRDataManager):
     
     def __init__(self, sampling_dist, 
                  run_dir, 
-                 batches_per_map=6):
+                 batches_per_map=8):
         
         super().__init__()
         
-        cross_tile_dist=32
+        cross_tile_dist=28
         map_size=64
         
         # Paths
         self.rep_loc_file_path = f"{OUTPUT_DIR}/rls/rl_{sampling_dist}.asc"
-        self.dem_asc_file = f"{SIMULATION_DATA_DIR}/Carlisle_5m.asc"
+        self.dem_asc_file = DEM_FILE
         self.simulation_dir = SIMULATION_DATA_DIR
         self.max_inundation_file = None
         
@@ -61,13 +61,15 @@ class UNetDataManager(USRRDataManager):
         self.prepare_batch_idxs()
         self.prepare_test_event_batches()
         
+    def shuffle_training_data(self, epoch):
+        pass
         
     def prepare_test_event_batches(self):
         logger.info("Preparing test event data for UNet evaluation")
         
         # Calculate time indices for the test period
-        test_start_tidx = (17 * 4) - (2 * 4) - 1 
-        test_end_tidx = (65 * 4) - (2 * 4) - 1
+        test_start_tidx = 0
+        test_end_tidx = 265
         test_event_id = self.test_event_ids[0]
         
         # Create containers for final batch structures
@@ -115,7 +117,7 @@ class UNetDataManager(USRRDataManager):
             if timestep_batches:
                 self.test_input_batches.append(timestep_batches)
                 self.test_output_batches.append(timestep_output_batches)
-        
+                
         logger.info(f"Prepared batch structure for {len(self.test_input_batches)} timesteps with matching inputs and outputs")
     
         
@@ -297,10 +299,12 @@ class UNetDataManager(USRRDataManager):
         return 0
     
     def preload_inundation_maps(self):
+        torch.cuda.empty_cache()
         self.preloaded_maps = {}
         for event_id in self.all_event_ids:
             if check_inundation_data_cache(event_id):
                 inundation_data = torch.load(os.path.join(OUTPUT_DIR, "preprocessed_inundation", f"event_{event_id}_inundation.pt"))
+                inundation_data = inundation_data.to(self.device)
                 if event_id not in self.preloaded_maps:
                     self.preloaded_maps[event_id] = {}
                 for i in range(len(inundation_data)):

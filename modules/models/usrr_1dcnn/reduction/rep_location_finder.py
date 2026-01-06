@@ -1,118 +1,39 @@
-from modules.lib.constants import CARLISLE_DATA_DIR, OUTPUT_DIR, SIMULATION_DATA_DIR
+from modules.lib.constants import DATA_DIR, OUTPUT_DIR, SIMULATION_DATA_DIR, RUN_DIR, DEM_FILE
 from modules.models.usrr_1dcnn.lib.base_functions import *
 from modules.models.usrr_1dcnn.lib.gdal_lib import gdal_asarray, gdal_transform, rc2coords, gdal_writeasc
 from modules.models.usrr_1dcnn.reduction.rl_culster_finder import RLClusterFinder
 from modules.utils.path_util import ensure_dir
+from torch.profiler import profile, ProfilerActivity
+from modules.utils.model_util import profiler_analysis, format_flops, save_prediction_map
+from modules.datamanager.datamanager import check_inundation_data_cache
 
 import logging
 import numpy as np
 import pandas as pd
 import os
 import torch
+import psutil
+import time
+from modules.utils.model_util import profiler_analysis, format_flops, save_prediction_map
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("Representaitve_Location_Finder")
+
+model_name = "USRR_1DCNN_REDUCTION"
 
 class RepLocation:
     def __init__(self, results_dir):
         self.work_dir = results_dir
         ensure_dir(self.work_dir)
+        self.all_event_ids = [1, 2, 3, 4, 5, 6, 7, 8, 9]
         logger.info(f"Representative Location Finder initialized with work directory: {self.work_dir}")
         
-    def spatial_sampling(self, run_id, dem_asc_file, max_inun_file, sampling_dist):
-        rl_coords_ls = []
-        potential_inun_arr = gdal_asarray(max_inun_file)
-        dem_arr = gdal_asarray(dem_asc_file)
-        
-        # Create inundation mask (True where inundation depth > 0)
-        inundation_mask = (potential_inun_arr > 0)
-        inundated_cells_count = np.sum(inundation_mask)
-        logger.info(f"Total inundated cells: {inundated_cells_count} out of {potential_inun_arr.size}")
-        
-        pixel_width = gdal_transform(max_inun_file)[1]
-        num_cell_per_sample = int(sampling_dist / pixel_width)
-        num_block_0 = (potential_inun_arr.shape[0] + num_cell_per_sample - 1) // num_cell_per_sample  # dir y (height)
-        num_block_1 = (potential_inun_arr.shape[1] + num_cell_per_sample - 1) // num_cell_per_sample  # dir x (width)
-    
-        xOrigin, pw, xRot, yOrigin, ph, yRot  = gdal_transform(dem_asc_file) # affine transform parameters
-        
-        logger.info(f"Affine transform parameters DEM: {xOrigin, pw, xRot, yOrigin, ph, yRot}")
-        logger.info(f"Pixel width: {pixel_width} m")
-        logger.info(f"Sampling distance: {sampling_dist} m")
-        logger.info(f"Number of cells in each block: {num_cell_per_sample}")
-        logger.info(f"Potential inundation map shape: {potential_inun_arr.shape}")
-        logger.info(f"DEM shape: {dem_arr.shape}")
-        logger.info(f"Adjusted number of blocks in direction 0: {num_block_0}")
-        logger.info(f"Adjusted number of blocks in direction 1: {num_block_1}")
-
-        for i_0 in range(num_block_0):
-            start_0 = i_0 * num_cell_per_sample
-            
-            # Ensure the block does not exceed the array bounds
-            end_0 = min(start_0 + num_cell_per_sample, potential_inun_arr.shape[0])
-            for i_1 in range(num_block_1):
-                start_1 = i_1 * num_cell_per_sample
-                
-                # Ensure the block does not exceed the array bounds
-                end_1 = min(start_1 + num_cell_per_sample, potential_inun_arr.shape[1])
-                
-                # Check if this block has any inundation
-                inundation_block = inundation_mask[start_0:end_0, start_1:end_1]
-                if not np.any(inundation_block):
-                    logger.info(f"Block {i_0}, {i_1} has no inundation - skipping")
-                    continue
-                
-                # Only process blocks that have inundation
-                curr_dem_block_arr = dem_arr[start_0:end_0, start_1:end_1]
-                
-                # Create a masked version of the DEM where only inundated cells are considered
-                # Use np.nan for non-inundated cells to exclude them from min calculation
-                masked_dem = np.where(inundation_block, curr_dem_block_arr, np.nan)
-                
-                # Find the lowest point in the inundated area
-                argmin_dem = np.nanargmin(masked_dem)
-                logger.info(f"Minimum DEM value in inundated area of block {i_0}, {i_1}, argmin_dem: {argmin_dem} value: {masked_dem.ravel()[argmin_dem]}")
-                
-                # Calculate row and column indices correctly within the block
-                block_height = end_0 - start_0
-                block_width = end_1 - start_1
-                
-                # Fix: correctly convert flattened index to 2D coordinates
-                # Row index = flattened index // width (not height)
-                # Column index = flattened index % width
-                ri = argmin_dem // block_width
-                ci = argmin_dem % block_width
-                 
-                logger.info(f"Row index: {ri}, Column index: {ci}")
-                logger.info(f"row-> {start_0 + ri}, col-> {start_1 + ci}")
-                
-                # Additional bounds check to prevent index errors
-                if start_0 + ri >= potential_inun_arr.shape[0] or start_1 + ci >= potential_inun_arr.shape[1]:
-                    logger.warning(f"Calculated indices ({start_0 + ri}, {start_1 + ci}) out of bounds for array shape {potential_inun_arr.shape} - skipping")
-                    continue
-                    
-                coords = rc2coords((xOrigin, pw, xRot, yOrigin, ph, yRot), (start_0 + ri, start_1 + ci))
-                rl_coords_ls.append((coords, ri, ci))
-                    
-        logger.info(f"Found {len(rl_coords_ls)} representative locations in inundated areas")
-        output_csv=f'ss_{sampling_dist}.csv'
-        file_path = f'{self.work_dir}/{output_csv}'
-        
-        # Save points to CSV instead of shapefile
-        df = pd.DataFrame(rl_coords_ls, columns=['coordinates', 'row_index', 'col_index'])
-        # Extract X and Y from the coordinates tuple
-        df['x'] = df['coordinates'].apply(lambda coord: coord[0])
-        df['y'] = df['coordinates'].apply(lambda coord: coord[1])
-        # Save to CSV, keep only necessary columns
-        df[['x', 'y', 'row_index', 'col_index']].to_csv(file_path, index=False)
-        logger.info(f"Saved representative locations to CSV: {file_path}")
-        return file_path
     
     def spatial_sampling_new(self, run_id, dem_asc_file, max_inun_file, sampling_dist):
         potential_inun_arr = torch.from_numpy(gdal_asarray(max_inun_file)).cuda()
         dem_arr = torch.from_numpy(gdal_asarray(dem_asc_file)).cuda()
         
-        inundation_mask = (potential_inun_arr > 0)
+        inundation_mask = (potential_inun_arr > 0.3)
         inundated_cells_count = inundation_mask.sum().item()
         logger.info(f"Total inundated cells: {inundated_cells_count} out of {potential_inun_arr.shape[0] * potential_inun_arr.shape[1]}")
         
@@ -136,7 +57,6 @@ class RepLocation:
                 
     
                 curr_dem_block_arr = dem_arr[start_0:end_0, start_1:end_1]
-   
                 masked_dem = curr_dem_block_arr.clone()
                 masked_dem[~inundation_block] = float('inf')
                 argmin_dem = torch.argmin(masked_dem.view(-1)).item()
@@ -194,10 +114,93 @@ class RepLocation:
         logger.info(f"Representative locations visualized and saved to {output_file}")
     
 def find_representative_locations_and_clusters(run_id, sampling_dist, n_clusters=10, random_state=42, n_init=10):
+    
+    process = psutil.Process()
+    start_cpu_time = process.cpu_times().user + process.cpu_times().system
+    start_time = time.time()
+
+    mem_before = process.memory_info().rss / (1024 * 1024)  # Convert to MB
+
+    with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], 
+                                profile_memory=True) as prof:
+
+        rl_file_path = reducer_func(run_id, sampling_dist, n_clusters, random_state, n_init)
+    
+    logger.info(prof.key_averages().table(sort_by="self_cpu_time_total", row_limit=10))
+    analysis = profiler_analysis(prof.key_averages())
+    logger.info(analysis)
+        
+    mem_after = process.memory_info().rss / (1024 * 1024)  # Convert to MB
+    
+    memory_used = mem_after - mem_before
+    logger.info(f"Memory used during SDR reduction: {memory_used:.2f} MB")
+    
+    end_time = time.time()
+    end_cpu_time = process.cpu_times().user + process.cpu_times().system
+    cpu_time_used = end_cpu_time - start_cpu_time
+    wall_time = end_time - start_time
+    
+    # Estimate FLOPS based on CPU frequency and utilization
+    cpu_freq = psutil.cpu_freq().current * 1e6  # Convert MHz to Hz
+    cpu_count = psutil.cpu_count(logical=True)
+    utilization = cpu_time_used / wall_time
+
+    estimated_flops = cpu_freq * cpu_count * utilization * wall_time
+    print(f"Estimated FLOPS: {estimated_flops:,.0f}")
+    
+    logger.info(f"Memory profiling completed. Results saved to lstm_model_memory_usage.txt")
+    
+    # Save the results to a csv file in the output directory
+    # Create path if it does not exist
+    output_dir = os.path.join(RUN_DIR, model_name)
+    os.makedirs(output_dir, exist_ok=True)
+    output_file = os.path.join(output_dir, f"reduction_metrics.csv")
+    
+    # Append the results to the csv file
+    if os.path.exists(output_file):
+        df = pd.read_csv(output_file)
+        new_row = {
+            'run_id': run_id,
+            'reduction_time': wall_time,
+            'flops': estimated_flops,
+            'max_cpu_memory':  memory_used,
+            'max_cuda_memory': analysis.get('max_cuda_memory', 0),
+            'total_cpu_time': cpu_time_used,
+            'total_gpu_time': analysis.get('total_gpu_time', 0),
+            'cpu_time_used': cpu_time_used
+        }
+        df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+        df.to_csv(output_file, index=False)  
+        logger.info(f"Results saved to {output_file}")
+        
+    else:
+        new_row = {
+            'run_id': run_id,
+            'reduction_time': wall_time,
+            'flops': estimated_flops,
+            'max_cpu_memory':  memory_used,
+            'max_cuda_memory': analysis.get('max_cuda_memory', 0),
+            'total_cpu_time': cpu_time_used,
+            'total_gpu_time': analysis.get('total_gpu_time', 0),
+            'cpu_time_used': cpu_time_used
+        }
+        df = pd.DataFrame([new_row])
+        df.to_csv(output_file, index=False)
+        logger.info(f"Results saved to {output_file}")
+        
+    logger.info(f"Total CPU time used: {cpu_time_used} seconds")
+    logger.info(f"Total wall time used: {wall_time} seconds")       
+    logger.info(f"Estimated FLOPS: {format_flops(estimated_flops)}")
+    logger.info("SDR reduction completed successfully.")
+    
+    return rl_file_path
+    
+    
+def reducer_func(run_id, sampling_dist, n_clusters=10, random_state=42, n_init=10):
     work_dir = f"{OUTPUT_DIR}/rls"
-    dem_asc_file = f"{SIMULATION_DATA_DIR}/Carlisle_5m.asc"
+    dem_asc_file = DEM_FILE
     simulation_dir = SIMULATION_DATA_DIR
-    max_inunundation_file = f"{simulation_dir}/Run3-0096.wd"
+    max_inunundation_file = f"{simulation_dir}/Run3-0094.wd"
     run_meta_data_file = f"{work_dir}/run_meta_data.csv"
     
     rep_loc = RepLocation(work_dir)

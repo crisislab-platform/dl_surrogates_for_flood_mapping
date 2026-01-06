@@ -6,9 +6,11 @@ from modules.lib.constants import USRR_1DCNN_V1, RUN_DIR
 import numpy as np
 import torch
 import torch.nn as nn
+from torch.profiler import profile, ProfilerActivity
 import logging
 import time
 import os
+import json
 import pandas as pd
 
 model_name = USRR_1DCNN_V1
@@ -19,51 +21,50 @@ logger = logging.getLogger("CNN1D_USRR_ModelWrapper")
 class CNN1DSequential(nn.Module):
     def __init__(self, model_structure, seq_h, convo_kernel=4, pool_kernel=3):
         super(CNN1DSequential, self).__init__()
-        self.convo_1 = nn.Conv1d(in_channels=model_structure[0], out_channels=model_structure[1], 
-                                 kernel_size=convo_kernel, padding='same')
+        self.convo_1 = nn.Conv1d(in_channels=model_structure[0], out_channels=model_structure[1],
+                                 kernel_size=convo_kernel, padding=1)
+        
         self.pooling_1 = nn.MaxPool1d(pool_kernel, ceil_mode=True)
         
-        self.convo_2 = nn.Conv1d(in_channels=model_structure[1],out_channels=model_structure[1], 
-                                 kernel_size=convo_kernel, padding='same')
+        self.convo_2 = nn.Conv1d(in_channels=model_structure[1],out_channels=model_structure[1],
+                                 kernel_size=convo_kernel, padding=1)
         
         self.pooling_2 = nn.MaxPool1d(pool_kernel, ceil_mode=True)
         
-        self.dim_past_convo = lambda dim_in: int(np.ceil((dim_in)/pool_kernel))
-        flattened_dim = self.dim_past_convo(self.dim_past_convo(seq_h)) * model_structure[1]
-        
-        # first_conv_out = int(((seq_h + 2*1 - convo_kernel) // stride) + 1)
-        # second_conv_out = int(((first_conv_out + 2*1 - convo_kernel) // stride) + 1)
-        # flattened_dim = int(second_conv_out * model_structure[1])
-    
-        self.flatten = nn.Flatten()
-        self.hidden_1 = nn.Linear(flattened_dim, model_structure[-2])
-        self.lyr_out = nn.Linear(model_structure[-2], model_structure[-1])
-        
         self.lrelu = nn.LeakyReLU()
         self.relu = nn.ReLU()
-        
-        self.batch_norm_1 = nn.BatchNorm1d(model_structure[1])
-        self.batch_norm_2 = nn.BatchNorm1d(model_structure[1])
-        
-        self.dropout = nn.Dropout(0.2)
-
-        
-    def forward(self, x):
-        x = self.convo_1(x.transpose(1, 2))
-        x = torch.tanh(x)
-        x = self.pooling_1(x)
-        
-        x = self.convo_2(x)
-        x = self.lrelu(x)
-        x = self.pooling_2(x)
-        
-        x = self.flatten(x)
-        x = self.hidden_1(x)
-        x = self.lrelu(x)
-        x = self.lyr_out(x).squeeze(1)
-        return x
+        self.bn1 = nn.BatchNorm1d(model_structure[1])
+        self.bn2 = nn.BatchNorm1d(model_structure[1]*2)
+        self.bn3 = nn.BatchNorm1d(model_structure[1]*2)
+        self.dropout = nn.Dropout(0.1)
     
+        with torch.no_grad():
+            dummy = torch.zeros(1, model_structure[0], int(seq_h))
+            flat_dim = self._forward_features(dummy).view(1, -1).size(1)
+        
+        self.flatten = nn.Flatten()
+        self.hidden_1 = nn.Linear(flat_dim, model_structure[-2])
+        self.hidden_2  = nn.Linear(model_structure[-2], model_structure[-2] * 2)
+        self.hidden_3 = nn.Linear(model_structure[-2] * 2, model_structure[-2] * 4)
+        self.lyr_out = nn.Linear(model_structure[-2], model_structure[-1])
+
+    def _forward_features(self, x):
+        x = self.dropout(self.relu(self.convo_1(x)))
+        x = self.pooling_1(x)       
+        x = self.dropout(self.relu(self.convo_2(x)))
+        x = self.pooling_2(x)
+        return x
+
+    def forward(self, x):
+        x = x.transpose(1, 2)
+        x = self._forward_features(x)
+        x = self.flatten(x)
+        x = self.dropout(self.relu(self.hidden_1(x)))
+        x = self.lyr_out(x)
+        return x
+            
 class CNN1DModelWrapper(ModelWrapper):
+    
     def __init__(self, config: ModelConfig):
         super().__init__(config)
         self.model_name = model_name
@@ -94,16 +95,36 @@ class CNN1DModelWrapper(ModelWrapper):
     
     def init_model(self):
         logger.info(f"Initializing CNN1D model")
+        
+        # Set deterministic seeds for model initialization
+        torch.manual_seed(42)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed(42)
+            torch.cuda.manual_seed_all(42)
+        
         self.create_dataset()
         # model structure [input_dim, conv_out_dim, hidden-fc-layer-size output_dim]
         self.model_structure = [self.num_of_features,self.output_channel_size, self.fc_layer_size, self.rl_group_size]
         self.model = CNN1DSequential(self.model_structure, self.seq_h, 
                                     convo_kernel=self.convo_kernel, 
                                     pool_kernel=self.pool_kernel).to(self.device)
+        # self.model = CNN1DSequential2(self.model_structure, 1, convo_kernel=self.convo_kernel).to(self.device)
         self.model.float()
         self.loss_fn = nn.MSELoss()
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.config.learning_rate, weight_decay=1e-4)
-        logger.info(f"Model initialized")
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.config.learning_rate, weight_decay=1e-5)
+        
+          
+        # Add learning rate scheduler
+        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            self.optimizer,
+            mode='min',          # Reduce LR when val_loss stops decreasing
+            factor=0.5,          # Multiply LR by this factor when reducing
+            patience=5,          # Number of epochs with no improvement after which LR will be reduced
+            verbose=True,        # Print message when LR is reduced
+            min_lr=1e-5          # Lower bound on the learning rate
+        )
+        
+        logger.info(f"Model initialized with learning rate scheduler (ReduceLROnPlateau)")
         return True 
         
     def train(self, run_dir: str, tuning_mode = True) -> str:
@@ -154,40 +175,9 @@ class CNN1DModelWrapper(ModelWrapper):
         
     def save_predictions(self, pred):
         pass
-        # idx = 146
-        # pred_max = pred.detach().cpu().numpy()[idx]
-        # output_dir = os.path.join(self.config.run_dir, )
-        # output_dir = os.path.join(RUN_DIR, model_name,"output_maps")  
-        
-        # os.makedirs(output_dir, exist_ok=True)
-        # output_file = os.path.join(output_dir, f"1dcnn_predictions_{idx:04d}.csv")
 
-        # # Get row and column coordinates from the data manager
-        # coords = [(row, col) for row, col in self.data_manager.coords_to_cluster_rls]
-        # rows = [coord[0] for coord in coords]
-        # cols = [coord[1] for coord in coords]
-        
-        # # Create DataFrame with predictions and coordinates
-        # prediction_map = pd.DataFrame({
-        #     'row': rows,
-        #     'col': cols,
-        #     f'value_{self.rl_group}': pred_max.flatten()
-        # })
-        
-        # if os.path.exists(output_file):
-        #     df = pd.read_csv(output_file)
-        #     # Merge on row and col if they exist in the file
-        #     if 'row' in df.columns and 'col' in df.columns:
-        #         # Keep only the columns from prediction_map that aren't row/col
-        #         value_cols = [col for col in prediction_map.columns if col not in ['row', 'col']]
-        #         # Merge the new predictions with existing data
-        #         df = pd.merge(df, prediction_map[['row', 'col'] + value_cols], on=['row', 'col'], how='outer')
-        #     else:
-        #         # If existing file doesn't have coordinates, just use the new format
-        #         df = prediction_map
-        # else:
-        #     df = prediction_map
-            
-        # df.to_csv(output_file, index=False)
-        # logger.info(f"Prediction map saved to {output_file} with row/col coordinates")
-# 0.055 m -  RMSE should be around this
+    def save_predictions_all(self, pred):
+        pass
+
+    def save_predictions_at_points(self, pred, ref_out, poi_path):
+        pass

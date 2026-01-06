@@ -1,0 +1,1353 @@
+import os
+import logging
+import pandas as pd
+import matplotlib.pyplot as plt
+import numpy as np
+from modules.lib.constants import RUN_DIR, PLOTS_OUTPUT_DIR
+from modules.lib.constants import USRR_CNN1D_COMBINED, PICNN1D_V1, SRR_LSTM_COMBINED, CNN1D_V1, HDL_FM_V1
+from modules.metrics.topsis_analysis import topsis
+
+from modules.lib.constants import RMSE, MRMSE, HITRATE, CSI, F2SCORE, F3SCORE, INFERENCE_TIMES, INFERENCE_MEMORY_USAGE, FLOPS, PARAMS
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+OUTPUT_DIR = os.path.join(PLOTS_OUTPUT_DIR, "perf_plots")
+
+model_colors = {
+    "Tier-1": "#0173B2", 
+    "Tier-2": "#DE8F05",   
+    "Tier-3": "#029E73",       
+    "Tier-4": "#D55E00",      
+}
+
+def computational_efficiency():
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    
+    # Generate and save comparative performance visualizations of different models
+    training_metrics_file = os.path.join(RUN_DIR, "final_training_metrics.csv")
+    performance_metrics_file = os.path.join(RUN_DIR, "final_performance_metrics.csv")
+    
+    try:
+        train_metrics = pd.read_csv(training_metrics_file)
+        # Avoid model SLTM-SRR as it is not a valid model
+        train_metrics = train_metrics[train_metrics['model'] != SRR_LSTM_COMBINED]
+        training_metrics = train_metrics.groupby('model').last().reset_index()
+        perf_metrics = pd.read_csv(performance_metrics_file)
+        
+        # Filter performance metrics to only include models in training metrics
+        perf_metrics = perf_metrics[perf_metrics['run_id'].isin(training_metrics['run_id'])]
+        training_metrics = training_metrics[training_metrics['run_id'].isin(perf_metrics['run_id'])]
+        
+        perf_metrics = perf_metrics.sort_values(by='model')
+        training_metrics = training_metrics.sort_values(by='model')
+        
+        model_names = perf_metrics['model'].values
+        rmse = perf_metrics['rmse'].values
+        mrmse = perf_metrics['mRMSE'].values
+        csi = perf_metrics['csi'].values
+        hit_rate = perf_metrics['hit_rate'].values
+        f2_score = perf_metrics['f2_score'].values
+        f3_score = perf_metrics['f3_score'].values
+        inference_times = perf_metrics['inference_latency'].values
+        params = training_metrics['trainable_params'].values
+        flops = perf_metrics['flops'].values
+   
+
+        gflops = [round(float(flop / 1e9), 1) for flop in flops]  # Convert to GFLOPs with 1 decimal place
+        params = [round(param / 1e6, 2) for param in params]  # Convert to Millions with 2 decimal places
+        
+        # Extract inference memory usage
+        inference_memory_usage = []
+        for inference_memory in perf_metrics['pred_memory_usage'].values:
+            if isinstance(inference_memory, str) and inference_memory.startswith('{'):
+                try:
+                    mem_dict = eval(inference_memory)
+                    inference_memory_usage.append(mem_dict.get('max_cuda_memory', 0) / (1024**3))
+                except:
+                    inference_memory_usage.append(0)
+            else:
+                inference_memory_usage.append(0)
+                
+             
+        metrics_dict = {
+            RMSE: rmse, 
+            MRMSE: mrmse, 
+            CSI: csi, 
+            HITRATE: hit_rate,
+            F2SCORE: f2_score, 
+            F3SCORE: f3_score,
+            INFERENCE_TIMES: inference_times,
+            PARAMS: params,
+            FLOPS: gflops,
+            INFERENCE_MEMORY_USAGE: inference_memory_usage
+        }
+        
+        # Calculate speed up
+        speed_up = 20 * 60 / perf_metrics['inference_latency'].values
+        logger.info(f"Generating performance comparisons for {len(model_names)} models")
+        
+        create_performance_plot(gflops, rmse, inference_times, model_names,
+                              'GFLOPs', 'RMSE (m)', 'Inference Time (s)',
+                              '(a) FLOPs vs RMSE vs Inference Latency', 'flops_vs_rmse_vs__inference_time.png')
+        
+        create_performance_plot(params,rmse, inference_memory_usage, model_names,
+                        'Parameters (Million)', 'RMSE (m)', 'Maximum GPU Memory Usage (GB)',
+                        '(b) Model Parameters vs RMSE vs Max GPU Memory', 'parameters_vs_rmse_vs_memory.png')
+
+        # create_performance_plot(gflops, inference_memory_usage, params, model_names, 'GFLOPs', 
+        #                         'Inference Memory Usage (GB)', 'Inference Time (s)',
+        #                         'GFLOPs vs Inference Memory Usage vs Prameters', 
+        #                         'flops_vs_inference_memory_vs_parameters.png')
+        
+        # create_performance_plot(inference_memory_usage, rmse_inverse, inference_times, model_names,
+        #                         'Inference Memory Usage (GB)', rmse_inverse_lable, 'Inference Time (s)',
+        #                         'Inference Memory Usage vs RMSE vs Inference Latency', 
+        #                         'inference_memory_vs_rmse_vs_inference_time.png')
+        
+        # create_performance_plot(compound_footprint, rmse, inference_times, model_names, 'Compound Computational Footprint \n (Inference Time, GFLOPs, Parameters, Memory Usage)',
+        #                         rmse_inverse_lable, 'Inference Time (s)',
+        #                         'Compound Computational Footprint vs Model Accuracy', 
+        #                         'compound_footprint_vs_rmse_vs_inference_time.png')
+        
+        # create_performance_plot(params, inference_times, flops, model_names,
+        #                       'Parameters (Million)', 'Inference Time (seconds)', 'FLOPs (Billion)',
+        #                       'Model Complexity vs Inference Time', 'model_complexity_vs_inference_time.png')
+        
+        # create_performance_plot(flops, rmse, inference_times, model_names,
+        #                       'FLOPs (Billion)', 'RMSE (m)', 'Inference Time (s)',
+        #                       'Model Complexity and Latency vs Performance', 'flops_rmse_time.png')
+        
+        # create_performance_plot(inference_memory_usage, rmse, params, model_names,
+        #                       'Inference Memory Usage (GB)', 'RMSE (m)', 'Parameters (Million)',
+        #                       'Inference Memory Usage vs Parameters vs RMSE', 'inference_memory_usage_vs_rmse.png')
+        
+        topsis(model_names, metrics_dict)
+        logger.info("Completed generating performance visualizations and topsis analysis.")
+    
+    except Exception as e:
+        logger.error(f"Error generating metrics visualizations: {e}")
+        return None
+        
+    
+def create_performance_plot(x_values, y_values, z_values, model_names, x_label, y_label, z_label, title, filename):
+    fig, ax = plt.subplots(figsize=(10, 6))
+    
+    # Set scientific color scheme - white background with dark elements
+    fig.patch.set_facecolor('white')
+    ax.set_facecolor('white')
+    
+    # Rename model_names to standard values
+    for i, model in enumerate(model_names):
+        if model == USRR_CNN1D_COMBINED:
+            model_names[i] = "Tier-1"
+        elif model == PICNN1D_V1:
+            model_names[i] = "Tier-3"
+        elif model == SRR_LSTM_COMBINED:
+            model_names[i] = "SRR-LSTM"
+        elif model == CNN1D_V1:
+            model_names[i] = "Tier-2"
+        elif model == HDL_FM_V1:
+            model_names[i] = "Tier-4"
+    
+    # Convert input values to numeric format if they aren't already
+    numeric_x_values = []
+    numeric_y_values = []
+    numeric_z_values = []
+    
+    for x_val, y_val, z_val in zip(x_values, y_values, z_values):
+        # Convert x value if needed
+        if isinstance(x_val, str):
+            try:
+                if x_val.startswith('{'):
+                    mem_dict = eval(x_val)
+                    numeric_x = mem_dict.get('max_cuda_memory', 0) / (1024**3)
+                else:
+                    numeric_x = float(x_val)
+            except:
+                logger.warning(f"Could not convert x value: {x_val} to numeric, using 0")
+                numeric_x = 0
+        else:
+            numeric_x = float(x_val) if x_val is not None else 0
+            
+        # Convert y value if needed
+        if isinstance(y_val, str):
+            try:
+                if y_val.startswith('{'):
+                    mem_dict = eval(y_val)
+                    numeric_y = mem_dict.get('max_cuda_memory', 0) / (1024**3)
+                else:
+                    numeric_y = float(y_val)
+            except:
+                logger.warning(f"Could not convert y value: {y_val} to numeric, using 0")
+                numeric_y = 0
+        else:
+            numeric_y = float(y_val) if y_val is not None else 0
+        
+        # Convert z value if needed
+        if isinstance(z_val, str):
+            try:
+                if z_val.startswith('{'):
+                    mem_dict = eval(z_val)
+                    numeric_z = mem_dict.get('max_cuda_memory', 0) / (1024**3)
+                else:
+                    numeric_z = float(z_val)
+            except:
+                logger.warning(f"Could not convert z value: {z_val} to numeric, using 100")
+                numeric_z = 100
+        else:
+            numeric_z = float(z_val) if z_val is not None else 100
+        
+        numeric_x_values.append(numeric_x)
+        numeric_y_values.append(numeric_y)
+        numeric_z_values.append(numeric_z)
+    
+    # Normalize z_values to appropriate bubble sizes
+    def normalize_bubble_sizes(values, min_size=100, max_size=800):
+        if max(values) == min(values):
+            return [min_size] * len(values)
+        normalized = [(val - min(values)) / (max(values) - min(values)) for val in values]
+        return [min_size + (max_size - min_size) * norm for norm in normalized]
+    
+    bubble_sizes = normalize_bubble_sizes(numeric_z_values)
+    
+
+    # Assign colors based on model names, fallback to tab10 colors if model not in mapping
+    colors = []
+    for model in model_names:
+        if model in model_colors:
+            colors.append(model_colors[model])
+        elif model in ["USRR-1DCNN", "PI1DCNN", "SRR-LSTM", "1DCNN", "HDL-FM"]:
+            colors.append(model_colors[model])
+        else:
+            colors.append('#0066CC')  # Default blue for unknown models
+    
+    # Plot each point with bubble sizes based on z_values
+    for i, model in enumerate(model_names):
+        ax.scatter(
+            numeric_x_values[i], 
+            numeric_y_values[i],
+            s=bubble_sizes[i],
+            marker='o',
+            color=colors[i],
+            alpha=0.8,
+            # edgecolors='black',
+            # linewidth=2,
+            label=model
+        )
+        
+        # Mark the center of the bubble with a small black dot
+        ax.scatter(
+            numeric_x_values[i], 
+            numeric_y_values[i],
+            s=20,
+            marker='o',
+            color='black',
+            alpha=1.0,
+            zorder=10
+        )
+    
+    
+    # Add model name labels with arrows - colored for better readability
+    for i, model in enumerate(model_names):
+        
+        if model == "Tier-4":
+            x_offset = -60
+            y_offset = 30
+            
+        else:
+            x_offset = 50
+            y_offset = -20
+            
+        ax.annotate(model, 
+                  xy=(numeric_x_values[i], numeric_y_values[i]),
+                  xytext=(x_offset, y_offset),
+                  textcoords='offset points',
+                  fontsize=12,
+                  fontweight='bold',
+                  color='white',  # White text for better contrast
+                  bbox=dict(boxstyle="round,pad=0.3", fc=colors[i], ec="black", alpha=0.9),
+                  arrowprops=dict(arrowstyle="->", connectionstyle="arc3,rad=.2", color=colors[i], lw=1.5))
+        
+        if model == 'Tier-4':
+            y_offset = 16
+            x_offset = -10
+        else: 
+            x_offset = 0
+            y_offset = -16
+        
+        #Annotate 3rd dimension as well
+        ax.annotate(f'{numeric_z_values[i]:.2f}', 
+                  xy=(numeric_x_values[i], numeric_y_values[i]),
+                  xytext=(x_offset, y_offset),
+                  textcoords='offset points',
+                  fontsize=8,
+                  fontweight='bold',
+                  color='white',  # White text for better contrast
+                  bbox=dict(boxstyle="round,pad=0.3", fc=colors[i], ec="black", alpha=0.9))
+    
+    # Add simple bubble size legend - italic text below the diagram on bottom left
+    ax.text(0.5, -0.15, f'Bubble Size = {z_label}', 
+            transform=ax.transAxes, fontsize=12, fontweight='normal', fontstyle='italic', 
+            color='black', ha='center')
+    
+    # Configure plot with scientific styling
+    ax.set_xlabel(x_label, fontsize=12, color='black')
+    ax.set_ylabel(y_label, fontsize=12, color='black')
+    
+    ax.grid(True, linestyle='-', alpha=0.3, color='gray', linewidth=0.5)
+    ax.spines['top'].set_visible(True)
+    ax.spines['right'].set_visible(True)
+    ax.spines['bottom'].set_color('black')
+    ax.spines['left'].set_color('black')
+    ax.spines['top'].set_color('black')
+    ax.spines['right'].set_color('black')
+    ax.tick_params(colors='black', which='both')
+    
+    ax.set_facecolor("#e0eae0")  # Light gray background
+    fig.patch.set_facecolor("#e0eae0")  # White figure background
+    
+    # Save the figure
+    output_file = os.path.join(OUTPUT_DIR, filename)
+    os.makedirs(os.path.dirname(output_file), exist_ok=True)
+    plt.title(title, fontsize=14, pad=10)
+    plt.savefig(output_file, dpi=300, bbox_inches='tight')
+    logger.info(f"Saved visualization to {output_file}")
+    plt.close()
+    
+def draw_memory_usage_plot(train_memory_usage, pred_memory_usage, model_names, rmse):
+    """Generate and save a memory usage comparison plot with RMSE on y-axis."""
+    
+    # memory usage is in the following format
+    # "{'max_cuda_memory': 1856871424.0, 'max_cpu_memory': 618255808.0, 'total_cuda_memory': 1856008704.0, 'total_cpu_memory': 4.0, 'total_cpu_time': 1546069.375, 'total_gpu_time': 1365034.25}"#
+    
+    # Extract max_cuda_memory and max_cpu_memory from the memory usage data
+    train_cuda_memory = []
+    train_cpu_memory = []
+    pred_cuda_memory = []
+    pred_cpu_memory = []
+    
+    for mem in train_memory_usage:
+        if isinstance(mem, str) and mem.startswith('{'):
+            try:
+                # Convert string representation of dict to actual dict
+                mem_dict = eval(mem)
+                # Convert bytes to GB
+                train_cuda_memory.append(mem_dict.get('max_cuda_memory', 0) / (1024**3))
+                train_cpu_memory.append(mem_dict.get('max_cpu_memory', 0) / (1024**3))
+            except:
+                train_cuda_memory.append(mem)  # Fallback to original value
+                train_cpu_memory.append(0)
+        else:
+            train_cuda_memory.append(mem)  # Assume it's already the CUDA memory in GB
+            train_cpu_memory.append(0)
+    
+    for mem in pred_memory_usage:
+        if isinstance(mem, str) and mem.startswith('{'):
+            try:
+                mem_dict = eval(mem)
+                pred_cuda_memory.append(mem_dict.get('max_cuda_memory', 0) / (1024**3))
+                pred_cpu_memory.append(mem_dict.get('max_cpu_memory', 0) / (1024**3))
+            except:
+                pred_cuda_memory.append(mem)  # Fallback to original value
+                pred_cpu_memory.append(0)
+        else:
+            pred_cuda_memory.append(mem)  # Assume it's already the CUDA memory in GB
+            pred_cpu_memory.append(0)
+    
+    # Use CUDA memory for the plot
+    train_memory = train_cuda_memory
+    pred_memory = pred_cuda_memory
+    
+    # Create enhanced scatter plot with quadrants
+    fig, ax = plt.subplots(figsize=(12, 8))
+    
+    # Use consistent marker shape but different colors for models
+    colors = plt.cm.tab10(range(len(model_names)))
+    marker_size = 200  # Fixed size for all markers
+    
+    # Plot each point with the same marker shape but different colors
+    for i, model in enumerate(model_names):
+        ax.scatter(
+            pred_memory[i], 
+            rmse[i],
+            s=marker_size,
+            marker='o',  # Use circles for all models
+            color=colors[i],
+            alpha=0.8,
+            edgecolors='black',
+            linewidth=1.5,
+            label=model
+        )
+    
+    # Add quadrant lines and labels (based on median values to create 4 regions)
+    med_x = np.median(pred_memory)
+    med_y = np.median(rmse)
+    
+    # Get current axis limits to ensure complete coverage
+    x_min, x_max = ax.get_xlim()
+    y_min, y_max = ax.get_ylim()
+    
+    # Ensure the limits include all data points with some padding
+    x_padding = 0.05 * (max(pred_memory) - min(pred_memory))
+    y_padding = 0.05 * (max(rmse) - min(rmse))
+    
+    x_min = min(pred_memory) - x_padding
+    y_min = min(rmse) - y_padding
+    x_max = max(pred_memory) + x_padding
+    y_max = max(rmse) + y_padding
+    
+    # Set these expanded limits
+    ax.set_xlim(x_min, x_max)
+    ax.set_ylim(y_min, y_max)
+    
+    # Add quadrant dividers
+    ax.axvline(med_x, color='gray', linestyle='--', alpha=0.5)
+    ax.axhline(med_y, color='gray', linestyle='--', alpha=0.5)
+    
+    # Add colored quadrants with properly filled regions extending to the axes
+    # Bottom left (best) - low memory, low error
+    ax.fill_between(
+        [x_min, med_x],      # x-range
+        [y_min, y_min],      # bottom
+        [med_y, med_y],      # top
+        color="palegreen", alpha=0.2
+    )
+    
+    # Bottom right - high memory, low error
+    ax.fill_between(
+        [med_x, x_max],      # x-range
+        [y_min, y_min],      # bottom
+        [med_y, med_y],      # top
+        color="khaki", alpha=0.2
+    )
+    
+    # Top left - low memory, high error
+    ax.fill_between(
+        [x_min, med_x],      # x-range
+        [med_y, med_y],      # bottom
+        [y_max, y_max],      # top
+        color="khaki", alpha=0.2
+    )
+    
+    # Top right (worst) - high memory, high error
+    ax.fill_between(
+        [med_x, x_max],      # x-range
+        [med_y, med_y],      # bottom
+        [y_max, y_max],      # top
+        color="lightcoral", alpha=0.2
+    )
+    
+    # Create legend handles for quadrants with updated colors
+    from matplotlib.patches import Patch
+    quadrant_handles = [
+        Patch(facecolor="palegreen", edgecolor="green", alpha=0.7, label="BEST: Low Memory, Low Error"),
+        Patch(facecolor="khaki", edgecolor="gold", alpha=0.7, label="High Memory, Low Error"),
+        Patch(facecolor="khaki", edgecolor="gold", alpha=0.7, label="Low Memory, High Error"),
+        Patch(facecolor="lightcoral", edgecolor="red", alpha=0.7, label="WORST: High Memory, High Error")
+    ]
+    
+    # Add model name labels with arrows for clearer association
+    for i, model in enumerate(model_names):
+        ax.annotate(model, 
+                  xy=(pred_memory[i], rmse[i]),
+                  xytext=(20, 20),  # Offset text by fixed amount
+                  textcoords='offset points',
+                  fontsize=12,
+                  fontweight='bold',
+                  bbox=dict(boxstyle="round,pad=0.3", fc=colors[i], ec="black", alpha=0.2),
+                  arrowprops=dict(arrowstyle="->", connectionstyle="arc3,rad=.2", color='gray'))
+    
+    # Get handles and labels for the models
+    handles, labels = ax.get_legend_handles_labels()
+    
+    # Create two-row legend: models in first row, quadrants in second row
+    first_legend = ax.legend(handles, labels, 
+                           loc='upper center', bbox_to_anchor=(0.5, -0.10), 
+                           ncol=len(model_names) if len(model_names) <= 4 else 4,
+                           frameon=True, fancybox=True, shadow=True,
+                           title="Models")
+    
+    # Add second legend for quadrants
+    ax.add_artist(first_legend)
+    second_legend = ax.legend(handles=quadrant_handles, 
+                            loc='upper center', bbox_to_anchor=(0.5, -0.25),
+                            ncol=2, 
+                            frameon=True, fancybox=True, shadow=True,
+                            title="Quadrants")
+    
+    # Configure plot with consistent formatting
+    ax.set_xlabel('Inference Memory Usage (GB)', fontsize=12)
+    ax.set_ylabel('RMSE (m)', fontsize=12)
+    
+    # Add grid and improve aesthetics
+    ax.grid(True, linestyle='--', alpha=0.7)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    
+    # Save the figure
+    output_file = os.path.join(OUTPUT_DIR, 'model_memory_performance_quadrant.png')
+    plt.title('Model Memory Usage vs Performance', fontsize=12, pad=20)
+    os.makedirs(os.path.dirname(output_file), exist_ok=True)
+    plt.savefig(output_file, dpi=300, bbox_inches='tight')
+    logger.info(f"Saved enhanced scatter plot visualization to {output_file}")
+    plt.close()
+    
+def draw_model_efficiency_plot(model_names, model_areas, rmse=None, inference_times=None, pred_memory=None, flops=None, params=None):
+    """Create an accuracy vs computational demand plot."""
+    try:
+        # Rename model names to standard values
+        for i, model in enumerate(model_names):
+            if model == USRR_CNN1D_COMBINED:
+                model_names[i] = "USRR-1DCNN"
+            elif model == PICNN1D_V1:
+                model_names[i] = "PI1DCNN"
+            elif model == SRR_LSTM_COMBINED:
+                model_names[i] = "SRR-LSTM"
+            elif model == CNN1D_V1:
+                model_names[i] = "1DCNN"
+            elif model == HDL_FM_V1:
+                model_names[i] = "HDL-FM"
+        
+        # Check if all required data is provided
+        if not all(param is not None for param in [rmse, inference_times, pred_memory, flops, params]):
+            logger.warning("Not all required data provided for efficiency plot. Skipping.")
+            return
+        
+        # Convert all inputs to numeric values
+        def ensure_numeric(values):
+            result = []
+            for val in values:
+                if isinstance(val, str):
+                    try:
+                        if val.startswith('{'):
+                            mem_dict = eval(val)
+                            result.append(mem_dict.get('max_cuda_memory', 0) / (1024**3))
+                        else:
+                            result.append(float(val))
+                    except:
+                        logger.warning(f"Could not convert value: {val} to numeric, using 1.0")
+                        result.append(1.0)
+                else:
+                    result.append(float(val) if val is not None else 1.0)
+            return result
+        
+        numeric_rmse = ensure_numeric(rmse)
+        numeric_inference_times = ensure_numeric(inference_times)
+        numeric_pred_memory = ensure_numeric(pred_memory)
+        numeric_flops = ensure_numeric(flops)
+        numeric_params = ensure_numeric(params)
+        
+        # Calculate accuracy (inverse of RMSE, normalized)
+        max_rmse = max(numeric_rmse)
+        min_rmse = min(numeric_rmse)
+        if max_rmse == min_rmse:
+            accuracy = [1.0] * len(numeric_rmse)
+        else:
+            accuracy = [1 - (rmse_val - min_rmse) / (max_rmse - min_rmse) for rmse_val in numeric_rmse]
+        
+        # Calculate computational demand
+        def normalize_metric(values):
+            max_val = max(values)
+            min_val = min(values)
+            if max_val == min_val:
+                return [0.5] * len(values)
+            return [(val - min_val) / (max_val - min_val) for val in values]
+        
+        norm_inference_times = normalize_metric(numeric_inference_times)
+        norm_pred_memory = normalize_metric(numeric_pred_memory)
+        norm_flops = normalize_metric(numeric_flops)
+        norm_params = normalize_metric(numeric_params)
+        
+        computational_demand = []
+        for i in range(len(model_names)):
+            demand = (norm_inference_times[i] + norm_pred_memory[i] + norm_flops[i] + norm_params[i]) / 4
+            computational_demand.append(demand)
+        
+        # Create single figure for scatter plot
+        fig, ax = plt.subplots(figsize=(12, 8))
+        
+        # Plot scatter plot
+        colors_scatter = plt.cm.tab10(range(len(model_names)))
+        marker_size = 300
+        
+        for i, model in enumerate(model_names):
+            ax.scatter(computational_demand[i], accuracy[i], s=marker_size, marker='o',
+                      color=colors_scatter[i], alpha=0.8, edgecolors='black', linewidth=2, label=model)
+        
+        # # Add quadrant analysis
+        # med_y = np.median(accuracy)
+        
+        # x_padding = 0.05 * (max(computational_demand) - min(computational_demand))
+        # y_padding = 0.05 * (max(accuracy) - min(accuracy))
+        
+        # x_min = min(computational_demand) - x_padding
+        # x_max = max(computational_demand) + x_padding
+        # y_min = min(accuracy) - y_padding
+        # y_max = max(accuracy) + y_padding
+        
+        # ax.set_xlim(x_min, x_max)
+        # ax.set_ylim(y_min, y_max)
+        
+        # # Add quadrant dividers and colors
+        # ax.axvline(med_x, color='gray', linestyle='--', alpha=0.5)
+        # ax.axhline(med_y, color='gray', linestyle='--', alpha=0.5)
+        
+        # ax.fill_between([x_min, med_x], [y_min, y_min], [med_y, med_y], color="khaki", alpha=0.3)
+        # ax.fill_between([med_x, x_max], [y_min, y_min], [med_y, med_y], color="lightcoral", alpha=0.3)
+        # ax.fill_between([x_min, med_x], [med_y, med_y], [y_max, y_max], color="palegreen", alpha=0.3)
+        # ax.fill_between([med_x, x_max], [med_y, med_y], [y_max, y_max], color="khaki", alpha=0.3)
+        
+        # Create quadrant legend
+        # from matplotlib.patches import Patch
+        # quadrant_handles = [
+        #     Patch(facecolor="palegreen", edgecolor="green", alpha=0.7, 
+        #           label="BEST: High Accuracy, Low Computational Demand"),
+        #     Patch(facecolor="khaki", edgecolor="gold", alpha=0.7, 
+        #           label="High Accuracy, High Computational Demand"),
+        #     Patch(facecolor="khaki", edgecolor="gold", alpha=0.7, 
+        #           label="Low Accuracy, Low Computational Demand"),
+        #     Patch(facecolor="lightcoral", edgecolor="red", alpha=0.7, 
+        #           label="WORST: Low Accuracy, High Computational Demand")
+        # ]
+        
+        # Add model annotations
+        for i, model in enumerate(model_names):
+            ax.annotate(model, xy=(computational_demand[i], accuracy[i]), xytext=(20, 20),
+                       textcoords='offset points', fontsize=11, fontweight='bold',
+                       bbox=dict(boxstyle="round,pad=0.3", fc=colors_scatter[i], ec="black", alpha=0.2),
+                       arrowprops=dict(arrowstyle="->", connectionstyle="arc3,rad=.2", color='gray'))
+        
+        # Configure scatter plot
+        ax.set_xlabel('Computational Footprint', fontsize=12, fontweight='bold')
+        ax.set_ylabel('Quality', fontsize=12, fontweight='bold')
+        # ax.set_title('Model Accuracy vs Computational Demand\n(Efficiency-Performance Trade-off)', 
+                    # fontsize=14, fontweight='bold', pad=20)
+        ax.grid(True, linestyle='--', alpha=0.7)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        
+        # Create legends
+        handles, labels = ax.get_legend_handles_labels()
+        first_legend = ax.legend(handles, labels, 
+                               loc='upper center', bbox_to_anchor=(0.5, -0.10), 
+                               ncol=len(model_names) if len(model_names) <= 4 else 4,
+                               frameon=True, fancybox=True, shadow=True,
+                               title="Models")
+        
+        ax.add_artist(first_legend)
+        # second_legend = ax.legend(handles=quadrant_handles, 
+        #                         loc='upper center', bbox_to_anchor=(0.5, -0.25),
+        #                         ncol=2, 
+        #                         frameon=True, fancybox=True, shadow=True,
+        #                         title="Performance Regions")
+        
+        plt.tight_layout()
+        
+        # Save the figure
+        output_file = os.path.join(OUTPUT_DIR, 'accuracy_vs_computational_demand.png')
+        os.makedirs(os.path.dirname(output_file), exist_ok=True)
+        plt.savefig(output_file, dpi=300, bbox_inches='tight')
+        logger.info(f"Saved accuracy vs computational demand plot to {output_file}")
+        plt.close()
+        
+    except Exception as e:
+        logger.error(f"Error creating model efficiency plot: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+
+def create_multi_dimensional_comparison(model_names, rmse, inference_times, flops, params, inference_memory_usage):
+    """Create a landscape subplot with three 3D scatter plots."""
+    try:
+        # Rename model names to standard values
+        display_names = []
+        for model in model_names:
+            if model == USRR_CNN1D_COMBINED:
+                display_names.append("Tier-1")
+            elif model == PICNN1D_V1:
+                display_names.append("Tier-3")
+            elif model == SRR_LSTM_COMBINED:
+                display_names.append("SRR-LSTM")
+            elif model == CNN1D_V1:
+                display_names.append("Tier-2")
+            elif model == HDL_FM_V1:
+                display_names.append("Tier-4")
+            else:
+                display_names.append(model)
+        
+        # Convert all inputs to numeric values
+        def ensure_numeric(values):
+            result = []
+            for val in values:
+                if isinstance(val, str):
+                    try:
+                        if val.startswith('{'):
+                            mem_dict = eval(val)
+                            result.append(mem_dict.get('max_cuda_memory', 0) / (1024**3))
+                        else:
+                            result.append(float(val))
+                    except:
+                        logger.warning(f"Could not convert value: {val} to numeric, using 1.0")
+                        result.append(1.0)
+                else:
+                    result.append(float(val) if val is not None else 1.0)
+            return result
+        
+        numeric_rmse = ensure_numeric(rmse)
+        numeric_inference_times = ensure_numeric(inference_times)
+        numeric_flops = ensure_numeric(flops)
+        numeric_params = ensure_numeric(params)
+        numeric_memory_usage = ensure_numeric(inference_memory_usage)
+        
+        # Calculate compound computational footprint (normalized sum of all metrics including memory)
+        def normalize_metric(values):
+            max_val = max(values)
+            min_val = min(values)
+            if max_val == min_val:
+                return [0.5] * len(values)
+            return [(val - min_val) / (max_val - min_val) for val in values]
+        
+        norm_inference_times = normalize_metric(numeric_inference_times)
+        norm_flops = normalize_metric(numeric_flops)
+        norm_params = normalize_metric(numeric_params)
+        norm_memory_usage = normalize_metric(numeric_memory_usage)
+        
+        compound_footprint = []
+        for i in range(len(display_names)):
+            footprint = (norm_inference_times[i] + norm_flops[i] + norm_params[i] + norm_memory_usage[i]) / 4
+            compound_footprint.append(footprint)
+        
+        # Create figure with 1x3 subplots (landscape)
+        fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+        
+        # Use consistent colors for all plots
+        colors = plt.cm.tab10(range(len(display_names)))
+        
+        # Helper function to normalize bubble sizes
+        def normalize_bubble_sizes(values, min_size=100, max_size=800):
+            if max(values) == min(values):
+                return [min_size] * len(values)
+            normalized = [(val - min(values)) / (max(values) - min(values)) for val in values]
+            return [min_size + (max_size - min_size) * norm for norm in normalized]
+        
+        # Plot 1: RMSE vs Inference Time with FLOPS as bubble size
+        ax1 = axes[0]
+        bubble_sizes_1 = normalize_bubble_sizes(numeric_flops)
+        
+        for i, model in enumerate(display_names):
+            ax1.scatter(numeric_inference_times[i], numeric_rmse[i], 
+                       s=bubble_sizes_1[i], color=colors[i], alpha=0.7, 
+                       edgecolors='black', linewidth=1.5, label=model)
+        
+        ax1.set_xlabel('Inference Time (seconds)', fontsize=12, fontweight='bold')
+        ax1.set_ylabel('RMSE (m)', fontsize=12, fontweight='bold')
+        ax1.set_title('RMSE vs Inference Time\n(Bubble size = FLOPs)', fontsize=11, fontweight='bold')
+        ax1.grid(True, alpha=0.3)
+        
+        # Add annotations for subplot 1
+        for i, model in enumerate(display_names):
+            ax1.annotate(model, 
+                        xy=(numeric_inference_times[i], numeric_rmse[i]),
+                        xytext=(10, 10), textcoords='offset points',
+                        fontsize=9, fontweight='bold',
+                        bbox=dict(boxstyle="round,pad=0.2", fc=colors[i], ec="black", alpha=0.3),
+                        arrowprops=dict(arrowstyle="->", connectionstyle="arc3,rad=.1", color='gray'))
+        
+        # Plot 2: Parameters vs RMSE with FLOPS as bubble size
+        ax2 = axes[1]
+        bubble_sizes_2 = normalize_bubble_sizes(numeric_flops)
+        
+        for i, model in enumerate(display_names):
+            ax2.scatter(numeric_params[i], numeric_rmse[i], 
+                       s=bubble_sizes_2[i], color=colors[i], alpha=0.7, 
+                       edgecolors='black', linewidth=1.5, label=model)
+        
+        ax2.set_xlabel('Parameters (Million)', fontsize=12, fontweight='bold')
+        ax2.set_ylabel('RMSE (m)', fontsize=12, fontweight='bold')
+        ax2.set_title('RMSE vs Parameters\n(Bubble size = FLOPs)', fontsize=11, fontweight='bold')
+        ax2.grid(True, alpha=0.3)
+        
+        # Add annotations for subplot 2
+        for i, model in enumerate(display_names):
+            ax2.annotate(model, 
+                        xy=(numeric_params[i], numeric_rmse[i]),
+                        xytext=(10, 10), textcoords='offset points',
+                        fontsize=9, fontweight='bold',
+                        bbox=dict(boxstyle="round,pad=0.2", fc=colors[i], ec="black", alpha=0.3),
+                        arrowprops=dict(arrowstyle="->", connectionstyle="arc3,rad=.1", color='gray'))
+        
+        # Plot 3: Compound Computational Footprint vs RMSE with same bubble size
+        ax3 = axes[2]
+        bubble_sizes_3 = [300] * len(display_names)  # Same size for all
+        
+        for i, model in enumerate(display_names):
+            ax3.scatter(compound_footprint[i], numeric_rmse[i], 
+                       s=bubble_sizes_3[i], color=colors[i], alpha=0.7, 
+                       edgecolors='black', linewidth=1.5, label=model)
+        
+        ax3.set_xlabel('Compound Computational Footprint', fontsize=12, fontweight='bold')
+        ax3.set_ylabel('RMSE (m)', fontsize=12, fontweight='bold')
+        ax3.set_title('RMSE vs Computational Footprint\n(Equal bubble sizes)', fontsize=11, fontweight='bold')
+        ax3.grid(True, alpha=0.3)
+        
+        # Add annotations for subplot 3
+        for i, model in enumerate(display_names):
+            ax3.annotate(model, 
+                        xy=(compound_footprint[i], numeric_rmse[i]),
+                        xytext=(10, 10), textcoords='offset points',
+                        fontsize=9, fontweight='bold',
+                        bbox=dict(boxstyle="round,pad=0.2", fc=colors[i], ec="black", alpha=0.3),
+                        arrowprops=dict(arrowstyle="->", connectionstyle="arc3,rad=.1", color='gray'))
+        
+        # Remove individual legends and create a single legend for all subplots
+        for ax in axes:
+            ax.legend().set_visible(False)
+        
+        # Create a single legend below all subplots
+        handles, labels = axes[0].get_legend_handles_labels()
+        fig.legend(handles, labels, 
+                  loc='lower center', bbox_to_anchor=(0.5, -0.05), 
+                  ncol=len(display_names), frameon=True, fancybox=True, shadow=True,
+                  title="Models")
+        
+        # Add bubble size legends for the first two plots
+        # Bubble legend for plots 1 and 2 (FLOPs)
+        flops_min, flops_max = min(numeric_flops), max(numeric_flops)
+        bubble_legend_sizes = [100, 300, 600]
+        bubble_legend_flops = [flops_min, (flops_min + flops_max) / 2, flops_max]
+        
+        # Add text explanation for bubble sizes
+        fig.text(0.02, 0.95, f'Bubble Size Legend (Plots 1-2):\nSmall = {flops_min:.1f}B FLOPs\nMedium = {(flops_min + flops_max) / 2:.1f}B FLOPs\nLarge = {flops_max:.1f}B FLOPs', 
+                transform=fig.transFigure, fontsize=9, verticalalignment='top',
+                bbox=dict(boxstyle="round,pad=0.3", facecolor='lightgray', alpha=0.8))
+        
+        plt.tight_layout()
+        plt.subplots_adjust(bottom=0.15)  # Make space for legend
+        
+        # Save the figure
+        output_file = os.path.join(OUTPUT_DIR, 'multi_dimensional_model_comparison.png')
+        os.makedirs(os.path.dirname(output_file), exist_ok=True)
+        plt.savefig(output_file, dpi=300, bbox_inches='tight')
+        logger.info(f"Saved multi-dimensional comparison plot to {output_file}")
+        plt.close()
+        
+    except Exception as e:
+        logger.error(f"Error creating multi-dimensional comparison: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+
+def create_parameters_vs_accuracy_plot(model_names, gflops, rmse, params, inference_times, rmse_inverse_label):
+    """Create a separate parameters vs accuracy plot."""
+    rmse = [round(float(r), 2) for r in rmse]
+    try:
+        # Rename model_names to standard values
+        display_names = []
+        for model in model_names:
+            if model == USRR_CNN1D_COMBINED:
+                display_names.append("Tier-1")
+            elif model == PICNN1D_V1:
+                display_names.append("Tier-3")
+            elif model == SRR_LSTM_COMBINED:
+                display_names.append("SRR-LSTM")
+            elif model == CNN1D_V1:
+                display_names.append("Tier-2")
+            elif model == HDL_FM_V1:
+                display_names.append("Tier-4")
+            else:
+                display_names.append(model)
+        
+        # Use consistent colorblind-friendly colors
+        model_colors = {
+            "Tier-1": "#0173B2",  # Blue - safe for all colorblind types
+            "Tier-2": "#DE8F05",     # Orange - distinguishable from blue   # Light purple/magenta - safe alternative to pink
+            "Tier-3": "#029E73",       # Green - deuteranopia safe
+            "Tier-4": "#D55E00",      # Vermillion/red-orange - protanopia safe
+        }
+        
+        colors = []
+        for model in display_names:
+            if model in model_colors:
+                colors.append(model_colors[model])
+            else:
+                idx = len(colors) % 10
+                colors.append(plt.cm.tab10(idx))
+        
+        # Create figure
+        fig, ax = plt.subplots(figsize=(12, 8))
+        fig.patch.set_facecolor('white')
+        ax.set_facecolor('white')
+        
+        # Normalize inference_times to bubble sizes instead of gflops
+        def normalize_bubble_sizes(values, min_size=300, max_size=1500):
+            if max(values) == min(values):
+                return [min_size] * len(values)
+            normalized = [(val - min(values)) / (max(values) - min(values)) for val in values]
+            return [min_size + (max_size - min_size) * norm for norm in normalized]
+        
+        bubble_sizes = normalize_bubble_sizes(params)
+        
+        # Plot each point
+        for i, model in enumerate(display_names):
+            ax.scatter(
+                round(gflops[i], 2), 
+                round(rmse[i], 2),
+                s=bubble_sizes[i],
+                marker='o',
+                color=colors[i],
+                alpha=0.8,
+                edgecolors='black',
+                linewidth=2,
+                label=model
+            )
+        
+       
+        # Add model name labels with arrows
+        for i, model in enumerate(display_names):
+            if i == 1: 
+                offset_x = -70
+                offset_y = 50
+            else:
+                offset_x = 20
+                offset_y = 20
+            ax.annotate(model, 
+                      xy=(gflops[i], rmse[i]),
+                      xytext=(offset_x, offset_y),
+                      textcoords='offset points',
+                      fontsize=12,
+                      fontweight='bold',
+                      color='white',
+                      bbox=dict(boxstyle="round,pad=0.3", fc=colors[i], ec="black", alpha=0.9),
+                      arrowprops=dict(arrowstyle="->", connectionstyle="arc3,rad=.2", color=colors[i], lw=1.5))
+            if i == 1:
+                offset_x = -70
+                offset_y = 10
+            else:
+                offset_x = 20
+                offset_y = -20
+                
+            ax.annotate(f'{float(inference_times[i]):.2f} s',
+                        xy=(gflops[i], rmse[i]),
+                        xytext=(offset_x, offset_y),
+                        textcoords='offset points',
+                        fontsize=12,
+                        fontweight='normal',
+                        color='white',
+                        bbox=dict(boxstyle="round,pad=0.3", fc=colors[i], ec="black", alpha=0.7),
+                        arrowprops=dict(arrowstyle="->", connectionstyle="arc3,rad=.2", color=colors[i], lw=1.5))
+                        
+                        
+        
+        # Add bubble size legend
+        ax.text(0.5, -0.10, 'Bubble Size indicate the number of paramaters', 
+                transform=ax.transAxes, fontsize=12, fontweight='normal', fontstyle='italic', 
+                color='black', ha='center')
+        
+        # Configure plot
+        ax.set_xlabel('GFLOPS', fontsize=14, color='black', fontweight='bold')
+        ax.set_ylabel(rmse_inverse_label, fontsize=14, color='black', fontweight='bold')
+        # ax.set_title('Parameters vs Model Accuracy', fontsize=16, pad=20, fontweight='bold')
+        
+        # add background color to plot
+        ax.set_facecolor("#b0f4ae")  # Light gray background
+        fig.patch.set_facecolor("#f9ebeb")  # White figure background
+        
+        
+        
+        ax.grid(True, linestyle='-', alpha=0.3, color='gray', linewidth=0.5)
+        ax.spines['top'].set_visible(True)
+        ax.spines['right'].set_visible(True)
+        ax.spines['bottom'].set_color('black')
+        ax.spines['left'].set_color('black')
+        ax.spines['top'].set_color('black')
+        ax.spines['right'].set_color('black')
+        ax.tick_params(colors='black', which='both')
+        
+        
+        # Save the figure
+        output_file = os.path.join(OUTPUT_DIR, 'parameters_vs_accuracy.png')
+        os.makedirs(os.path.dirname(output_file), exist_ok=True)
+        plt.savefig(output_file, dpi=300, bbox_inches='tight')
+        logger.info(f"Saved parameters vs accuracy plot to {output_file}")
+        plt.close()
+        
+    except Exception as e:
+        logger.error(f"Error creating parameters vs accuracy plot: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+
+def create_comprehensive_performance_subplot(model_names, gflops, rmse_inverse, inference_times, 
+                                           params, inference_memory_usage, compound_footprint, 
+                                           rmse_inverse_lable):
+    """Create a comprehensive 6-subplot performance visualization in landscape orientation."""
+    
+    # Create figure with 2x3 subplots in landscape orientation
+    fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+    fig.patch.set_facecolor('white')
+    
+    # Rename model_names to standard values
+    display_names = []
+    for model in model_names:
+        if model == USRR_CNN1D_COMBINED:
+            display_names.append("Tier-1")
+        elif model == PICNN1D_V1:
+            display_names.append("Tier-3")
+        elif model == SRR_LSTM_COMBINED:
+            display_names.append("SRR-LSTM")
+        elif model == CNN1D_V1:
+            display_names.append("Tier-2")
+        elif model == HDL_FM_V1:
+            display_names.append("Tier-4")
+        else:
+            display_names.append(model)
+    
+    # Use colorblind-friendly colors for each model (based on Cividis and Wong palettes)
+    model_colors = {
+        "Tier-1": "#0173B2",  # Blue - safe for all colorblind types
+        "Tier-3": "#DE8F05",     # Orange - distinguishable from blue   # Light purple/magenta - safe alternative to pink
+        "Tier-2": "#029E73",       # Green - deuteranopia safe
+        "Tier-4": "#D55E00",      # Vermillion/red-orange - protanopia safe
+    }
+    
+    # Assign colors based on model names
+    colors = []
+    for model in display_names:
+        if model in model_colors:
+            colors.append(model_colors[model])
+        else:
+            # Use tab10 colors for any models not in the color map
+            idx = len(colors) % 10  # Cycle through tab10 colors
+            colors.append(plt.cm.tab10(idx))
+    
+    # Helper function to create each subplot
+    def create_subplot(ax, x_vals, y_vals, z_vals, x_label, y_label, z_label, subplot_label):
+        # Normalize z_values to bubble sizes
+        def normalize_bubble_sizes(values, min_size=80, max_size=300):
+            if max(values) == min(values):
+                return [min_size] * len(values)
+            normalized = [(val - min(values)) / (max(values) - min(values)) for val in values]
+            return [min_size + (max_size - min_size) * norm for norm in normalized]
+        
+        bubble_sizes = normalize_bubble_sizes(z_vals)
+        
+        # Apply small jitter to overlapping points to make them all visible
+        jittered_x = list(x_vals)
+        jittered_y = list(y_vals)
+        tolerance = 0.001  # Very small tolerance for exact matches
+        
+        for i in range(len(x_vals)):
+            collision_count = 0
+            for j in range(i):
+                x_range = max(x_vals) - min(x_vals) if max(x_vals) != min(x_vals) else 1
+                y_range = max(y_vals) - min(y_vals) if max(y_vals) != min(y_vals) else 1
+                
+                if (abs(x_vals[j] - x_vals[i]) < tolerance * x_range and 
+                    abs(y_vals[j] - y_vals[i]) < tolerance * y_range):
+                    collision_count += 1
+            
+            if collision_count > 0:
+                # Apply small jitter in a circular pattern
+                import math
+                jitter_radius = 0.02 * min(x_range, y_range)  # 2% of the smaller range
+                angle = collision_count * (2 * math.pi / 8)  # Distribute up to 8 points in circle
+                jittered_x[i] = x_vals[i] + jitter_radius * math.cos(angle)
+                jittered_y[i] = y_vals[i] + jitter_radius * math.sin(angle)
+        
+        # Plot points with jittered positions
+        for i, model in enumerate(display_names):
+            ax.scatter(jittered_x[i], jittered_y[i], s=bubble_sizes[i], marker='o', 
+                      color=colors[i], alpha=0.8, edgecolors='black', linewidth=1.5, label=model)
+        
+        # Add model name labels with arrows - smart positioning with collision detection
+        tolerance = 0.01  # Tolerance for considering positions "same"
+        
+        for i, model in enumerate(display_names):
+            x_pos, y_pos = x_vals[i], y_vals[i]
+            x_range = max(x_vals) - min(x_vals)
+            y_range = max(y_vals) - min(y_vals)
+            
+            # Check for collision with other points (same x,y values)
+            collision_count = 0
+            for j in range(i):
+                if (abs(x_vals[j] - x_pos) < tolerance * x_range and 
+                    abs(y_vals[j] - y_pos) < tolerance * y_range):
+                    collision_count += 1
+            
+            # Determine offset direction based on position relative to center
+            x_center = (max(x_vals) + min(x_vals)) / 2
+            y_center = (max(y_vals) + min(y_vals)) / 2
+            
+            # Base positioning: offset away from edges
+            if x_pos > x_center:  # Right side
+                base_x_offset = -30  # Point left
+            else:  # Left side
+                base_x_offset = 30   # Point right
+                
+            if y_pos > y_center:  # Top side
+                base_y_offset = -20  # Point down
+            else:  # Bottom side
+                base_y_offset = 20   # Point up
+            
+            # Adjust for collisions - spread out overlapping annotations
+            if collision_count > 0:
+                # Create radial spread for overlapping points
+                angle_step = 60  # degrees between annotations
+                angle = collision_count * angle_step
+                radius = 40 + collision_count * 10  # Increase radius for each collision
+                
+                import math
+                x_offset = radius * math.cos(math.radians(angle))
+                y_offset = radius * math.sin(math.radians(angle))
+            else:
+                x_offset = base_x_offset
+                y_offset = base_y_offset
+                
+            
+            
+            ax.annotate(model, 
+                      xy=(x_vals[i], y_vals[i]),
+                      xytext=(x_offset, y_offset),
+                      textcoords='offset points',
+                      fontsize=10,
+                      fontweight='bold',
+                      color='white',  # White text for better contrast
+                      bbox=dict(boxstyle="round,pad=0.3", fc=colors[i], ec="black", alpha=0.9),
+                      arrowprops=dict(arrowstyle="->", connectionstyle="arc3,rad=.2", color=colors[i], lw=1.5),
+                      ha='center', va='center',
+                      clip_on=True)  # Ensure annotations are clipped to axes
+        
+        # Configure subplot
+        ax.set_xlabel(x_label, fontsize=14, color='black', fontweight='bold')
+        ax.set_ylabel(y_label, fontsize=14, color='black', fontweight='bold')
+        ax.grid(True, linestyle='-', alpha=0.3, color='gray', linewidth=0.5)
+        ax.spines['top'].set_visible(True)
+        ax.spines['right'].set_visible(True)
+        for spine in ax.spines.values():
+            spine.set_color('black')
+        ax.tick_params(colors='black', which='both', labelsize=10)
+        
+        # Add subplot label and bubble size legend
+        ax.set_title(subplot_label, fontsize=12, pad=10)
+        ax.text(0.5, -0.15, f'Bubble Size = {z_label}', transform=ax.transAxes, 
+               fontsize=10, fontstyle='italic', color='black', ha='center')
+    
+    # Plot (a): GFLOPs vs Accuracy (bubble = Inference Time)
+    create_subplot(axes[0, 0], gflops, rmse_inverse, inference_times,
+                  'GFLOPs', rmse_inverse_lable, 'Inference Time (s)', '(a) GFLOS vs Accuracy')
+    
+    # Plot (b): Parameters vs Accuracy (bubble = GFLOPs)
+    create_subplot(axes[0, 1], params, rmse_inverse, gflops,
+                  'Parameters (Million)', rmse_inverse_lable, 'GFLOPs', '(b) Parameters vs Accuracy')
+        
+    # Plot (c): GFLOPs vs Memory Usage (bubble = Parameters)
+    create_subplot(axes[0, 2], params, inference_memory_usage, inference_times,
+                  'Parameters (Million)', 'Inference Memory Usage (GB)', 'Inference Time (s)', '(c) Parameters vs Memory Usage')
+    
+    # Plot (d): Parameters vs GFLOPs (bubble = Memory Usage)
+    create_subplot(axes[1, 0], gflops, inference_memory_usage, inference_times,
+                  'GFLOPs', 'Inference Memory Usage (GB)','Inference Time (s)', '(d) GFLOPs vs Memory Usage')
+    
+    # Plot (e): Memory Usage vs Accuracy (bubble = Inference Time)
+    create_subplot(axes[1, 1], inference_memory_usage, rmse_inverse, inference_times,
+                  'Inference Memory Usage (GB)', rmse_inverse_lable, 'Inference Time (s)', '(e) Memory Usage vs Accuracy')
+    
+    # Plot (f): Compound Footprint vs Accuracy (bubble = Inference Time)
+    create_subplot(axes[1, 2], compound_footprint, rmse_inverse, inference_times,
+                  'Compound Computational Footprint', rmse_inverse_lable, 'Inference Time (s)', '(f) Compound Footprint vs Accuracy')
+    
+    # Remove individual legends and create a single legend
+    for ax_row in axes:
+        for ax in ax_row:
+            if ax.get_legend():
+                ax.get_legend().remove()
+    
+    # Create single legend below all subplots
+    # handles, labels = axes[0, 0].get_legend_handles_labels()
+    # fig.legend(handles, labels, loc='lower center', bbox_to_anchor=(0.5, -0.02),
+    #           ncol=len(display_names), frameon=True, fancybox=True, shadow=True,
+    #           title="Models", fontsize=10)
+    
+    # Add a title for the entire figure
+    # fig.suptitle('Comprehensive Model Performance Comparison', fontsize=16, fontweight='bold', y=0.98)
+    
+    # Add a helpful text annotation explaining the visualization
+    # fig.text(0.5, 0.01, 
+    #          'This visualization compares models across multiple performance metrics.\n'
+    #          'Bubble size represents the third dimension in each plot.', 
+    #          ha='center', fontsize=10, fontstyle='italic')
+    
+    # Create a custom legend for model colors
+    legend_handles = []
+    model_names_ordered = ['Tier-1', 'Tier-2', 'Tier-3', 'Tier-4']
+    for i, model in enumerate(model_names_ordered):
+        legend_handles.append(plt.Line2D([0], [0], marker='o', color='w', 
+                                       markerfacecolor=model_colors[model], markersize=12, 
+                                       label=model))
+    
+    fig.legend(handles=legend_handles, loc='lower center', 
+              bbox_to_anchor=(0.5, 0.05), ncol=len(display_names), 
+              frameon=True, fancybox=True, shadow=True, fontsize=14)
+    
+    plt.tight_layout()
+    plt.subplots_adjust(bottom=0.15, hspace=0.35, wspace=0.25, top=0.92)  # Make space for legend and labels
+    
+    # Save the comprehensive plot
+    output_file = os.path.join(OUTPUT_DIR, 'comprehensive_performance_comparison.png')
+    os.makedirs(os.path.dirname(output_file), exist_ok=True)
+    plt.savefig(output_file, dpi=300, bbox_inches='tight')
+    logger.info(f"Saved comprehensive performance comparison to {output_file}")
+    plt.close()
+
+def create_separate_legend_figure(labels, model_colors):
+    """Create a separate figure containing only the legend for model colors."""
+    try:
+        
+        # Create a new figure just for the legend
+        legend_fig, legend_ax = plt.subplots(figsize=(8, 2))
+        
+        # Hide the axes
+        legend_ax.axis('off')
+        
+        # Create legend handles with the same colors as the radar chart
+        legend_handles = []
+        
+        ordered_model_names = ['Tier-1', 'Tier-2', 'Tier-3', 'Tier-4']
+        for i, label in enumerate(ordered_model_names):
+            legend_handles.append(plt.Line2D([0], [0], marker='o', color='w', 
+                                           markerfacecolor=model_colors[label], markersize=15, 
+                                           label=label, markeredgecolor='black', markeredgewidth=1))
+        
+        
+        # Create the legend with large font size
+        legend = legend_ax.legend(handles=legend_handles, 
+                                loc='center',
+                                ncol=len(labels), 
+                                frameon=True, fancybox=True, shadow=True,
+                                title="Models",
+                                title_fontsize=18,
+                                fontsize=16,
+                                columnspacing=2.0,
+                                handletextpad=1.2)
+        
+        # Style the legend title
+        legend.get_title().set_fontweight('bold')
+        
+        # Save the legend figure
+        legend_output_file = os.path.join(OUTPUT_DIR, 'model_legend.png')
+        os.makedirs(os.path.dirname(legend_output_file), exist_ok=True)
+        legend_fig.savefig(legend_output_file, dpi=300, bbox_inches='tight', 
+                          facecolor='white', edgecolor='none')
+        logger.info(f"Saved separate legend figure to {legend_output_file}")
+        plt.close(legend_fig)
+        
+    except Exception as e:
+        logger.error(f"Error creating separate legend figure: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+
+def create_compound_footprint_plot(model_names, compound_footprint, rmse_inverse, inference_times, rmse_inverse_label):
+    """Create a separate compound footprint vs accuracy plot."""
+    try:
+        # Rename model_names to standard values
+        display_names = []
+        for model in model_names:
+            if model == USRR_CNN1D_COMBINED:
+                display_names.append("Tier-1")
+            elif model == PICNN1D_V1:
+                display_names.append("Tier-3")
+            elif model == SRR_LSTM_COMBINED:
+                display_names.append("SRR-LSTM")
+            elif model == CNN1D_V1:
+                display_names.append("Tier-2")
+            elif model == HDL_FM_V1:
+                display_names.append("Tier-4")
+            else:
+                display_names.append(model)
+        
+        # Use consistent colorblind-friendly colors
+        model_colors = {
+            "USRR-1DCNN": "#0173B2",  # Blue - safe for all colorblind types
+            "PI1DCNN": "#DE8F05",     # Orange - distinguishable from blue
+            "SRR-LSTM": "#CC78BC",    # Light purple/magenta - safe alternative to pink
+            "1DCNN": "#029E73",       # Green - deuteranopia safe
+            "HDL-FM": "#D55E00",      # Vermillion/red-orange - protanopia safe
+        }
+        
+        colors = []
+        for model in display_names:
+            if model in model_colors:
+                colors.append(model_colors[model])
+            else:
+                idx = len(colors) % 10
+                colors.append(plt.cm.tab10(idx))
+        
+        # Create figure
+        fig, ax = plt.subplots(figsize=(10, 8))
+        fig.patch.set_facecolor('white')
+        ax.set_facecolor('white')
+        
+        # Normalize inference times to bubble sizes
+        def normalize_bubble_sizes(values, min_size=100, max_size=800):
+            if max(values) == min(values):
+                return [min_size] * len(values)
+            normalized = [(val - min(values)) / (max(values) - min(values)) for val in values]
+            return [min_size + (max_size - min_size) * norm for norm in normalized]
+        
+        bubble_sizes = normalize_bubble_sizes(inference_times)
+        
+        # Plot each point
+        for i, model in enumerate(display_names):
+            ax.scatter(
+                compound_footprint[i], 
+                rmse_inverse[i],
+                s=bubble_sizes[i],
+                marker='o',
+                color=colors[i],
+                alpha=0.8,
+                edgecolors='black',
+                linewidth=2,
+                label=model
+            )
+        
+        # Add model name labels with arrows
+        for i, model in enumerate(display_names):
+            ax.annotate(model, 
+                      xy=(compound_footprint[i], rmse_inverse[i]),
+                      xytext=(20, 20),
+                      textcoords='offset points',
+                      fontsize=12,
+                      fontweight='bold',
+                      color='white',
+                      bbox=dict(boxstyle="round,pad=0.3", fc=colors[i], ec="black", alpha=0.9),
+                      arrowprops=dict(arrowstyle="->", connectionstyle="arc3,rad=.2", color=colors[i], lw=1.5))
+        
+        # Add bubble size legend
+        ax.text(0.5, -0.12, 'Bubble Size = Inference Time (s)', 
+                transform=ax.transAxes, fontsize=12, fontweight='normal', fontstyle='italic', 
+                color='black', ha='center')
+        
+        # Configure plot
+        ax.set_xlabel('Compound Computational Footprint', fontsize=14, color='black', fontweight='bold')
+        ax.set_ylabel(rmse_inverse_label, fontsize=14, color='black', fontweight='bold')
+        ax.set_title('Compound Footprint vs Model Accuracy', fontsize=16, pad=20, fontweight='bold')
+        
+        ax.grid(True, linestyle='-', alpha=0.3, color='gray', linewidth=0.5)
+        ax.spines['top'].set_visible(True)
+        ax.spines['right'].set_visible(True)
+        ax.spines['bottom'].set_color('black')
+        ax.spines['left'].set_color('black')
+        ax.spines['top'].set_color('black')
+        ax.spines['right'].set_color('black')
+        ax.tick_params(colors='black', which='both')
+        
+        # Save the figure
+        output_file = os.path.join(OUTPUT_DIR, 'compound_footprint_vs_accuracy.png')
+        os.makedirs(os.path.dirname(output_file), exist_ok=True)
+        plt.savefig(output_file, dpi=300, bbox_inches='tight')
+        logger.info(f"Saved compound footprint vs accuracy plot to {output_file}")
+        plt.close()
+        
+    except Exception as e:
+        logger.error(f"Error creating compound footprint plot: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+

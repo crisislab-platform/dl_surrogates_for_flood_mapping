@@ -1,5 +1,5 @@
 # Description: Data loader for U-Net model (PyTorch version)
-from modules.lib.constants import CARLISLE_DATA_DIR, OUTPUT_DIR, SIMULATION_DATA_DIR
+from modules.lib.constants import DATA_DIR, OUTPUT_DIR, SIMULATION_DATA_DIR, DEM_FILE
 from modules.models.usrr_1dcnn.lib.gdal_lib import coords2rc, rc2coords, gdal_asarray, gdal_transform, gdal_writetiff
 from modules.datamanager.raster.raster_loader_unet import UNetDataManager
 from modules.models.usrr_1dcnn.lib.base_functions import read_shp_point
@@ -23,12 +23,12 @@ class ReconsturctionDataManager(USRRDataManager):
                  run_dir, 
                  batches_per_map=6):
         super().__init__()
-        cross_tile_dist=32
+        cross_tile_dist=28
         map_size=64
         
         # Paths
         self.rep_loc_file_path = f"{OUTPUT_DIR}/rls/rl_{sampling_dist}.asc"
-        self.dem_asc_file = f"{SIMULATION_DATA_DIR}/Carlisle_5m.asc"
+        self.dem_asc_file = DEM_FILE
         self.simulation_dir = SIMULATION_DATA_DIR
         self.max_inundation_file = f"{self.simulation_dir}/Run3-0094.wd"
         self.area_check_file = f"{OUTPUT_DIR}/area_check.tif"
@@ -52,8 +52,8 @@ class ReconsturctionDataManager(USRRDataManager):
         return
         
     def prepare_reconstruction_test_idxs(self):
-        self.test_start_tidx = (17 * 4) - (2 * 4) - 1 
-        self.test_end_tidx = (65 * 4) - (2 * 4) - 1
+        self.test_start_tidx = 0
+        self.test_end_tidx = 265
         
         self.reconstruction_test_idxs = np.arange(self.test_end_index - self.test_start_tidx + 1)
         logger.info(f"Prepared {len(self.reconstruction_test_idxs)} timesteps with {self.batches_per_map} batches per mapeach for reconstruction testing")
@@ -66,6 +66,25 @@ class ReconsturctionDataManager(USRRDataManager):
             dem_batch = self.shaped_dem_gpu.unsqueeze(1)  # Add channel dimension for DEM
             reference_tiles = self.preloaded_tiles[t_idx]
             return torch.cat((input_map_tensor, dem_batch), dim=1), reference_tiles, inundation_map
+        
+    def get_batch_multiple(self, t_indices, rl_depths):
+        with torch.no_grad():
+            inundation_maps = []
+            input_temp_filled = []
+            reference_tiles = []
+            for t_idx, rl_depth in zip(t_indices, rl_depths):
+                inundation_maps.append(self.preloaded_maps[t_idx])
+                input_map_tensor = self.tiles_prep_func_gpu(rl_depth).unsqueeze(1)
+                dem_batch = self.shaped_dem_gpu.unsqueeze(1)
+                input_tensor_cat = torch.cat((input_map_tensor, dem_batch), dim=1)
+                input_temp_filled.append(input_tensor_cat)
+                reference_tiles.append(self.preloaded_tiles[t_idx])
+              # Add channel dimension for DEM
+
+            input_map_tensors = torch.cat(input_temp_filled, dim=0)
+            inundation_maps = torch.cat(inundation_maps, dim=0)
+            reference_tiles = torch.cat(reference_tiles, dim=0)
+            return input_map_tensors, reference_tiles, inundation_maps
                     
     
     def reconstruction_init(self):

@@ -2,11 +2,9 @@ from modules.utils.run_util import generate_run_id
 from modules.utils.path_util import ensure_dir
 from modules.model_runner.model_factory import create_model
 from modules.models.model_wrapper import ModelConfig
-from modules.visualiser.visualiser import plot_training_history
 from modules.model_runner.metrics_writer import save_training_metrics, save_prediction_metrics
 from modules.models.model_wrapper import ModelWrapper
 from modules.lib.constants import RUN_DIR
-from modules.lib.constants import USRR_CNN1D_COMBINED
 
 import json
 import torch
@@ -21,9 +19,6 @@ logger.setLevel(logging.INFO)
 
 def save_model_training_history(run_id, run_dir, model_wrapper:ModelWrapper, history, train_time, config, model_file, tuning_mode):
     try:
-        logger.info("Plotting training history")
-        plot_training_history(history, run_dir)
-        
         logger.info("Saving training metrics")
         save_training_metrics(run_id, history, train_time, model_wrapper.model, config, model_file, tuning_mode)
         return True
@@ -56,27 +51,26 @@ def train_model(config: ModelConfig, args) -> str:
             return None
         
         logger.info(f"Training model {config.model_name}")
-        if config.model_name != USRR_CNN1D_COMBINED:         
-            tuning_mode = bool(args.tuning_mode)
-            history, train_time, model_file = model.train(run_dir, tuning_mode)
-            logger.info(f"Training completed in {train_time:.2f} seconds")
-            logger.info("Training history: {history}")
-            
-            logger.info("Saving training history")
-            state  = save_model_training_history(
-                run_id, run_dir, model, history, train_time, config, model_file, tuning_mode=tuning_mode
-            )
-            
-            if not state:
-                logger.error("Model saving failed")
-            else:
-                logger.info("Model training history saved successfully")
+                
+        tuning_mode = bool(args.tuning_mode)
+        history, train_time, model_file = model.train(run_dir, tuning_mode)
+        logger.info(f"Training completed in {train_time:.2f} seconds")
+        logger.info("Training history: {history}")
+        
+        logger.info("Saving training history")
+        state  = save_model_training_history(
+            run_id, run_dir, model, history, train_time, config, model_file, tuning_mode=tuning_mode
+        )
+        
+        if not state:
+            logger.error("Model saving failed")
+        else:
+            logger.info("Model training history saved successfully")
 
-            if args.tuning_mode:
-                logger.info("Tuning mode is enabled, skipping prediction")
-                return run_id
-        else:   
-            logger.info("Skipping training for USRR_1DCNN_COMBINED model")
+        if args.tuning_mode:
+            logger.info("Tuning mode is enabled, skipping prediction")
+            return run_id
+
         
         logger.info("Testing model")
         metrics = model.test_model()
@@ -88,14 +82,23 @@ def train_model(config: ModelConfig, args) -> str:
         pred_time = metrics.get("pred_time", 0)
         flops = metrics.get("flops", 0)
         mRMSE = metrics.get("mRMSE", 0)
+        hit_rate = metrics.get("hit_rate", 0)
+        csi = metrics.get("csi", 0)
+        f2_score = metrics.get("f2_score", 0)
+        f3_score = metrics.get("f3_score", 0)
     
 
         logger.info(f"Prediction completed in {pred_time:.2f} seconds")
         logger.info(f"Prediction MSE: {pred_mse}")
         logger.info(f"Prediction RMSE: {pred_rmse}")
         logger.info(f"Prediction mRMSE: {mRMSE}")
+        logger.info(f"Prediction Hit Rate: {hit_rate}")
+        logger.info(f"Prediction CSI: {csi}")
+        logger.info(f"Prediction F2 Score: {f2_score}")
+        logger.info(f"Prediction F3 Score: {f3_score}")
         logger.info(f"Prediction NSE: {pred_nse}")
         logger.info(f"Model FLOPS: {flops}")
+        
         
         save_prediction_metrics(
             run_id, config.model_name, metrics

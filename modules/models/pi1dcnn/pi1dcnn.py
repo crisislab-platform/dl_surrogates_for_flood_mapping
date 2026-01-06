@@ -9,6 +9,9 @@ from modules.lib.constants import PICNN1D_V1
 import time
 import json
 import numpy as np
+from torch.profiler import profile, ProfilerActivity
+from modules.utils.model_util import format_flops
+from torch.utils.flop_counter import FlopCounterMode
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("PI1DCNN_ModelWrapper")
@@ -81,7 +84,7 @@ class PICNN1DModelWrapper(ModelWrapper):
         self.outputs = 581067
         self.validation_event = self.config.fold  + 1
         self.physics_weight = self.config.args.get('physics_weight', 0.5)
-        self.tuning_mode = config.args.get('tuning_mode', True)
+        self.tuning_mode = config.args.get('tuning_mode', False)
     
     def create_dataset(self):
         logger.info("Creating dataset")
@@ -122,12 +125,43 @@ class PICNN1DModelWrapper(ModelWrapper):
             epoch_loss = 0
             valid_batches = 0
             self.model.train()
+            
+            if epoch > 0:
+                self.data_manager.shuffle_training_data(epoch) 
+                
             for idx, t_indices in enumerate(self.data_manager.train_idx):
                 self.optimizer.zero_grad()
-                xt, yt, yt_minus1, yt_plus1, bct, bct_plus1  = self.data_manager.get_batch(t_indices)
-                pred = self.model(xt)
-                batch_loss = self.physics_loss_fn(pred, yt, yt_minus1, yt_plus1, bct, bct_plus1)
-                
+                if idx == 0 and epoch == 0:
+                    logger.info("Starting memory profiling for the first batch")
+                    with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], 
+                                profile_memory=True, 
+                                on_trace_ready=torch.profiler.tensorboard_trace_handler(run_dir)) as prof:
+                        xt, yt, yt_minus1, yt_plus1, bct, bct_plus1  = self.data_manager.get_batch(t_indices)
+                        pred = self.model(xt)
+                        # Handle single pixel output (no squeezing needed for 1D output)
+                        if len(pred.shape) > 1 and pred.shape[1] > 1:
+                            pred = pred.squeeze(1)  # Only squeeze if there's a channel dimension
+                        # Handle single pixel output (no squeezing needed for 1D output) 
+                        if len(yt.shape) > 1 and yt.shape[1] > 1:
+                            yt = yt.squeeze(1)  # Only squeeze if needed
+                            yt_minus1 = yt_minus1.squeeze(1)
+                            yt_plus1 = yt_plus1.squeeze(1)
+                        pred = torch.where(pred < 0.0, torch.tensor(0.0).to(device), pred)
+                        batch_loss = self.physics_loss_fn(epoch, pred, yt, yt_minus1, yt_plus1, bct, bct_plus1)
+                        # batch_loss = self.loss_fn(pred, yt)
+                        batch_loss.backward()
+                        self.optimizer.step()
+                        prof.step()
+                    self.profiler= prof
+                else:
+                    xt, yt, yt_minus1, yt_plus1, bct, bct_plus1  = self.data_manager.get_batch(t_indices)
+                    pred = self.model(xt)
+                    pred = torch.where(pred < 0.0, torch.tensor(0.0).to(device), pred)
+                    batch_loss = self.physics_loss_fn(epoch, pred, yt, yt_minus1, yt_plus1, bct, bct_plus1)
+                    # batch_loss = self.loss_fn(pred, yt)
+                    batch_loss.backward()
+                    self.optimizer.step()
+                    
                 del pred
                 del yt_plus1
                 del yt_minus1
@@ -135,18 +169,15 @@ class PICNN1DModelWrapper(ModelWrapper):
                 del bct_plus1
                 del yt
                 del xt
-                
                 epoch_loss += batch_loss.item()
                 valid_batches += 1  # Increment valid batch counter
-                batch_loss.backward()
-                self.optimizer.step()
                 torch.cuda.empty_cache()
                 logger.info(f"Batch train loss: {batch_loss.item()}")
                 
             # Divide by actual number of valid batches processed
             epoch_loss = epoch_loss / valid_batches if valid_batches > 0 else float('inf')
             history["loss"].append(epoch_loss)
-            
+        
             # Epoch Validation
             if tuning_mode:
                 val_loss = 0
@@ -161,7 +192,7 @@ class PICNN1DModelWrapper(ModelWrapper):
                     with torch.no_grad():
                         pred_val = self.model(xt)
                         # If pred < 0.2 then set to 0
-                        pred_val = torch.where(pred_val < 0.2, torch.tensor(0.0).to(device), pred_val)
+                        pred_val = torch.where(pred_val < 0.3, torch.tensor(0.0).to(device), pred_val)
                         batch_val_loss = self.loss_fn(pred_val, yt).item()
                         del pred_val
                         del yt
@@ -228,7 +259,7 @@ class PICNN1DModelWrapper(ModelWrapper):
     def test_model(self):
         return super().test_model()
         
-    def loss_fn_def(self, y_hat_t, y_t, yt_minus1, yt_plus1=None, bct=None, bct_plus1=None):
+    def loss_fn_def(self, epoch, y_hat_t, y_t, yt_minus1, yt_plus1=None, bct=None, bct_plus1=None):
         mse_loss = self.loss_fn(y_hat_t, y_t)
         if yt_plus1 is None or bct is None or bct_plus1 is None:
             return mse_loss
@@ -241,25 +272,54 @@ class PICNN1DModelWrapper(ModelWrapper):
         area = delta_x * delta_y * n_x * n_y
         
         # VECTORIZED: Calculate volumes across entire batch at once
-        vt_minus1 = delta_x * delta_y * torch.sum(yt_minus1, dim=1)  # [batch_size]
-        vt_plus1 = delta_x * delta_y * torch.sum(yt_plus1, dim=1)  # [batch_size]
-        v_hat_t = delta_x * delta_y * torch.sum(y_hat_t, dim=1)  # [batch_size]
+        vt_minus1 = delta_x * delta_y * torch.sum(yt_minus1, dim=1)  
+        vt_plus1 = delta_x * delta_y * torch.sum(yt_plus1, dim=1)  
+        v_hat_t = delta_x * delta_y * torch.sum(y_hat_t, dim=1) 
         
         # VECTORIZED: Sum boundary conditions for each sample
-        bc_t_sum = torch.sum(bct, dim=1)  # [batch_size]
-        bc_t_plus_1_sum = torch.sum(bct_plus1, dim=1)  # [batch_size]
+        bc_t_sum = torch.sum(bct, dim=1)  
+        bc_t_plus_1_sum = torch.sum(bct_plus1, dim=1)  
         
         # VECTORIZED: Physics calculations on entire batch at once
-        relu_arg1 = v_hat_t - vt_minus1 - delta_t_val * bc_t_sum
-        term2 = ((torch.relu(relu_arg1)) / area)**2
+        relu_arg1 = v_hat_t - vt_minus1 - (delta_t_val * bc_t_sum)
+        term2 = ((torch.relu(relu_arg1)) / area) ** 2
         
-        relu_arg2 = vt_plus1 - v_hat_t - delta_t_val * bc_t_plus_1_sum
-        term3 = ((torch.relu(relu_arg2)) / area)**2
+        relu_arg2 = vt_plus1 - v_hat_t - (delta_t_val * bc_t_plus_1_sum)
+        term3 = ((torch.relu(relu_arg2)) / area) ** 2
         
         # Mean across batch
-        physics_loss = torch.mean(term2 + term3)
+        physics_loss = term2 + term3
+        physics_loss = torch.mean(physics_loss)
+        
+        # if epoch > 5: 
+        #     physics_weight = 1
+        # else:
+        #     physics_weight = self.physics_weight
         
         # Final loss
-        total_loss = mse_loss + 0.5 * physics_loss
+        total_loss = mse_loss + physics_loss
         
         return total_loss
+    
+    def calculate_flops(self):
+        try:
+            t_indices = self.data_manager.train_idx[0]
+            input_batch  = self.data_manager.get_batch(t_indices)[0]
+
+            # Create a sample input for the model
+            input_batch = torch.tensor(input_batch).to(self.device)
+            sample_input = input_batch[0].unsqueeze(0)
+        
+            # Use FlopCounterMode to count FLOPS
+            with FlopCounterMode(self.model) as counter:
+                _ = self.model(sample_input)
+                
+            flops = counter.get_total_flops()
+            logger.info(f"FLOPS: {flops}")
+            flops_str = format_flops(flops)
+            logger.info(f"Model FLOPS: {flops_str}")
+            
+            return flops
+        except Exception as e:
+            logger.error(f"Error calculating FLOPS: {e}")
+            return None
