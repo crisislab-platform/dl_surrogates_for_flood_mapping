@@ -6,7 +6,7 @@ import rasterio as rio
 import glob
 from sklearn.preprocessing import MinMaxScaler
 import torch
-from modules.lib.constants import DATA_DIR, SIMULATION_DATA_DIR, OUTPUT_DIR, DEM_FILE
+from modules.lib.constants import INPUT_FILE_DIR, SIMULATION_DATA_DIR, OUTPUT_DIR, DEM_FILE
 from modules.datamanager.datamanager import DataManager
 from modules.utils.run_util import check_device
 from modules.lib.gdal_lib import gdal_asarray, coords2rc
@@ -100,7 +100,7 @@ class HDLFMRasterDataManager(DataManager):
         
         for idx in range(len(event_ids)):
             event_id = event_ids[idx]
-            inflow_file = os.path.join(DATA_DIR, f"Upstream_Flows_Run{event_id}.csv")
+            inflow_file = os.path.join(INPUT_FILE_DIR, f"Upstream_Flows_Run{event_id}.csv")
             inflow_data = pd.read_csv(inflow_file)
             inflow_data = inflow_data[8:] #Skip the first 8 rows
             inflow_data = inflow_data.dropna()

@@ -1,11 +1,10 @@
-from modules.lib.constants import DATA_DIR, OUTPUT_DIR, SIMULATION_DATA_DIR, RUN_DIR, DEM_FILE
+from modules.lib.constants import  OUTPUT_DIR, SIMULATION_DATA_DIR, RUN_DIR, DEM_FILE
 from modules.models.usrr_1dcnn.lib.base_functions import *
-from modules.models.usrr_1dcnn.lib.gdal_lib import gdal_asarray, gdal_transform, rc2coords, gdal_writeasc
+from modules.models.usrr_1dcnn.lib.gdal_lib import gdal_asarray, gdal_writeasc
 from modules.models.usrr_1dcnn.reduction.rl_culster_finder import RLClusterFinder
 from modules.utils.path_util import ensure_dir
 from torch.profiler import profile, ProfilerActivity
-from modules.utils.model_util import profiler_analysis, format_flops, save_prediction_map
-from modules.datamanager.datamanager import check_inundation_data_cache
+from modules.utils.model_util import profiler_analysis, format_flops
 
 import logging
 import numpy as np
@@ -14,7 +13,7 @@ import os
 import torch
 import psutil
 import time
-from modules.utils.model_util import profiler_analysis, format_flops, save_prediction_map
+from modules.utils.model_util import profiler_analysis, format_flops
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("Representaitve_Location_Finder")
@@ -197,7 +196,7 @@ def find_representative_locations_and_clusters(run_id, sampling_dist, n_clusters
     
     
 def reducer_func(run_id, sampling_dist, n_clusters=10, random_state=42, n_init=10):
-    work_dir = f"{OUTPUT_DIR}/rls"
+    work_dir = f"{RUN_DIR}/{model_name}/rls"
     dem_asc_file = DEM_FILE
     simulation_dir = SIMULATION_DATA_DIR
     max_inunundation_file = f"{simulation_dir}/Run3-0094.wd"
@@ -212,7 +211,7 @@ def reducer_func(run_id, sampling_dist, n_clusters=10, random_state=42, n_init=1
                                     random_state=random_state, n_init=n_init, raster_temp=dem_asc_file)
 
     # Run clustering
-    cluster_finder.run_clustering_new()
+    cluster_finder.run_clustering()
     
     # Save the meta data to csv files
     meta_data = {

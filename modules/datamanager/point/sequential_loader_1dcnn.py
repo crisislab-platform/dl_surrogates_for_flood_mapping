@@ -1,7 +1,7 @@
 import os
 import pandas as pd
 import numpy as np
-from modules.lib.constants import DATA_DIR, OUTPUT_DIR, SIMULATION_DATA_DIR, DEM_FILE
+from modules.lib.constants import  INPUT_FILE_DIR, OUTPUT_DIR, SIMULATION_DATA_DIR, DEM_FILE, RUN_DIR
 from modules.models.usrr_1dcnn.lib.gdal_lib import gdal_asarray
 import torch
 import logging
@@ -178,7 +178,7 @@ class CNNSequentialDataManager(DataManager):
         import os
         
         # Create visualization directory if it doesn't exist
-        vis_dir = os.path.join(OUTPUT_DIR, "visualizations")
+        vis_dir = os.path.join(OUTPUT_DIR, "usrr_1dcnn", "rls")
         os.makedirs(vis_dir, exist_ok=True)
         
         # Create figure
@@ -310,7 +310,7 @@ class CNNSequentialDataManager(DataManager):
             
             # 1. Load all raw data
             for event_id in self.all_event_ids:
-                inflow_file = os.path.join(DATA_DIR, f"Upstream_Flows_Run{event_id}.csv")
+                inflow_file = os.path.join(INPUT_FILE_DIR, f"Upstream_Flows_Run{event_id}.csv")
                 inflow_data = pd.read_csv(inflow_file)
                 
                 inflow_data = inflow_data[8:]  # Skip first 8 rows (warm-up period)
@@ -500,7 +500,7 @@ class CNNSequentialDataManager(DataManager):
     def find_cluster_file(self, rl_group, sampling_dist, num_of_clusters):
         if rl_group is None:
             return None, None
-        cluster_file = f"{OUTPUT_DIR}/rls/clusters/clusters_ss_{sampling_dist}_{num_of_clusters}.csv"
+        cluster_file = f"{RUN_DIR}/USRR_1DCNN_REDUCTION/rls/clusters/clusters_ss_{sampling_dist}_{num_of_clusters}.csv"
         if not os.path.exists(cluster_file):
             logger.error(f"Cluster file {cluster_file} does not exist.")
             raise ValueError(f"Cluster file {cluster_file} does not exist.")
