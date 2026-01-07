@@ -1,7 +1,7 @@
 import os
 import pandas as pd
 import numpy as np
-from modules.lib.constants import  INPUT_FILE_DIR, OUTPUT_DIR, SIMULATION_DATA_DIR, DEM_FILE, RUN_DIR
+from modules.lib.constants import  INPUT_FILE_DIR, OUTPUT_DIR, SIMULATION_DATA_DIR, DEM_FILE, RUN_DIR, DATA_DIR
 from modules.models.usrr_1dcnn.lib.gdal_lib import gdal_asarray
 import torch
 import logging
@@ -93,7 +93,7 @@ class CNNSequentialDataManager(DataManager):
             """Preload all inundation data for an event into GPU memory"""
             for event_id in self.all_event_ids:
                 if check_inundation_data_cache(event_id):
-                    inundation_data = torch.load(os.path.join(OUTPUT_DIR, "preprocessed_inundation", f"event_{event_id}_inundation.pt"))
+                    inundation_data = torch.load(os.path.join(DATA_DIR, "preprocessed_inundation", f"event_{event_id}_inundation.pt"))
                     inundation_data = inundation_data.float()
                     # No need to skip first 8 maps here as they were skipped during preprocessing
                     event_inundation_data = inundation_data[:, self.filter_mask]

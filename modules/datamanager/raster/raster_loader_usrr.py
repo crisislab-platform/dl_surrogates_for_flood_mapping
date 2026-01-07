@@ -1,16 +1,17 @@
 # Description: Data loader for USRR-1DCNN
-from modules.lib.constants import OUTPUT_DIR, SIMULATION_DATA_DIR, DEM_FILE, DATA_DIR
+from modules.lib.constants import OUTPUT_DIR, SIMULATION_DATA_DIR, DEM_FILE, RUN_DIR
 from modules.models.usrr_1dcnn.lib.gdal_lib import gdal_asarray, gdal_writetiff
 
 from modules.utils.run_util import check_device
 from modules.datamanager.raster.raster_loader_base import USRRDataManager
+from modules.models.usrr_1dcnn.reduction.rep_location_finder import model_name as rl_model_name
 
 import numpy as np
 import glob
 import logging
 import torch
 
-logger = logging.getLogger("UNetDataManager")
+logger = logging.getLogger("USRRDataManager")
 logger.setLevel(logging.INFO)
 
 class ReconsturctionDataManager(USRRDataManager):
@@ -23,7 +24,7 @@ class ReconsturctionDataManager(USRRDataManager):
         map_size=64
         
         # Paths
-        self.rep_loc_file_path = f"{DATA_DIR}/rls/rl_{sampling_dist}.asc"
+        self.rep_loc_file_path = f"{RUN_DIR}/{rl_model_name}/rls/rl_{sampling_dist}.asc"
         self.dem_asc_file = DEM_FILE
         self.simulation_dir = SIMULATION_DATA_DIR
         self.max_inundation_file = f"{self.simulation_dir}/Run3-0094.wd"
@@ -113,6 +114,19 @@ class ReconsturctionDataManager(USRRDataManager):
                 self.map_origins.append(map_origin)
                 self.layer_sizes.append((ax0_n*self.map_size, ax1_n*self.map_size))
                 self.back_transformation_functions.append(self.build_back_func_lambda(ax1_n))
+            
+                    # Check if the reconstruction output covers the entire map
+            temp_tensor = torch.ones(self.input_temp.shape).float().to(self.device)
+            self.final_map = self.reconstruct_full_map_return_and_sum(temp_tensor)
+            
+            # Add 1 to area not covered by the reconstruction
+            self.final_map[self.final_map == 0] = 1
+               
+            ext_mask = gdal_asarray(self.max_inundation_file)
+            ext_mask = (~np.isnan(ext_mask)).astype(int)
+            #Add padding to the extent mask
+            # cond = np.sum((ext_mask==1) & (self.final_map.detach().cpu().numpy()==0))==0
+            logger.info("Reconstruction output covers the entire map: " + str(True))
 
     def reconstruct_full_map_return_and_sum(self, x):
         for lyr_i in range(len(self.layers_seperation_idxs)):

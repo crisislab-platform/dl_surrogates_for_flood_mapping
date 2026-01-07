@@ -1,95 +1,97 @@
-# Deep Learning Based Flood Inundation Modeling
+# Deep Learning for Flood Inundation Forecasting
 
-This project implements deep learning models to predict flood inundation extent and depth maps. The system is trained on historical flood data from Carlisle, UK to predict future flood extents.
+A comprehensive framework for benchmarking deep leaning mdoels for flood inundation extent and depth using modelling. 
 
-## Prerequisites
+## 🌊 Overview
 
-- LISFLOOD-FP simulator 8.1
-- Python 3.8+
-- CUDA-capable GPU
-- GNU Parallel
-- Required Python packages:
-  ```bash
-  pip install -r requirements.txt
-  ```
+ The framework supports multiple model architectures and provides extensive evaluation metrics including TOPSIS-based multi-criteria decision analysis for model comparison.
 
-## Project Structure
 
+## 📋 Contents
+
+- [Prerequisites](#prerequisites)
+- [Quick Start](#quick-start)
+- [Data Generation](#data-generation)
+- [Training](#training)
+- [Evaluation](#evaluation)
+
+## 🔧 Prerequisites
+
+### System Requirements
+- **OS**: Linux (Ubuntu 18.04+ recommended)
+- **GPU**: CUDA-capable GPU with 96GB+ VRAM for reproducibility
+- **RAM**: 16GB+ recommended
+- **Storage**: 100GB+ for data and models
+
+### Software Dependencies
+- Python 3.8 or higher
+- CUDA Toolkit 11.0+
+- LISFLOOD-FP version 8.2 (for simulation data generation)
+- GNU Parallel (for batch training)
+- Conda (for environment management)
+
+## 📦 Installation
+
+1. **Clone the repository**
+```bash
+git clone <https://github.com/crisislab-platform/dl_surrogates_for_flood_mapping/>
 ```
-deeplearning-flood/
-├── data/                  # Data used for simulating flood events using LISFLOOD-FP
-├── exploratory/           # Exploratory data analysis notebooks
-├── src/                   # Source code
-├── train.sh              # Training script
-├── simulation_data_generator.sh  # Data generation script
-└── README.md
+
+2. **Create virtual environment**
+```bash
+conda create -n carlisle_env python=3.8 -y --file environment.yml
+conda activate carlisle_env
 ```
 
-## Usage
+3. **Install LISFLOOD-FP** (optional, for data generation)
+```bash
+# Follow LISFLOOD-FP installation guide
+# https://www.seamlesswave.com/LISFLOOD-FP.html
+```
 
-### 1. Generate Simulation Dataset
+4. **Configure paths**
+```python
+# Edit modules/lib/constants.py to set paths to your directories and files
+PROJECT_ROOT = "/path/to/project/root"
+DATA_DIR = "/path/to/data/directory"
+OUTPUT_DIR = "/path/to/outputs"
+DEM_FILE = "path/to/dem/file"
+```
 
-First, generate the flood simulation dataset using LISFLOOD-FP:
+## 🚀 Quick Start
+
+### 1. Generate Training Data
+
+Run flood simulations using LISFLOOD-FP:
 
 ```bash
-cd carlisle-data
-chmod +x simulation_data_generator.sh
-./simulation_data_generator.sh
+bash  run_scripts/simulation_data_generator.sh
 ```
+After completion, simulated flood data will be stored in the specified DATA_DIR, under `simulation_data/`.
 
-The script will:
-- Run 9 different flood scenarios
-- Generate output files for each simulation
-- Create a log file (simulation.log) tracking progress
+This generates 9 flood scenarios with varying intensities and durations.
 
-### 2. Train the Models
+### 2. Train a Single Model
 
-The training script uses GNU Parallel to experiment with different hyperparameters:
+Train a 1DCNN model with default parameters:
 
 ```bash
-./train.sh
+bash run_scripts/1dcnn/train_1dcnn_final.sh
 ```
 
-Training parameters:
-- Lag windows: 8, 12 (historical time steps)
-- Prediction horizon: 1 (future time steps)
-- Batch sizes: 128, 256
-- Learning rate: 0.001
-- Epochs: 10, 20
-- Early stopping patience: 5
+The trained model and logs will be saved in the specified `RUN_DIR`
 
-## Model Parameters
+Other model training scripts are available in the `run_scripts` directory.
 
-### Lag Window
-The number of historical time steps used to predict future flood extent.
-- Smaller values (e.g., 8): Faster training, but may miss longer-term patterns
-- Larger values (e.g., 12): Better for capturing longer-term dependencies
+### 3. Run evaluation metrics computational efficiency analysis
 
-### Prediction Horizon
-Number of time steps to predict into the future (currently set to 1).
-
-### Batch Size
-Number of samples processed before model update:
-- 128: Better for limited GPU memory
-- 256: Faster training on powerful GPUs
-
-### Learning Rate
-Controls how much to adjust the model in response to errors (0.001 is a stable choice).
-
-### Early Stopping
-Training stops if no improvement is seen for 5 epochs to prevent overfitting.
-
-## Monitoring
-
-- Training progress is logged to stdout
-- Model checkpoints are saved in the `models/` directory
-- Simulation logs are stored in `carlisle-data/simulation.log`
-
-## Running the ConvLSTM Model
-
-The ConvLSTM model uses spatial-temporal features by preserving the grid structure and using convolutional LSTM cells. This model is more memory-efficient for large grid sizes as it uses parameter sharing.
-
-### Using the ConvLSTM model
-
-Train the ConvLSTM model:
+```bash
+bash  run_scripts/analyse_model_predictions.sh
 ```
+
+
+## 📧 Contact
+
+For questions or collaboration:
+- Email: [malintha.mahindakumarage.1@uni.massey.ac.nz]
+
