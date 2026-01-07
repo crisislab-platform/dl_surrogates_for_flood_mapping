@@ -10,6 +10,7 @@ from modules.lib.constants import USRR_1DCNN_V1, PLOTS_OUTPUT_DIR, SIMULATION_DA
 from modules.model_runner.model_utils import find_model_file
 from torch.profiler import profile, ProfilerActivity
 from modules.utils.model_util import profiler_analysis, format_flops, save_prediction_map
+from modules.models.usrr_1dcnn.reduction.rep_location_finder import model_name as rl_model_name
 
 
 import torch
@@ -36,7 +37,7 @@ class ReconstructionModule():
         # Initialize directories and files
         self.dem_asc_file = DEM_FILE
         self.simulation_dir  =  SIMULATION_DATA_DIR
-        self.rep_loc_file_path = os.path.join(OUTPUT_DIR, "rls", f"rl_{sampling_distance}.asc")
+        self.rep_loc_file_path = os.path.join(RUN_DIR, rl_model_name, "rls", f"rl_{sampling_distance}.asc")
         self.device =  check_device()
         self.run_dir = run_dir
         
