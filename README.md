@@ -18,8 +18,8 @@ A comprehensive framework for benchmarking deep leaning mdoels for flood inundat
 ## 🔧 Prerequisites
 
 ### System Requirements
-- **OS**: Linux (Ubuntu 18.04+ recommended)
-- **GPU**: CUDA-capable GPU with 96GB+ VRAM for reproducibility
+- **OS**: Linux (Ubuntu 18.04+ recommended) or Windows
+- **GPU**: CUDA-capable GPU 
 - **RAM**: 16GB+ recommended
 - **Storage**: 100GB+ for data and models
 
