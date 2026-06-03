@@ -10,8 +10,7 @@ import glob
 import logging
 import torch
 import pandas as pd
-from modules.datamanager.raster.raster_loader_base import USRRDataManager
-from modules.datamanager.datamanager import check_inundation_data_cache
+from modules.datamanager.usrr_1dcnn.map_sampler import USRRDataManager
 
 logger = logging.getLogger("UNetDataManager")
 logger.setLevel(logging.INFO)

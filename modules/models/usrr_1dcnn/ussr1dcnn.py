@@ -1,4 +1,4 @@
-from modules.models.model_wrapper import ModelWrapper, ModelConfig
+from modules.models.model_wrapper import ModelWrapper, Config
 from modules.models.usrr_1dcnn.unet import UNetModelWrapper
 from modules.models.usrr_1dcnn.cnn1d import CNN1DModelWrapper
 from modules.models.usrr_1dcnn.reduction.rl_culster_finder import RLClusterFinder
@@ -12,7 +12,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("USSR_1D_CNN_Model")
 
 class USSR1DCNNModelWrapper(ModelWrapper):
-    def __init__(self, config: ModelConfig):
+    def __init__(self, config: Config):
         super().__init__(config)
         self.model_name = USRR_CNN1D_COMBINED
         self.cnn1d_models = "tbd"

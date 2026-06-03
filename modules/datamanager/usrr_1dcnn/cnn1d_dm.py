@@ -1,12 +1,12 @@
 import os
 import pandas as pd
 import numpy as np
-from modules.lib.constants import  INPUT_FILE_DIR, OUTPUT_DIR, SIMULATION_DATA_DIR, DEM_FILE, RUN_DIR, DATA_DIR
+from modules.lib.constants import  BC_DATA_DIR, OUTPUT_DIR, SIMULATION_DATA_DIR, DEM_FILE, RUN_DIR, DATA_DIR
 from modules.models.usrr_1dcnn.lib.gdal_lib import gdal_asarray
 import torch
 import logging
-from modules.datamanager.datamanager import DataManager, check_inundation_data_cache
-from modules.datamanager.raster.raster_loader_usrr import ReconsturctionDataManager
+from modules.datamanager.usrr_1dcnn.usrr_1dcnn_dm import ReconsturctionDataManager
+from modules.datamanager.datamanager import DataManager
 from modules.utils.run_util import check_device
 
 logging.basicConfig(level=logging.INFO)
@@ -310,7 +310,7 @@ class CNNSequentialDataManager(DataManager):
             
             # 1. Load all raw data
             for event_id in self.all_event_ids:
-                inflow_file = os.path.join(INPUT_FILE_DIR, f"Upstream_Flows_Run{event_id}.csv")
+                inflow_file = os.path.join(BC_DATA_DIR, f"Upstream_Flows_Run{event_id}.csv")
                 inflow_data = pd.read_csv(inflow_file)
                 
                 inflow_data = inflow_data[8:]  # Skip first 8 rows (warm-up period)

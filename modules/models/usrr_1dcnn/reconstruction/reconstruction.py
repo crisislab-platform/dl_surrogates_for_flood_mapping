@@ -3,8 +3,8 @@ from modules.models.usrr_1dcnn.lib.gdal_lib  import gdal_asarray, read_shp_point
 from modules.utils.run_util import check_device
 from modules.models.usrr_1dcnn.unet import UNet
 from modules.models.usrr_1dcnn.cnn1d import CNN1DSequential
-from modules.datamanager.raster.raster_loader_usrr import ReconsturctionDataManager
-from modules.datamanager.point.sequential_loader_1dcnn import CNNSequentialDataManager
+from modules.datamanager.usrr_1dcnn.usrr_1dcnn_dm import ReconsturctionDataManager
+from modules.datamanager.usrr_1dcnn.cnn1d_dm import CNNSequentialDataManager
 from modules.models.usrr_1dcnn.unet import model_name as UNET_MODEL_NAME
 from modules.lib.constants import USRR_1DCNN_V1, PLOTS_OUTPUT_DIR, SIMULATION_DATA_DIR, USRR_CNN1D_COMBINED, DEM_FILE
 from modules.model_runner.model_utils import find_model_file

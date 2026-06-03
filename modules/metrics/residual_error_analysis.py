@@ -9,7 +9,6 @@ import numpy as np
 import rasterio
 
 from modules.lib.constants import RUN_DIR, SIMULATION_DATA_DIR, DATA_DIR, OUTPUT_DIR, CNN1D_V1, HDL_FM_V1, PICNN1D_V1, USRR_CNN1D_COMBINED
-from modules.datamanager.datamanager import check_inundation_data_cache
 from modules.metrics.bootstrap_analysis import mRMSE, bootstrap_function
 from modules.lib.constants import  HITRATE, CSI, F2SCORE, F3SCORE, RMSE_T, RMSE_S, MRMSE_T
 from modules.lib.constants import DEM_FILE

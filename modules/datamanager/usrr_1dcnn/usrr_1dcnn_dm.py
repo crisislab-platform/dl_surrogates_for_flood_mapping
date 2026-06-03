@@ -3,7 +3,7 @@ from modules.lib.constants import OUTPUT_DIR, SIMULATION_DATA_DIR, DEM_FILE, RUN
 from modules.models.usrr_1dcnn.lib.gdal_lib import gdal_asarray, gdal_writetiff
 
 from modules.utils.run_util import check_device
-from modules.datamanager.raster.raster_loader_base import USRRDataManager
+from modules.datamanager.usrr_1dcnn.map_sampler import USRRDataManager
 from modules.models.usrr_1dcnn.reduction.rep_location_finder import model_name as rl_model_name
 
 import numpy as np

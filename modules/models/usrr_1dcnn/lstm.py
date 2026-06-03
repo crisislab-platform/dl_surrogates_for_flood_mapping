@@ -1,4 +1,4 @@
-from modules.models.model_wrapper import ModelWrapper, ModelConfig
+from modules.models.model_wrapper import ModelWrapper, Config
 from modules.utils.run_util import check_device
 from modules.datamanager.point.sequential_loader_1dcnn import CNNSequentialDataManager
 from modules.lib.constants import USRR_1DCNN_V1, RUN_DIR
@@ -60,7 +60,7 @@ class LSTM(nn.Module):
 
 class LSTMModelWrapper(ModelWrapper):
     
-    def __init__(self, config: ModelConfig):
+    def __init__(self, config: Config):
         super().__init__(config)
         self.model_name = model_name
         

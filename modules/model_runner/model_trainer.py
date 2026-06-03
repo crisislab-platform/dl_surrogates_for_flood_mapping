@@ -1,7 +1,7 @@
 from modules.utils.run_util import generate_run_id
 from modules.utils.path_util import ensure_dir
 from modules.model_runner.model_factory import create_model
-from modules.models.model_wrapper import ModelConfig
+from modules.models.model_wrapper import Config
 from modules.model_runner.metrics_writer import save_training_metrics, save_prediction_metrics
 from modules.models.model_wrapper import ModelWrapper
 from modules.lib.constants import RUN_DIR
@@ -26,7 +26,7 @@ def save_model_training_history(run_id, run_dir, model_wrapper:ModelWrapper, his
         logger.error(f"Error saving model: {e}")
         return None
 
-def train_model(config: ModelConfig, args) -> str:
+def train_model(config: Config, args) -> str:
     run_id = generate_run_id()
     run_dir = os.path.join(RUN_DIR, config.model_name, run_id) 
     ensure_dir(run_dir)
@@ -67,7 +67,7 @@ def train_model(config: ModelConfig, args) -> str:
         else:
             logger.info("Model training history saved successfully")
 
-        if args.tuning_mode:
+        if tuning_mode:
             logger.info("Tuning mode is enabled, skipping prediction")
             return run_id
 

@@ -1,15 +1,16 @@
 from modules.model_runner.model_utils import get_model_parameters, count_total_neurons
 import os
 from modules.lib.constants import RUN_DIR
-from modules.models.model_wrapper import ModelConfig
+from modules.models.model_wrapper import Config
 import logging
 import pandas as pd
 from modules.lib.constants import USRR_1DCNN_V1, USRR_UNET_V1, LSTM_SRR_V1, USRR_LSTM
+from modules.metrics.plot_traning_metrics import plot_traning_metrics
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("MetricsWriter")
 
-def save_training_metrics(run_id, history, train_time, model, model_config: ModelConfig, model_file, tuning_mode):   
+def save_training_metrics(run_id, history, train_time, model, model_config: Config, model_file, tuning_mode):   
     if history is None or history == {}:
         return 
     
@@ -21,7 +22,6 @@ def save_training_metrics(run_id, history, train_time, model, model_config: Mode
         metrics = {
             'run_id': run_id,
             'model': model_config.model_name,
-            'fold': model_config.fold,
             'loss': loss,
             'val_loss': val_loss, 
             'best_val_rmse': history.get('best_val_rmse', None),
@@ -31,13 +31,11 @@ def save_training_metrics(run_id, history, train_time, model, model_config: Mode
             'model_file': model_file
         }
         save_csv(metrics, metrics_file)
+        plot_traning_metrics(history, os.path.join(RUN_DIR, model_config.model_name, run_id))
         return
     
-    if model_config.model_name == USRR_1DCNN_V1 or model_config.model_name == USRR_UNET_V1 or model_config.model_name == LSTM_SRR_V1 or model_config.model_name == USRR_LSTM :
-        metrics_file = os.path.join(RUN_DIR, model_config.model_name, 'final_training_metrics.csv')
-    else:
-        metrics_file = f'{RUN_DIR}/final_training_metrics.csv'  
     
+    metrics_file = os.path.join(RUN_DIR, model_config.model_name, 'final_training_metrics.csv')
     memory_usage = str(history.get('memory', None))
     neurons = 0
     trainable_params = 0
@@ -63,6 +61,7 @@ def save_training_metrics(run_id, history, train_time, model, model_config: Mode
         'hyperparameters': history.get('hyperparameters', None),
     }
     save_csv(metrics, metrics_file)
+    plot_traning_metrics(history, os.path.join(RUN_DIR, model_config.model_name, run_id))
     
      
 def save_prediction_metrics(run_id, model_name, metrics):

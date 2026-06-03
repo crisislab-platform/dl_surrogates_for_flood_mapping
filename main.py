@@ -3,11 +3,11 @@ import argparse
 from datetime import datetime
 
 from modules.model_runner.model_trainer import train_model
-from modules.models.model_wrapper import ModelConfig
+from modules.models.model_wrapper import Config
 from modules.models.usrr_1dcnn.reduction.rep_location_finder import find_representative_locations_and_clusters
-from modules.datamanager.datamanager import create_inundation_map_tensors
 from utils.utils import check_if_already_run
 from modules.metrics.metrics import metrics_analysis
+import torch.multiprocessing as mp
 
 TRAIN_COMMAND = "train"
 SRR_CLUSTER_COMMAND = "srr_cluster"
@@ -40,7 +40,7 @@ def parse_args():
     parser.add_argument('--random_state', type=int, help='Random state for SRR clustering')
     parser.add_argument('--n_init', type=int, help='Number of initializations for SRR clustering')
     parser.add_argument('--rl_group', type=str, help='RL group for clustering')
-    parser.add_argument('--tuning_mode', type=bool, help='Enable tuning mode')
+    parser.add_argument('--tuning_mode', action='store_true', help='Enable tuning mode')
     parser.add_argument('--fold', type=int, default=0, help='Validation fold for training')
     parser.add_argument('--input_time_len_h', type=float, default=False, help='Lenght of the input time series in hours')
     parser.add_argument('--physics_weight', type=float, default=0.5, help='Weight for physics-based loss')
@@ -53,6 +53,12 @@ def parse_args():
     parser.add_argument('--rl_id', type=str, default=None, help='ID for representative locations')
     parser.add_argument('--lstm_layers', type=int, default=5, help='Patience for early stopping during training')
     parser.add_argument('--hidden_size', type=int, default=64, help='Hidden size for LSTM models')
+    parser.add_argument('--train_events', type=int, nargs='+', default=[], help='Comma-separated list of training event IDs for the conditional diffusion model')
+    parser.add_argument('--test_events', type=int, nargs='+', default=[], help='Comma-separated list of test event IDs for the conditional diffusion model')
+    parser.add_argument('--validation_events', type=int, nargs='+', default=[], help='Comma-separated list of validation event IDs for the conditional diffusion model')
+    parser.add_argument('--indices_per_timestep', type=int, default=1, help='Number of indices to consider per timestep')
+    parser.add_argument('--study_area', type=str, default="carlisle", help='Study area for training or prediction')
+    parser.add_argument('--tile_resolution', type=int, default=512, help='Tile resolution for spatial sampling')
     return parser.parse_args()
 
 
@@ -64,11 +70,9 @@ if __name__ == "__main__":
         exit(1)
 
     elif args.command == TRAIN_COMMAND:
-        create_inundation_map_tensors()
-        if args.tuning_mode:
-            check_if_already_run(args)
-            
-        config = ModelConfig(
+        mp.set_start_method('spawn', force=True)  
+    
+        config = Config(
             model_name=args.model,
             lag=args.lag,
             horizon=args.horizon,
@@ -76,9 +80,14 @@ if __name__ == "__main__":
             learning_rate=args.learning_rate,
             epochs=args.epochs,
             patience=args.patience, 
-            fold=args.fold,
             save_model=args.save_model,
             dropout=args.dropout,
+            train_events=args.train_events,
+            test_events=args.test_events,
+            validation_events=args.validation_events,
+            indices_per_timestep=args.indices_per_timestep,
+            tuning_mode=args.tuning_mode,
+            study_area=args.study_area
         )
         
         logger.info(f"Training model with configuration: {config}")
@@ -88,6 +97,7 @@ if __name__ == "__main__":
         if not args.sampling_dist or not args.n_clusters or not args.random_state or not args.n_init:
             logger.error("Missing required arguments for representative location clustering")
             exit(1)
+            
         # Create a run_id for the run
         run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
         find_representative_locations_and_clusters(run_id, args.sampling_dist, args.n_clusters, args.random_state, args.n_init)

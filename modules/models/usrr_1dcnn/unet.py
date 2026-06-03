@@ -1,6 +1,6 @@
 from modules.models.model_wrapper import ModelWrapper
-from modules.models.model_wrapper import ModelConfig
-from modules.datamanager.raster.raster_loader_unet import UNetDataManager
+from modules.models.model_wrapper import Config
+from modules.datamanager.usrr_1dcnn.unet_dm import UNetDataManager
 from modules.utils.run_util import check_device
 from modules.lib.constants import USRR_UNET_V1
 from torch.profiler import profile, ProfilerActivity
@@ -77,7 +77,7 @@ class UNet(nn.Module):
         return out
 
 class UNetModelWrapper(ModelWrapper):
-    def __init__(self , config: ModelConfig):
+    def __init__(self , config: Config):
         super().__init__(config)
         self.model_name = USRR_UNET_V1
         self.sampling_dist = config.args.get('sampling_dist', 300)

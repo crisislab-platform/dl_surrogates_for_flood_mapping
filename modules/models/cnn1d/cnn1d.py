@@ -1,8 +1,8 @@
-from modules.models.model_wrapper import ModelConfig, ModelWrapper
+from modules.models.model_wrapper import Config, ModelWrapper
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from modules.datamanager.raster.raster_loader_1dcnn import CNNRasterDataManager
+from modules.datamanager.cnn1d.cnn1d_dm import CNN1DDataManager
 from modules.utils.run_util import check_device
 import logging
 from modules.lib.constants import CNN1D_V1
@@ -70,30 +70,31 @@ class CNNModel(nn.Module):
             
 class CNN1DSAModelWrapper(ModelWrapper):
     
-    def __init__(self, config: ModelConfig):
+    def __init__(self, config: Config):
         super().__init__(config)
         self.model_name = model_name
         self.device = check_device()
-        self.lag = config.lag
         self.steps = 1
-        self.features = self.lag * 3
-        self.outputs = 581061
-        self.validation_event = self.config.fold  + 1
-        self.tuninig_mode = config.args.get('tuning_mode', False)
     
     def create_dataset(self):
         logger.info("Creating dataset")
-        self.data_manager = CNNRasterDataManager(self.config.lag, self.config.batch_size, validation_event = self.validation_event, tuning_mode=self.tuninig_mode)
-        self.features = self.data_manager.features
+        self.data_manager = CNN1DDataManager(self.config)
+        self.input_features = self.data_manager.input_features
         self.outputs = self.data_manager.outputs
-        logger.info(f"Features: {self.features}, Outputs: {self.outputs}")
+        logger.info(f"Features: {self.input_features}, Outputs: {self.outputs}")
         
     def init_model(self) -> bool:
         try:
             self.create_dataset()
-            self.model = CNNModel(self.steps, self.features, self.outputs).to(self.device)
+            self.model = CNNModel(self.steps, self.input_features, self.outputs).to(self.device)
             self.loss_fn= nn.MSELoss()
             self.optimizer = optim.Adam(self.model.parameters(), lr=self.config.learning_rate, weight_decay=1e-4)
+            self.scheduler = optim.lr_scheduler.LinearLR(
+                self.optimizer,
+                start_factor=0.1,
+                end_factor=1.0,
+                total_iters=5,
+            )
             return True
         
         except Exception as e:

@@ -7,12 +7,12 @@ from modules.models.pi1dcnn.pi1dcnn import PICNN1DModelWrapper
 from modules.models.hdl_fm.hdl_fm import HDLFMModelWrapper
 from modules.models.cnn1d.cnn1d import CNN1DSAModelWrapper
 
-from modules.models.model_wrapper import ModelConfig, ModelWrapper
+from modules.models.model_wrapper import Config, ModelWrapper
 
 from modules.lib.constants import (CNN1D_V1, USRR_UNET_V1, USRR_1DCNN_V1, USRR_CNN1D_COMBINED, PICNN1D_V1, HDL_FM_V1)
 logger = logging.getLogger("ModelFactory")
 
-def create_model(config: ModelConfig, args)-> ModelWrapper:
+def create_model(config: Config, args)-> ModelWrapper:
     
     model_factories = {
         CNN1D_V1: lambda: create_1dcnn_model(config, args),
@@ -42,7 +42,7 @@ def create_model(config: ModelConfig, args)-> ModelWrapper:
         logger.error(f"Error creating model {config.model_name}: {str(e)}")
         return None
     
-def create_1dcnn_model(config: ModelConfig, args):
+def create_1dcnn_model(config: Config, args):
     tuning_mode = args.tuning_mode
     config.args = {
         'tuning_mode': tuning_mode, 
@@ -105,5 +105,5 @@ def create_pi1dcnn_model(config, args):
 
 def create_hdl_fm_model(config, args):
     # Create HDL_FM model with combined configuration
-    config.args = {}
+    config.args = {'sampling_distance': args.sampling_dist, 'tile_resolution': args.tile_resolution}
     return HDLFMModelWrapper(config)
