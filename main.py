@@ -1,6 +1,10 @@
 import logging
 import argparse
 from datetime import datetime
+import random
+
+import numpy as np
+import torch
 
 from modules.model_runner.model_trainer import train_model
 from modules.models.model_wrapper import Config
@@ -59,17 +63,29 @@ def parse_args():
     parser.add_argument('--indices_per_timestep', type=int, default=1, help='Number of indices to consider per timestep')
     parser.add_argument('--study_area', type=str, default="carlisle", help='Study area for training or prediction')
     parser.add_argument('--tile_resolution', type=int, default=512, help='Tile resolution for spatial sampling')
+    parser.add_argument('--random_seed', type=int, default=42, help='Random seed for reproducibility')
+    parser.add_argument('--do_profile', action='store_true', help='Use profiling for performance analysis')
+    parser.add_argument('--sigma', type=int, default=11, help='Sigma for Gaussian smoothing in representative location finding')
+    parser.add_argument('--patch_domain', action='store_true', help='Whether to patch the spatial domain for training and inference')
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     
+
     args = parse_args()
     if args.command not in valid_commands:
         logger.error(f"Invalid command '{args.command}'")
         exit(1)
+        
+    #set random seed for variance
+    random.seed(args.random_seed)
+    np.random.seed(args.random_seed)
+    torch.manual_seed(args.random_seed)
+    torch.cuda.manual_seed(args.random_seed)
 
-    elif args.command == TRAIN_COMMAND:
+
+    if args.command == TRAIN_COMMAND:
         mp.set_start_method('spawn', force=True)  
     
         config = Config(
@@ -87,7 +103,10 @@ if __name__ == "__main__":
             validation_events=args.validation_events,
             indices_per_timestep=args.indices_per_timestep,
             tuning_mode=args.tuning_mode,
-            study_area=args.study_area
+            study_area=args.study_area, 
+            random_seed=args.random_seed,
+            do_profile=args.do_profile,
+            patch_domain=args.patch_domain
         )
         
         logger.info(f"Training model with configuration: {config}")

@@ -34,7 +34,7 @@ STUDY_AREA = "westport"  # Change to "westport" for Westport study area
 PROJECT_ROOT = f"/home/91/23016891/projects/{STUDY_AREA}"
 DATA_DIR = f"/data/{STUDY_AREA}"
 RUN_DIR = f"{DATA_DIR}/runs"
-OUTPUT_DIR = f"{PROJECT_ROOT}/results" if STUDY_AREA == "carlisle" else f"{DATA_DIR}/out"
+OUTPUT_DIR = f"{PROJECT_ROOT}/out"
 PLOTS_OUTPUT_DIR = f"{OUTPUT_DIR}/plots"
 SIMULATION_DATA_DIR = f"{DATA_DIR}/simulation" if STUDY_AREA == "carlisle" else f"{DATA_DIR}/data/flood-mapping-with-ml-main-DATA/DATA"
 DEM_FILE = f"{DATA_DIR}/simulation/Carlisle_5m.asc" if STUDY_AREA == "carlisle" else f"{SIMULATION_DATA_DIR}/Topo.tif"

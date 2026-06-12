@@ -5,7 +5,7 @@ import torch
 import logging
 import pandas as pd
 
-from modules.lib.constants import SIMULATION_DATA_DIR, OUTPUT_DIR, DATA_DIR, BC_DATA_DIR, STUDY_AREA, FLOOD_MAPS_DIR, DEM_FILE
+from modules.lib.constants import SIMULATION_DATA_DIR, OUTPUT_DIR, DATA_DIR, BC_DATA_DIR, STUDY_AREA, FLOOD_MAPS_DIR
 from modules.models.usrr_1dcnn.lib.gdal_lib import gdal_asarray
 from modules.utils.run_util import check_device
 import os
@@ -38,14 +38,17 @@ class DataManager:
     
     def __init__(self, config):
         self.config = config
-        self.train_event_ids = config.train_events 
-        self.validation_event_ids = config.validation_events
-        self.test_event_ids = config.test_events 
+        self.train_event_ids = config.train_events
+        #convert to int if they are not already
+        self.train_event_ids = [int(e) for e in self.train_event_ids]
+        self.validation_event_ids = [int(e) for e in config.validation_events]
+        self.test_event_ids = [int(e) for e in config.test_events]
         self.batch_size = config.batch_size
         self.tuning_mode = config.tuning_mode
-        
+        self.patch_domain = config.patch_domain
         self.indices_per_timestep = config.indices_per_timestep
         self.all_event_ids = np.concatenate([self.train_event_ids, self.test_event_ids, self.validation_event_ids])
+        self.all_event_ids = [int(e) for e in self.all_event_ids]
         self.all_event_ids = np.unique(self.all_event_ids)
         self.all_event_ids.sort()
         
@@ -65,13 +68,11 @@ class DataManager:
         # Spatial sampling parameters
         self.sampling_dist = config.args.get('sampling_distance', 265)  # Default to 512 if not provided
         self.tile_resolution = config.args.get('tile_resolution', 512)  # Default to 512 if not provided
-        
-        if self.indices_per_timestep > 1:
-            self.output_shape = self.find_study_domain_shape()
+        self.output_shape = self.find_study_domain_shape()
+        if self.patch_domain:
             self.sample_flood_map = self.find_sample_flood_map()
             self.map_sampler = FloodMapSampler(self.sampling_dist, self.run_dir, self.tile_resolution,  self.sample_flood_map, self.output_shape)
             self.tiles_per_index, self.number_of_tiles_per_timestep = self.map_sampler.calculate_batch_size_and_number_of_tiles(self.indices_per_timestep)  
-
     
     def create_indices(self):
         if STUDY_AREA == "carlisle":
@@ -129,7 +130,7 @@ class DataManager:
                 event_name_map[f"S{i:02d}"] = f"S{i:02d}"
         return event_index, event_name_map
         
-    def get_batch(self, indices, subset="train"):
+    def get_batch(self, idx, subset="train"):
         pass
 
     def create_dataloaders(self, num_workers=0):
@@ -140,9 +141,9 @@ class DataManager:
         test_dataset = DataSet(self, subset="test")
 
         #Use num_workers=0 for GPU training to avoid memory conflicts from parallel data loading
-        self.train_data_loader = torch.utils.data.DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True, num_workers=num_workers)
-        self.validation_data_loader = torch.utils.data.DataLoader(validation_dataset, batch_size=self.batch_size, shuffle=False, num_workers=num_workers)
-        self.test_data_loader = torch.utils.data.DataLoader(test_dataset, batch_size=self.batch_size, shuffle=False, num_workers=0)
+        self.train_data_loader = torch.utils.data.DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True, num_workers=num_workers, pin_memory=True, pin_memory_device='cuda', persistent_workers=True)
+        # self.validation_data_loader = torch.utils.data.DataLoader(validation_dataset, batch_size=self.batch_size, shuffle=False, num_workers=num_workers)
+        # self.test_data_loader = torch.utils.data.DataLoader(test_dataset, batch_size=self.batch_size, shuffle=False, num_workers=0)
         logger.info("Data loaders created successfully")
     
     def load_inundation_data(self, event_id, files):
@@ -220,21 +221,21 @@ class DataManager:
     
     def get_no_time_steps(self, event_id):
         return len(self.flood_map_file_map[event_id])
-    
         
     def prepare_batch_indices(self):
         self.event_start_id_map = {}
         # Calculate start indices for each event
-        for event_id in self.all_event_ids:
-            if event_id == 1:  # First event
+        for i, event_id in enumerate(self.all_event_ids):
+            if i == 0:  # First event
                 start_idx = 0
             else:
-                prev_event_id = event_id - 1
+                prev_event_id = self.all_event_ids[i - 1]
                 start_idx = self.event_start_id_map[prev_event_id] + self.get_no_time_steps(prev_event_id) * self.indices_per_timestep
             self.event_start_id_map[event_id] = start_idx
   
         self.train_idx = self.index_expander(self.train_event_ids)
-        self.validation_idx = self.index_expander(self.validation_event_ids)
+        if self.tuning_mode:
+            self.validation_idx = self.index_expander(self.validation_event_ids)
         self.test_idx = self.index_expander(self.test_event_ids)
         
     def index_expander(self, event_ids):
@@ -272,8 +273,6 @@ class DataManager:
         logger.warning(f"Index {idx} is out of bounds for event {event_id} with {maps_in_event} maps")
         return None, None
     
-
-
     def find_event_id(self, idx):
         for event_id in self.all_event_ids:
             start_idx = self.event_start_id_map[event_id]
@@ -281,9 +280,7 @@ class DataManager:
             if start_idx <= idx <= end_idx:
                 return event_id
         logger.warning(f"Could not find event ID for index {idx}")
-        return None
-    
-        
+        return None 
 
     def get_flood_map(self, event_id, time_step):
         flood_map_file = self.flood_map_file_map[event_id][time_step]
@@ -293,6 +290,16 @@ class DataManager:
         flood_map_tensor = self.load_inundation_data(event_id, [flood_map_file])[0]
         return flood_map_tensor
     
+    def get_peak_volume_timestep(self, event_id):
+        # We will just analyse spatial error at the peak volume timestep for now, but this can be extended to all timesteps in the future.
+        flood_map_files = self.flood_map_file_map[event_id]
+        peak_df_file =os.path.join(OUTPUT_DIR, STUDY_AREA, "event_peaks.csv")
+        peaks_df = pd.read_csv(peak_df_file)
+        
+        peak_volume_hour =  peaks_df[peaks_df["event_id"] == event_id]["peak_volume_timestep"].values[0]
+        peak_volume_timestep = peak_volume_hour * 4 if STUDY_AREA == "carlisle" else peak_volume_hour
+        return peak_volume_timestep
+        
  
 def process_inundation_file(file_path):
     try:
@@ -306,4 +313,6 @@ def process_inundation_file(file_path):
     except Exception as e:
         logger.error(f"Error processing inundation file {file_path}: {e}")
         return None  
+    
+
     

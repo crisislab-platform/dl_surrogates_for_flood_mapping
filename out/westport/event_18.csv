@@ -1,0 +1,15 @@
+Unnamed: 0,Date_Time,River_flow,Sea_level,flood_map_file
+1,2008-10-16 13:00:00,1427.05809449321,4.74849242630149,/data/westport/data/flood_maps/S09_depth_snapshots/depth_at_2008-10-16_13-00-00.tif
+2,2008-10-16 14:00:00,1496.59310329957,4.11246107803732,/data/westport/data/flood_maps/S09_depth_snapshots/depth_at_2008-10-16_14-00-00.tif
+3,2008-10-16 15:00:00,1434.8777925798,3.28631174795482,/data/westport/data/flood_maps/S09_depth_snapshots/depth_at_2008-10-16_15-00-00.tif
+4,2008-10-16 16:00:00,1466.3668829752,2.50420794335629,/data/westport/data/flood_maps/S09_depth_snapshots/depth_at_2008-10-16_16-00-00.tif
+5,2008-10-16 17:00:00,1614.99434767936,2.02219416665216,/data/westport/data/flood_maps/S09_depth_snapshots/depth_at_2008-10-16_17-00-00.tif
+6,2008-10-16 18:00:00,1736.10920416835,1.95681011857013,/data/westport/data/flood_maps/S09_depth_snapshots/depth_at_2008-10-16_18-00-00.tif
+7,2008-10-16 19:00:00,1799.74113139112,2.28149624511511,/data/westport/data/flood_maps/S09_depth_snapshots/depth_at_2008-10-16_19-00-00.tif
+8,2008-10-16 20:00:00,1869.84842074962,2.91956218374155,/data/westport/data/flood_maps/S09_depth_snapshots/depth_at_2008-10-16_20-00-00.tif
+9,2008-10-16 21:00:00,1902.69642459232,3.74178273689983,/data/westport/data/flood_maps/S09_depth_snapshots/depth_at_2008-10-16_21-00-00.tif
+10,2008-10-16 22:00:00,1927.96992828019,4.52539447447386,/data/westport/data/flood_maps/S09_depth_snapshots/depth_at_2008-10-16_22-00-00.tif
+11,2008-10-16 23:00:00,1900.89745568295,5.03828004572727,/data/westport/data/flood_maps/S09_depth_snapshots/depth_at_2008-10-16_23-00-00.tif
+12,2008-10-17 00:00:00,1833.74634816497,5.17379244954149,/data/westport/data/flood_maps/S09_depth_snapshots/depth_at_2008-10-17_00-00-00.tif
+13,2008-10-17 01:00:00,1732.67079828183,4.94969186450089,/data/westport/data/flood_maps/S09_depth_snapshots/depth_at_2008-10-17_01-00-00.tif
+14,2008-10-17 02:00:00,1658.99606053895,4.41146714114047,/data/westport/data/flood_maps/S09_depth_snapshots/depth_at_2008-10-17_02-00-00.tif

@@ -37,7 +37,7 @@ class CNN1DDataManager(DataManager):
             elif STUDY_AREA == "westport":
                 self.preprocess_boundary_conditions_westport(self.all_event_ids)
             self.prepare_batch_indices()
-            self.create_dataloaders(num_workers=2)
+            self.create_dataloaders(num_workers=6)
             
         except Exception as e:
             logger.error(f"Error during initialization: {e}")
@@ -45,25 +45,7 @@ class CNN1DDataManager(DataManager):
             raise e
         
     def prepare_batch_indices(self):
-        self.event_start_id_map = {}
-        # Calculate start indices for each event
-        for event_id in self.all_event_ids:
-            if event_id == 1:  # First event
-                start_idx = 0
-            else:
-                prev_event_id = event_id - 1
-                start_idx = self.event_start_id_map[prev_event_id] + self.get_no_time_steps(prev_event_id) * self.indices_per_timestep
-            self.event_start_id_map[event_id] = start_idx
-  
-        self.train_idx = self.index_expander(self.train_event_ids)
-        self.validation_idx = self.index_expander(self.validation_event_ids)
-        
-        self.train_and_val_indices = np.concatenate((self.train_idx, self.validation_idx))
-        #70% for training and 30% for validation from the combined train and val indices
-        self.train_idx = np.random.choice(self.train_and_val_indices, size=int(0.7 * len(self.train_and_val_indices)), replace=False)
-        self.validation_idx = np.setdiff1d(self.train_and_val_indices, self.train_idx)
-        self.test_idx = self.index_expander(self.test_event_ids)
-            
+        super().prepare_batch_indices()
    
     def preprocess_boundary_conditions_carlisle(self, event_ids):
         self.event_input_map = {}
@@ -71,6 +53,7 @@ class CNN1DDataManager(DataManager):
         timestep_data_map = {}
 
         for event_id in event_ids:
+            event_id = int(event_id)  # Ensure event_id is an integer
             inflow_file = os.path.join(BC_DATA_DIR, f"Upstream_Flows_Run{event_id}.csv")
             inflow_data = pd.read_csv(inflow_file)
             event_index = self.event_index_map[event_id]
@@ -82,8 +65,6 @@ class CNN1DDataManager(DataManager):
             flood_map_timestamps = [self.extract_timestep_from_filename(file) for file in flood_map_files]
             logger.info(f"Extracted {len(flood_map_timestamps)} flood map   timestamps for event ID: {event_id}")
             inflow_data['timestep'] = (inflow_data['Time'].astype(np.float32) / (60 * 15)).astype(np.float32)
-            # Use only a single timestep column (no lagged timestep-* columns)
-            time_columns = ['timestep']
             inflow_data['flood_map_file'] = inflow_data['timestep'].apply(lambda x: next((file for file in flood_map_files if int(self.extract_timestep_from_filename(file)) == int(x)), None))
 
             # Remove first 8 rows as first 8 timesteps represent the intialisation period. 
@@ -121,6 +102,7 @@ class CNN1DDataManager(DataManager):
         self.flood_map_file_map = {} # Store flood map file paths for each event
         
         for event_id in event_ids:
+            event_id = int(event_id)  # Ensure event_id is an integer
             event_index = self.event_index_map[event_id]
             logger.info(f"Preprocessing boundary conditions for event ID: {event_id}, Event Name: {self.event_name_map[event_index]} Event Index: {event_index}")
             inflow_file = os.path.join(BC_DATA_DIR, f"{event_index}.csv")
@@ -212,8 +194,9 @@ class CNN1DDataManager(DataManager):
         event_id = self.find_event_id(idx)
         timestep, _ = self.find_local_indices(event_id, idx)
         event_input = torch.from_numpy(self.event_input_map[event_id][timestep]).float()
-        flood_map_file = self.flood_map_file_map[event_id][timestep]
-        flood_map_tensor = self.load_inundation_data(event_id=event_id, files=[flood_map_file])[0]
+        flood_map_tensor = None
+        if subset != "test":
+            flood_map_tensor = self.get_flood_map(event_id, timestep)
+            flood_map_tensor = flood_map_tensor.unsqueeze(0).cpu() #Add channel dimension
         event_input = event_input.unsqueeze(0) 
-        flood_map_tensor = flood_map_tensor.unsqueeze(0)  # Add channel dimension
-        return event_input, flood_map_tensor
+        return event_input.cpu(), flood_map_tensor

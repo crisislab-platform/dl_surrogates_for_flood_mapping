@@ -1,0 +1,16 @@
+Unnamed: 0,Date_Time,River_flow,Sea_level,flood_map_file
+1,1999-07-03 06:00:00,817.68531605556,0.277341193532841,/data/westport/data/flood_maps/S26_depth_snapshots/depth_at_1999-07-03_06-00-00.tif
+2,1999-07-03 07:00:00,988.597662495496,-0.0114144030789169,/data/westport/data/flood_maps/S26_depth_snapshots/depth_at_1999-07-03_07-00-00.tif
+3,1999-07-03 08:00:00,1099.25752238778,-0.0118542745851604,/data/westport/data/flood_maps/S26_depth_snapshots/depth_at_1999-07-03_08-00-00.tif
+4,1999-07-03 09:00:00,1200.8208805348,0.251762586681379,/data/westport/data/flood_maps/S26_depth_snapshots/depth_at_1999-07-03_09-00-00.tif
+5,1999-07-03 10:00:00,1523.89487670673,0.726113022115836,/data/westport/data/flood_maps/S26_depth_snapshots/depth_at_1999-07-03_10-00-00.tif
+6,1999-07-03 11:00:00,1703.01183594207,1.30728716679396,/data/westport/data/flood_maps/S26_depth_snapshots/depth_at_1999-07-03_11-00-00.tif
+7,1999-07-03 12:00:00,1783.46844648993,1.83067398964013,/data/westport/data/flood_maps/S26_depth_snapshots/depth_at_1999-07-03_12-00-00.tif
+8,1999-07-03 13:00:00,1823.15947876507,2.14850043382079,/data/westport/data/flood_maps/S26_depth_snapshots/depth_at_1999-07-03_13-00-00.tif
+9,1999-07-03 14:00:00,1861.5320693023,2.20282051282051,/data/westport/data/flood_maps/S26_depth_snapshots/depth_at_1999-07-03_14-00-00.tif
+10,1999-07-03 15:00:00,1820.22403628441,2.00379794120808,/data/westport/data/flood_maps/S26_depth_snapshots/depth_at_1999-07-03_15-00-00.tif
+11,1999-07-03 16:00:00,1784.59912114678,1.58315174170593,/data/westport/data/flood_maps/S26_depth_snapshots/depth_at_1999-07-03_16-00-00.tif
+12,1999-07-03 17:00:00,1746.44455179028,1.01615884977589,/data/westport/data/flood_maps/S26_depth_snapshots/depth_at_1999-07-03_17-00-00.tif
+13,1999-07-03 18:00:00,1678.11267766775,0.458345189629785,/data/westport/data/flood_maps/S26_depth_snapshots/depth_at_1999-07-03_18-00-00.tif
+14,1999-07-03 19:00:00,1634.41694987526,0.0882210354156963,/data/westport/data/flood_maps/S26_depth_snapshots/depth_at_1999-07-03_19-00-00.tif
+15,1999-07-03 20:00:00,1564.48577298381,0.0007921600696072,/data/westport/data/flood_maps/S26_depth_snapshots/depth_at_1999-07-03_20-00-00.tif

@@ -105,5 +105,5 @@ def create_pi1dcnn_model(config, args):
 
 def create_hdl_fm_model(config, args):
     # Create HDL_FM model with combined configuration
-    config.args = {'sampling_distance': args.sampling_dist, 'tile_resolution': args.tile_resolution}
+    config.args = {'sampling_distance': args.sampling_dist, 'tile_resolution': args.tile_resolution, 'sigma': args.sigma}
     return HDLFMModelWrapper(config)

@@ -10,22 +10,79 @@ from modules.utils.run_util import check_device
 from modules.lib.gdal_lib import gdal_asarray, coords2rc
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
+from scipy.interpolate import RBFInterpolator
+import numpy as np
+
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("HDLFMataLoader")
+
+import torch
+from torch.utils.data import Sampler
+import random
+
+class EventOrderedSampler(Sampler):
+    """
+    Shuffles events each epoch but preserves temporal order within each event.
+    e.g. [event2_t0, event2_t1, event2_t2, event1_t0, event1_t1, ...]
+    """
+    def __init__(self, data_manager: DataManager, indices: list):
+        super().__init__(data_manager.train_idx)
+        self.data_manager = data_manager
+        self.indices = indices
+        
+        # Group indices by event, preserving temporal order within each event
+        self.event_groups = {}
+        for idx in sorted(indices):  # sort ensures temporal order
+            event_id = data_manager.find_event_id(idx)
+            if event_id not in self.event_groups:
+                self.event_groups[event_id] = []
+            self.event_groups[event_id].append(idx)
+
+    def __iter__(self):
+        # Shuffle event order each epoch
+        event_ids = list(self.event_groups.keys())
+        random.shuffle(event_ids)
+        
+        # Yield indices event by event, in temporal order within each event
+        for event_id in event_ids:
+            yield from self.event_groups[event_id]
+
+    def __len__(self):
+        return len(self.indices)
+    
+    
+class DataSet(torch.utils.data.Dataset):
+    
+    def __init__(self, data_manager, subset="train"):
+        self.data_manager = data_manager
+        self.subset = subset
+        if subset == "train":
+            self.indices = self.data_manager.train_idx
+        else:
+            raise ValueError(f"Invalid subset: {subset}. Must be 'train', 'validation', or 'test'.")
+
+    def __len__(self):
+        return len(self.indices)
+
+    def __getitem__(self, idx):
+        input, target = self.data_manager.get_batch(self.indices[idx], subset=self.subset)
+        return input, target # Return the original index for reference
 
 class HDLFMDataManager(DataManager):
         
     def __init__(self, config):
         super().__init__(config)
         self.dem_file = DEM_FILE
-        if self.indices_per_timestep > 1:
+        if self.patch_domain:
             self.output_shape = (self.tile_resolution, self.tile_resolution)  # Output shape is the same as tile resolution when using tiles
         else:
             self.output_shape = self.find_study_domain_shape()
-        self.features = 3  #Upstream inputs + DEM + inundation data
+        self.input_channels = 4 if STUDY_AREA == "westport" else 5  # DEM + inundation data
+        self.temporal_features = 0  # Will be updated after processing boundary conditions
         self.boundary_condition_weights = {}
-        self.dem_tensor = self.map_sampler.dem_template_tiles
+        self.dem_tensor = self.map_sampler.dem_template_tiles.detach().float().cpu()  # Preprocess DEM once and store as a tensor for efficient access during training
+        self.sigma = config.args.get('sigma', 100)  # Default sigma value for Gaussian smoothing
         self.find_upstream_point_fiters()
 
         try:
@@ -34,52 +91,88 @@ class HDLFMDataManager(DataManager):
             elif STUDY_AREA == "westport":
                 self.preprocess_boundary_conditions_westport(self.all_event_ids)
             self.prepare_batch_indices()
-            self.create_dataloaders(num_workers=1)
+            self.create_dataloaders(num_workers=6)
                   
         except Exception as e:
             logger.error(f"Error during data manager initialization: {e}")
             raise e
-        
+    
     def prepare_batch_indices(self):
         super().prepare_batch_indices()
-        # Mix train and validation indicies and select 0.8 for training and 0.2 for validation
-        train_idx = self.train_idx
-        val_idx = self.validation_idx
-        join_train_val_idx = np.concatenate((train_idx, val_idx), axis=0)
-        np.random.shuffle(join_train_val_idx)
-        split_idx = int(0.8 * len(join_train_val_idx))
-        self.train_idx = join_train_val_idx[:split_idx]
-        self.validation_idx = join_train_val_idx[split_idx:]
-        logger.info(f"Prepared batch indices with {len(self.train_idx)} training samples and {len(self.validation_idx)} validation samples")
+        
+    def create_dataloaders(self, num_workers=0):
+        # Create custom samplers for train, validation, and test sets
+        train_sampler = EventOrderedSampler(self, self.train_idx)
 
-    def get_batch(self, batch_idx, subset="train"):
-        event_id = self.find_event_id(batch_idx)
-        timestep_idx, tile_group_idx = self.find_local_indices(event_id, batch_idx)
+        # Create datasets
+        train_dataset = DataSet(self, subset="train")
+
+        # Create data loaders with the custom samplers
+        self.train_data_loader = torch.utils.data.DataLoader(train_dataset, batch_size=self.batch_size, num_workers=num_workers, shuffle=True, pin_memory=True, pin_memory_device='cuda', persistent_workers=True)
+
+        logger.info("Data loaders created successfully with custom event-ordered samplers")
+
+    def get_batch(self, idx, subset="train"):
+        event_id = self.find_event_id(idx)
+        timestep_idx, tile_group_idx = self.find_local_indices(event_id, idx)
     
-        flow_tensor = self.get_flow_tensor(event_id, timestep_idx).unsqueeze(0).unsqueeze(0).float().to(self.device)
+        flow_tiles = self.get_flow_tensor(event_id, timestep_idx).float().to(self.device)
+        output_tensor = self.get_flood_map(event_id, timestep_idx).unsqueeze(0).unsqueeze(0).float().to(self.device)
         if timestep_idx == 0:
-            water_depth_tensor = self.get_flood_map(event_id, timestep_idx).unsqueeze(0).unsqueeze(0).float().to(self.device)
+            water_depth_tensor = self.get_flood_map(event_id, 0).unsqueeze(0).unsqueeze(0).float().to(self.device)  # Add batch and channel dimensions to water depth tensor
+            # Start with zero water depth for the first timestep
         else:
             water_depth_tensor = self.get_flood_map(event_id, timestep_idx-1).unsqueeze(0).unsqueeze(0).float().to(self.device)
-        output_tensor = self.get_flood_map(event_id, timestep_idx).unsqueeze(0).unsqueeze(0).float().to(self.device)
-        
-        flow_tiles = self.map_sampler.tiles_prep_func_gpu(flow_tensor)[tile_group_idx * self.tiles_per_index : (tile_group_idx + 1) * self.tiles_per_index].to(self.device)  # Add batch dimension to flow tensor
-        water_depth_tiles = self.map_sampler.tiles_prep_func_gpu(water_depth_tensor)[tile_group_idx * self.tiles_per_index : (tile_group_idx + 1) * self.tiles_per_index].to(self.device)  # Add batch dimension to water depth tensor
+        water_depth_tiles = self.map_sampler.tiles_prep_func_gpu(water_depth_tensor).to(self.device)  # Add batch dimension to water depth tensor
+            
+        flow_tiles_for_idx = flow_tiles[tile_group_idx * self.tiles_per_index : (tile_group_idx + 1) * self.tiles_per_index].to(self.device)  # Add batch dimension to flow tensor
         dem_tiles = self.dem_tensor[tile_group_idx * self.tiles_per_index : (tile_group_idx + 1) * self.tiles_per_index].to(self.device)  # DEM tiles are preprocessed and stored as a tensor, just move to the correct device
         output_tiles = self.map_sampler.tiles_prep_func_gpu(output_tensor)[tile_group_idx * self.tiles_per_index : (tile_group_idx + 1) * self.tiles_per_index].to(self.device)  # Add batch dimension to output tensor
-       
-        input_tensor = torch.cat((flow_tiles.unsqueeze(1), dem_tiles.unsqueeze(1), water_depth_tiles.unsqueeze(1)), dim=1)  # Concatenate along the channel dimension
+        water_depth_tiles = water_depth_tiles[tile_group_idx * self.tiles_per_index : (tile_group_idx + 1) * self.tiles_per_index].to(self.device)  # Add batch dimension to water depth tensor
+        #should I concatanate or stack
+        input_tensor = torch.cat((flow_tiles_for_idx, dem_tiles.unsqueeze(1), water_depth_tiles.unsqueeze(1)), dim=1)  # Concatenate along the channel dimension
         output_tensor = output_tiles.unsqueeze(1)  
         
-        return input_tensor, output_tensor
+        return input_tensor.cpu(), output_tensor.cpu()  # Move tensors to CPU before returning
     
+    def get_test_batch(self, idx, previous_prediction):
+        event_id = self.find_event_id(idx)
+        timestep_idx, tile_group_idx = self.find_local_indices(event_id, idx)
+        flow_tiles = self.get_flow_tensor(event_id, timestep_idx).float().to(self.device)
+        if previous_prediction is None and timestep_idx == 0:
+            water_depth_tensor = self.get_flood_map(event_id, 0).unsqueeze(0).unsqueeze(0).float().to(self.device)
+            water_depth_tensor = self.map_sampler.tiles_prep_func_gpu(water_depth_tensor).unsqueeze(1).float().to(self.device)
+            # Add batch and channel dimensions to water depth tensor
+            #torch.zeros_like(self.dem_tensor).to(self.device)  # Start with zero water depth for the first timestep
+        elif previous_prediction is not None:
+            water_depth_tensor = previous_prediction.clamp(min=0).float().to(self.device)
+            # water_depth_tensor = self.get_flood_map(event_id, timestep_idx - 1).unsqueeze(0).unsqueeze(0)  # Add batch and channel dimensions to previous prediction
+            #water_depth_tensor = self.map_sampler.tiles_prep_func_gpu(water_depth_tensor).to(self.device)  # Add batch dimension to water depth tensor
+        else:
+            raise ValueError(f"Invalid state: previous_prediction is None but timestep_idx is {timestep_idx}")
+        flow_tiles_for_idx = flow_tiles[tile_group_idx * self.tiles_per_index : (tile_group_idx + 1) * self.tiles_per_index].to(self.device)  # Add batch dimension to flow tensor
+        dem_tiles = self.dem_tensor[tile_group_idx * self.tiles_per_index : (tile_group_idx + 1) * self.tiles_per_index].to(self.device) 
+        water_depth_tiles = water_depth_tensor[tile_group_idx * self.tiles_per_index : (tile_group_idx + 1) * self.tiles_per_index].to(self.device)  # DEM tiles are preprocessed and stored as a tensor, just move to the correct device
+        input_tensor = torch.cat((flow_tiles_for_idx, dem_tiles.unsqueeze(1), water_depth_tiles), dim=1) 
+        return input_tensor.float(), None
+
     def get_flow_tensor(self, event_id, timestep_idx):
         event_data = self.event_input_map[event_id][timestep_idx]
-        flow_tensor = torch.zeros_like(self.dem_tensor)
+
+        T, H, W = self.dem_tensor.shape
+        flow_tensors = []
+
         for i in range(self.temporal_features):
-            flow_tensor = float(event_data[i])
-            flow_tensor = flow_tensor * self.boundary_condition_weights[f"bc{i+1}"]  # Apply the corresponding boundary condition filter
-        return flow_tensor
+            # Scale spatial weight map by the scalar gauge reading at this timestep
+            flow_tensor = torch.ones((T, H, W)) * torch.tensor(event_data[i], dtype=torch.float32)                            # scalar broadcast
+            flow_tensor = flow_tensor * self.boundary_condition_weights[f"bc{i+1}"] 
+            flow_tensors.append(flow_tensor)
+
+        #Now need to stack the flow tensors along the channel dimension to create a multi-channel input for the model. The resulting shape will be (features, T, H, W) where features is the number of temporal features (e.g. 3 for carlisle, 5 for westport).
+        concatanated_flow_tensors = torch.stack(flow_tensors, dim=0)
+        #swap the T and features dimensions to get the final shape of (T, features, H, W) which is what the model expects as input
+        concatanated_flow_tensors = concatanated_flow_tensors.permute(1, 0, 2, 3)
+        return concatanated_flow_tensors.float()
 
     # def create_boundary_weights(self, coordinates):
     #     sample_file = self.find_sample_flood_map()
@@ -99,9 +192,9 @@ class HDLFMDataManager(DataManager):
     #     upstream_filter = upstream_map > 0
     #     return upstream_filter
     
-    def create_boundary_weights(self, coordinates, sigma=1000):
+    def interpolate_boundary_condition(self, coordinates):
         sample_file = self.find_sample_flood_map()
-
+        
         with rio.open(sample_file) as src:
             transform = src.transform
             height = src.height
@@ -121,10 +214,9 @@ class HDLFMDataManager(DataManager):
             (ys - coordinates["northing"]) ** 2
         )
 
-        weights = torch.exp(-dist_sq / (2 * sigma**2))
+        weights = torch.exp(-dist_sq / (2 * self.sigma**2))
         #reshape to match the spatial dimensions of the input tensor
         weights = weights.reshape((height, width))
-
         return weights
 
     def find_upstream_point_fiters(self):
@@ -148,7 +240,9 @@ class HDLFMDataManager(DataManager):
         # Create a weighted filter for each cell in the flood map based on the distance to the main boundary condition. The weight is calculated as 1/(distance + 1) to avoid division by zero. This way, cells closer to the boundary condition will have a higher weight and contribute more to the input tensor.
         
         for coordinates in bc_coordinates:
-            filter = self.create_boundary_weights(coordinates)      
+            filter = self.interpolate_boundary_condition(coordinates)  
+            if self.patch_domain: 
+                filter = self.map_sampler.tiles_prep_func_gpu(filter.unsqueeze(0).unsqueeze(0)).detach().cpu()  # Preprocess the filter to match the tile preparation function 
             self.boundary_condition_weights[coordinates['name']] =  filter
     
     def preprocess_boundary_conditions_carlisle(self, event_ids):
@@ -185,6 +279,7 @@ class HDLFMDataManager(DataManager):
         flow_train_data = np.vstack([flow_data_map[event_id] for event_id in self.train_event_ids])
         flow_scaler = MinMaxScaler(feature_range=(0, 1))
         flow_scaler.fit(flow_train_data)
+        self.temporal_features = len(flow_columns)  # Number of features is the number of flow columns plus one timestep column
 
         for event_id in self.all_event_ids:
             scaled_flow = flow_scaler.transform(flow_data_map[event_id]).astype(np.float32)
@@ -192,8 +287,9 @@ class HDLFMDataManager(DataManager):
 
             self.event_input_map[event_id] = np.hstack((scaled_flow, time_data.reshape(-1, 1)))
             logger.info(f"Preprocessed boundary condition data for event ID: {event_id} with shape {self.event_input_map[event_id].shape}")
-        self.input_features = self.event_input_map[self.all_event_ids[0]].shape[1]  # Number of features is the second dimension of the input data
-        logger.info(f"Updated feature count: {self.input_features} (including timestep history)")
+        # self.temporal_features = self.event_input_map[self.all_event_ids[0]].shape[1]  # Number of features is the second dimension of the input data
+        
+        logger.info(f"Updated feature count: {self.temporal_features} (including timestep history)")
         
         
     def preprocess_boundary_conditions_westport(self, event_ids):
@@ -276,7 +372,7 @@ class HDLFMDataManager(DataManager):
             
             self.event_input_map[event_id] = lagged_flow_sea_level_time
             
-        self.input_features = self.event_input_map[self.all_event_ids[0]].shape[1]
+        # self.temporal_features = self.event_input_map[self.all_event_ids[0]].shape[1]
         logger.info(f"Preprocessed boundary condition data for events: {event_ids}")
      
             

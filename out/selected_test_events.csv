@@ -1,0 +1,8 @@
+event_id,max_volume_m3,time_to_max_volume_hours,volume_class,ttp_class,combination
+9,78656176.0,44.0,extreme,slow,extreme-slow
+12,51149448.0,19.0,high,fast,high-fast
+18,77481944.0,11.0,extreme,fast,extreme-fast
+38,18661618.0,30.0,medium,slow,medium-slow
+79,24170182.0,16.0,medium,fast,medium-fast
+82,57829160.0,37.0,high,slow,high-slow
+84,75438064.0,17.0,extreme,fast,extreme-fast

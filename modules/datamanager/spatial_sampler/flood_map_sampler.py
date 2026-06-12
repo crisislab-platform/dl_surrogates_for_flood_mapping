@@ -211,7 +211,7 @@ class FloodMapSampler():
         new_map_x = new_map_x.reshape((ax1_n, -1, self.tile_resolution, self.tile_resolution))
         new_map_x = new_map_x.swapaxes(0, 1)
         new_map_x = new_map_x.reshape((-1, self.tile_resolution, self.tile_resolution))
-        return new_map_x.detach().cpu()
+        return new_map_x.detach()
     
     def _apply_tile_filter(self, reshaping_func, dem_tile_filter_arr, x):
         """Apply tile filter - pickle-compatible helper for tiling_func"""
@@ -225,7 +225,7 @@ class FloodMapSampler():
         x = x.reshape(ax1_n, -1, self.tile_resolution)
         x = x.swapaxes(0, 1)
         x = x.reshape(-1, ax1_n * self.tile_resolution)
-        return x.detach().cpu()
+        return x.detach()
     
     def _padding_func(self, x, pad_height=None, pad_width=None, cross_tile_size_r=None, cross_tile_size_c=None):
         """Padding helper - pickle-compatible alternative to nested function"""
@@ -259,11 +259,11 @@ class FloodMapSampler():
                 self.layers_seperation_idxs.append((start_idx, start_idx + torch.sum(filter_arr).item()))
                 start_idx = self.layers_seperation_idxs[-1][1]
                 pad_height, pad_width, original_height, original_width = self.get_padding_height_width()
-                output_map = torch.zeros((original_height + pad_height, original_width + pad_width), dtype=torch.float32)
+                output_map = torch.zeros((original_height + pad_height, original_width + pad_width), dtype=torch.float32, device=self.device)
                 self.output_maps_list.append(output_map)
                 output_map = output_map.unsqueeze(0).unsqueeze(0)  # Reshape to (1, 1, H, W)
-                self.return_template_list.append(reshaping_func(output_map))
-                self.tile_filter_list.append(filter_arr.bool())
+                self.return_template_list.append(reshaping_func(output_map).to(self.device))
+                self.tile_filter_list.append(filter_arr.bool().to(self.device))
                 # Store origin in the UNPADDED coordinate space for proper reconstruction placement
                 # This ensures that overlapping tiles align correctly regardless of padding artifacts
                 self.map_origins.append(map_origin)
@@ -271,8 +271,8 @@ class FloodMapSampler():
                 self.back_transformation_functions.append(self.build_back_func_lambda(ax1_n))
                 
             # Check if the reconstruction output covers the entire map
-            temp_tensor = torch.ones(self.dem_template_tiles.shape)
-            self.final_map = self.reconstruct_full_map_return_and_sum(temp_tensor).cpu()
+            temp_tensor = torch.ones(self.dem_template_tiles.shape, device=self.device)
+            self.final_map = self.reconstruct_full_map_return_and_sum(temp_tensor).to(self.device)
             # To avoid division by zero during reconstruction. This means that the areas not covered by any tile will be left unchanged during reconstruction, which is the desired behavior.
             self.final_map[self.final_map == 0] = 1.0
             del temp_tensor
@@ -280,6 +280,7 @@ class FloodMapSampler():
         return 0
 
     def reconstruct_full_map_return_and_sum(self, x): 
+        x = x.to(self.device)
         for lyr_i in range(len(self.layers_seperation_idxs)):
             start_idx, end_idx = self.layers_seperation_idxs[lyr_i]
             self.return_template_list[lyr_i][self.tile_filter_list[lyr_i]] = x[start_idx:end_idx].squeeze(1)
@@ -293,10 +294,14 @@ class FloodMapSampler():
     
     def reconstruct_full_map(self, x):
         with torch.no_grad():
+            # Reset output maps before reconstruction
+            for output_map in self.output_maps_list:
+                output_map.zero_()
+            
             output_final = torch.div(self.reconstruct_full_map_return_and_sum(x), self.final_map)
             pad_height, pad_width, original_height, original_width = self.get_padding_height_width()
             output_final = output_final[:original_height, :original_width]
-        return output_final
+            return output_final
     
     def build_back_func_lambda(self, ax1_n):
         return partial(self._back_transform, ax1_n)

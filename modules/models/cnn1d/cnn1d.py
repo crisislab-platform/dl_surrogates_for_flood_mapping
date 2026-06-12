@@ -29,7 +29,18 @@ class CNNModel(nn.Module):
         self.bn_fc3 = nn.BatchNorm1d(512)
         self.fc4 = nn.Linear(512, outputs)
         self.relu = nn.ReLU()
+        
+        self._initialize_weights()
     
+    def _initialize_weights(self):
+        for layer in [self.conv1, self.conv2]:
+            nn.init.xavier_uniform_(layer.weight)
+            nn.init.zeros_(layer.bias)
+        
+        for layer in [self.fc1, self.fc2, self.fc3, self.fc4]:
+            nn.init.uniform_(layer.weight, -0.05, 0.05)
+            nn.init.zeros_(layer.bias)
+            
     def forward(self, x):
         # Conv1d expects input shape: [batch_size, channels, sequence_length]
         # But our data comes in as: [batch_size, sequence_length, features]
@@ -88,13 +99,7 @@ class CNN1DSAModelWrapper(ModelWrapper):
             self.create_dataset()
             self.model = CNNModel(self.steps, self.input_features, self.outputs).to(self.device)
             self.loss_fn= nn.MSELoss()
-            self.optimizer = optim.Adam(self.model.parameters(), lr=self.config.learning_rate, weight_decay=1e-4)
-            self.scheduler = optim.lr_scheduler.LinearLR(
-                self.optimizer,
-                start_factor=0.1,
-                end_factor=1.0,
-                total_iters=5,
-            )
+            self.optimizer = optim.Adam(self.model.parameters(), lr=self.config.learning_rate)
             return True
         
         except Exception as e:

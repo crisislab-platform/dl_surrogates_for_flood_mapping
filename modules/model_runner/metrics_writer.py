@@ -10,84 +10,53 @@ from modules.metrics.plot_traning_metrics import plot_traning_metrics
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("MetricsWriter")
 
-def save_training_metrics(run_id, history, train_time, model, model_config: Config, model_file, tuning_mode):   
+def save_tuning_metrics(run_id, history, train_time, model, model_config: Config, model_file, tuning_mode):   
     if history is None or history == {}:
         return 
     
-    loss = history.get('loss', None)
-    val_loss = history.get('val_loss', None)
-    
-    if tuning_mode:
-        metrics_file = f'{RUN_DIR}/{model_config.model_name}/tuning_metrics.csv'
-        metrics = {
-            'run_id': run_id,
-            'model': model_config.model_name,
-            'loss': loss,
-            'val_loss': val_loss, 
-            'best_val_rmse': history.get('best_val_rmse', None),
-            'best_epoch': history.get('best_epoch', None),
-            'hyperparameters': history.get('hyperparameters', None),
-            'train_time': float(train_time),
-            'model_file': model_file
-        }
-        save_csv(metrics, metrics_file)
-        plot_traning_metrics(history, os.path.join(RUN_DIR, model_config.model_name, run_id))
-        return
-    
-    
-    metrics_file = os.path.join(RUN_DIR, model_config.model_name, 'final_training_metrics.csv')
-    memory_usage = str(history.get('memory', None))
-    neurons = 0
-    trainable_params = 0
-    
-    if model is not None:
-        params = get_model_parameters(model)
-        neurons = int(count_total_neurons(model))
-        trainable_params = int(params['trainable_params'])
-    else:
-        trainable_params = history.get('trainable_params', 0)
-        neurons = history.get('total_neurons', 0)
-
+    metrics_file = f'{RUN_DIR}/{model_config.model_name}/tuning_metrics.csv'
     metrics = {
         'run_id': run_id,
         'model': model_config.model_name,
-        'total_neurons': neurons,
-        'trainable_params':trainable_params,
-        'loss': loss,
-        'val_loss': val_loss, 
-        'train_time': float(train_time),
-        'model_file': model_file,
-        'training_memory_usage': memory_usage, 
+        'loss': history.get('loss', None),
+        'val_loss': history.get('val_loss', None),
+        'best_val_loss': history.get('best_val_loss', None),
+        'best_epoch': history.get('best_epoch', None),
+        'epochs_lr_reduced': history.get('epochs_lr_reduced', None),
         'hyperparameters': history.get('hyperparameters', None),
+        'train_time': float(train_time),
+        'model_file': model_file
     }
     save_csv(metrics, metrics_file)
     plot_traning_metrics(history, os.path.join(RUN_DIR, model_config.model_name, run_id))
-    
+    return
+
      
-def save_prediction_metrics(run_id, model_name, metrics):
-    if model_name == USRR_1DCNN_V1 or model_name == USRR_UNET_V1 or model_name == LSTM_SRR_V1 or model_name == USRR_LSTM:
-        metrics_file = os.path.join(RUN_DIR, model_name, 'final_performance_metrics.csv')
-    else:
-        metrics_file = f'{RUN_DIR}/final_performance_metrics.csv'
+def save_evaluation_metrics(run_id, model_name, eval_metrics, train_metrics):
+    metrics_file = os.path.join(RUN_DIR, model_name, 'final_metrics.csv')
     try:
-        metrics = {
+        eval_metrics = {
             'run_id': run_id,
             'model': model_name,
-            'mse': metrics.get('mse', ''),
-            'rmse': metrics.get('rmse', ''),
-            'inference_latency': metrics.get('pred_time', ''),
-            'hit_rate': metrics.get('hit_rate', ''),
-            'csi': metrics.get('csi', ''),
-            'f2_score': metrics.get('f2_score', ''),
-            'f3_score': metrics.get('f3_score', ''),
-            'nse': metrics.get('nse', ''),
-            'flops': metrics.get('flops', ''),
-            'mRMSE': metrics.get('mRMSE', ''),
-            'pred_memory_usage': metrics.get('pred_memory_usage', ''),
+            'mse': eval_metrics.get('mse', ''),
+            'rmse': eval_metrics.get('rmse', ''),
+            'mRMSE': eval_metrics.get('mRMSE', ''),
+            'hit_rate': eval_metrics.get('hit_rate', ''),
+            'csi': eval_metrics.get('csi', ''),
+            'f2_score': eval_metrics.get('f2_score', ''),
+            'flops': eval_metrics.get('flops', ''),
+            'parameters': eval_metrics.get('parameters', ''),
+            'peak_gpu_memory': eval_metrics.get('peak_gpu_memory', ''),
+            'event_time': eval_metrics.get('event_time', ''),
+            'timestep_time': eval_metrics.get('timestep_time', ''),
+            'peak_volume_timing_error': eval_metrics.get('peak_volume_timing_error', ''),
+            'true_peak_volume_timestep': eval_metrics.get('true_peak_volume_timestep', ''),
+            'peak_volume_timestep': eval_metrics.get('peak_volume_timestep', ''),
+            'train_history': train_metrics, 
         }
-        save_csv(metrics, metrics_file)
+        save_csv(eval_metrics, metrics_file)
     except Exception as e:
-        logger.error(f"Error updating prediction metrics: {e}")
+        logger.error(f"Error updating evaluation metrics: {e}")
         
 def save_csv(metrics, metrics_file):
     import filelock

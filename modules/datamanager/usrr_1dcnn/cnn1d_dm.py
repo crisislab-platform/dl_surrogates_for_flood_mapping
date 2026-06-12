@@ -121,8 +121,13 @@ class CNNSequentialDataManager(DataManager):
                 raise ValueError(f"No validation sequences for event {event_id}")
             input_sequences = [self.val_sequences_by_event[event_id][idx] for idx in indices]
             output_sequences = [self.inundation_data_cache[event_id][idx] for idx in indices]
+        elif subset == "test":
+            if event_id not in self.test_sequences_by_event:
+                raise ValueError(f"No test sequences for event {event_id}")
+            input_sequences = [self.test_sequences_by_event[event_id][idx] for idx in indices]
+            output_sequences = [self.inundation_data_cache[event_id][idx] for idx in indices]
         else:
-            raise ValueError(f"Invalid subset: {subset}. Choose 'train' or 'val'.")
+            raise ValueError(f"Invalid subset: {subset}. Choose 'train', 'val', or 'test'.")
             
         with torch.no_grad():    
             # Shuffle sequences within the batch
